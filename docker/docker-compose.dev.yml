@@ -1,0 +1,24 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/dev.Dockerfile
+
+    container_name: ${CONTAINER_NAME:-gpc_back}
+
+    restart: unless-stopped
+
+    ports:
+      - "5017:80"
+
+    working_dir: /var/www/httpdocs
+
+    volumes:
+      - ..:/var/www/httpdocs
+      - composer-cache:/tmp/composer
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  composer-cache:

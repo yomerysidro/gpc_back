@@ -1,0 +1,82 @@
+version: "3.8"
+name: gpc_back
+
+networks:
+  code-network:
+    name: code-network
+    driver: bridge
+
+services:
+
+  # ==========================================================
+  # BASE DE DATOS - POSTGRESQL
+  # ==========================================================
+  db:
+    image: postgres:15-alpine
+    container_name: ${DB_CONTAINER_NAME:-cd5-gpc-db}
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-gpc_db}
+      POSTGRES_USER: ${DB_USERNAME:-gpc_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-gpc_pass}
+
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+    networks:
+      - code-network
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USERNAME:-gpc_user} -d ${DB_DATABASE:-gpc_db}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+
+  # ==========================================================
+  # BACKEND - LARAVEL
+  # ==========================================================
+  gpc-back:
+    image: ${CI_REGISTRY_IMAGE:-gpc-back}:${TAG:-latest}
+
+    build:
+      context: ..
+      dockerfile: Dockerfile
+
+    container_name: ${CONTAINER_NAME:-cd5-gpc-back}
+    restart: unless-stopped
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    env_file:
+      - ../.env
+
+    environment:
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-gpc_db}
+      DB_USERNAME: ${DB_USERNAME:-gpc_user}
+      DB_PASSWORD: ${DB_PASSWORD:-gpc_pass}
+
+    networks:
+      - code-network
+
+    ports:
+      - "5017:80"
+
+
+# ============================================================
+# VOLÚMENES
+# ============================================================
+volumes:
+  db_data:
+    driver: local
