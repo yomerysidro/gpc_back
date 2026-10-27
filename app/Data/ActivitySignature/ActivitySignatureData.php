@@ -12,7 +12,7 @@ use Throwable;
 
 class ActivitySignatureData
 {
-    private const TABLE = 'actividad_firma';
+    private const TABLE = 'certificado.actividad_firma';
 
     private const KEY = 'id_actividad_firma';
 
@@ -24,11 +24,11 @@ class ActivitySignatureData
 
     private const FOREIGN_KEYS = [
         'id_actividad' => [
-            0 => 'actividad',
+            0 => 'certificado.actividad',
             1 => 'id_actividad',
         ],
         'id_firma' => [
-            0 => 'firma',
+            0 => 'certificado.firma',
             1 => 'id_firma',
         ],
     ];
@@ -121,8 +121,8 @@ class ActivitySignatureData
         return self::execute(fn () => DB::transaction(function () use ($id) {
             self::find($id, true);
             $record = self::find($id, true);
-            abort_unless(Schema::hasTable('certificado_firma'), 503, 'No se puede verificar el historial de firmas.');
-            abort_if(DB::table('certificado_firma')->where('id_firma', $record->id_firma)->exists(), 409, 'La firma tiene aplicaciones históricas.');
+            abort_unless(Schema::hasTable('certificado.certificado_firma'), 503, 'No se puede verificar el historial de firmas.');
+            abort_if(DB::table('certificado.certificado_firma')->where('id_firma', $record->id_firma)->exists(), 409, 'La firma tiene aplicaciones históricas.');
             self::assertNoDependencies($id);
             DB::table(self::TABLE)->where(self::KEY, $id)->delete();
 
@@ -195,7 +195,7 @@ class ActivitySignatureData
     private static function columns(): array
     {
         $columns = array_merge([self::KEY], array_keys(self::RULES));
-        if (self::TABLE === 'certificado_documento') {
+        if (self::TABLE === 'certificado.certificado_documento') {
             $columns[] = 'hash_certificado';
         }
 
@@ -225,9 +225,9 @@ class ActivitySignatureData
     private static function businessRules(array &$data, ?object $record): void
     {
         // A signature already used by an issued document cannot be reassigned retroactively.
-        abort_unless(Schema::hasTable('certificado_firma'), 503, 'No se puede verificar el historial de firmas.');
+        abort_unless(Schema::hasTable('certificado.certificado_firma'), 503, 'No se puede verificar el historial de firmas.');
         if ($record) {
-            abort_if(DB::table('certificado_firma')->where('id_firma', $record->id_firma)->exists(), 409, 'La asignación tiene una firma aplicada y debe conservarse.');
+            abort_if(DB::table('certificado.certificado_firma')->where('id_firma', $record->id_firma)->exists(), 409, 'La asignación tiene una firma aplicada y debe conservarse.');
         }
     }
 }

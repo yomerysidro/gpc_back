@@ -41,8 +41,8 @@ class ActivityController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'id_area' => ['bail', 'required', 'integer', Rule::exists('pgsql.gestion.area', 'id_area')],
-                'id_tipo_actividad' => ['bail', 'required', 'integer', Rule::exists('pgsql.certificado.tipo_actividad', 'id_tipo_actividad')],
+                'id_area' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.gestion.area', 'id_area')],
+                'id_tipo_actividad' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.tipo_actividad', 'id_tipo_actividad')],
                 'nombre' => ['required', 'string', 'max:100'],
                 'descripcion' => ['nullable', 'string', 'max:255'],
                 'fecha_inicio' => ['required', 'date'],
@@ -77,8 +77,8 @@ class ActivityController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'id_area' => ['sometimes', 'bail', 'required', 'integer', Rule::exists('pgsql.gestion.area', 'id_area')],
-                'id_tipo_actividad' => ['sometimes', 'bail', 'required', 'integer', Rule::exists('pgsql.certificado.tipo_actividad', 'id_tipo_actividad')],
+                'id_area' => ['sometimes', 'bail', 'required', 'integer', Rule::exists(config('database.default').'.gestion.area', 'id_area')],
+                'id_tipo_actividad' => ['sometimes', 'bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.tipo_actividad', 'id_tipo_actividad')],
                 'nombre' => ['sometimes', 'required', 'string', 'max:100'],
                 'descripcion' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'fecha_inicio' => ['sometimes', 'required', 'date'],

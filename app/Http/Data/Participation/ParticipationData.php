@@ -149,6 +149,22 @@ class ParticipationData
             $finalData = array_replace((array) $participation, $updateData);
             self::validateBusinessRules($finalData);
 
+            $protectedChanged = false;
+            foreach (['id_persona', 'id_actividad', 'id_tipo_participacion', 'fecha_inscripcion'] as $field) {
+                $protectedChanged = $protectedChanged || (string) $finalData[$field] !== (string) $participation->$field;
+            }
+            if ($protectedChanged && DB::table('certificado.certificado')->where('id_participacion', $id)->lockForUpdate()->exists()) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'La participación sustenta certificados y sus datos de origen deben conservarse.', 'status' => 409];
+            }
+            if (((string) $finalData['id_persona'] !== (string) $participation->id_persona || (string) $finalData['id_actividad'] !== (string) $participation->id_actividad)
+                && DB::table('certificado.asistencia')->where('id_participacion', $id)->lockForUpdate()->exists()) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'No se puede reasignar una participación con asistencias registradas.', 'status' => 409];
+            }
+
             if (DB::table('certificado.participacion')
                 ->where('id_actividad', $finalData['id_actividad'])
                 ->where('id_persona', $finalData['id_persona'])
@@ -159,6 +175,13 @@ class ParticipationData
                 return ['success' => false, 'message' => 'La persona ya está inscrita en esta actividad.', 'status' => 409];
             }
 
+            $updateData = array_filter($updateData, function ($value, string $field) use ($participation): bool {
+                $previous = $participation->{strtolower($field)} ?? null;
+                $currentValue = is_bool($value) ? (int) $value : $value;
+                $previous = is_bool($previous) ? (int) $previous : $previous;
+
+                return $currentValue === null ? $previous !== null : ($previous === null || (string) $currentValue !== (string) $previous);
+            }, ARRAY_FILTER_USE_BOTH);
             if (! empty($updateData)) {
                 DB::table('certificado.participacion')
                     ->where('id_participacion', $id)

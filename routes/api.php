@@ -16,6 +16,7 @@ use App\Http\Controllers\ParticipationType\ParticipationTypeController;
 use App\Http\Controllers\Recognition\RecognitionController;
 use App\Http\Controllers\Signature\SignatureController;
 use App\Http\Controllers\User\UserController;
+use App\Http\Middleware\AuthorizeModuleOperation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -26,7 +27,7 @@ Route::get('/user', function (Request $request) {
 // ============================================================
 // USUARIOS
 // ============================================================
-Route::prefix('users')->group(function () {
+Route::prefix('users')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\User'])->group(function () {
     Route::get('/list', [UserController::class, 'list']);
     Route::get('/detail/{idUser}', [UserController::class, 'detail']);
     Route::post('/create', [UserController::class, 'store']);
@@ -106,7 +107,7 @@ Route::middleware('auth:sanctum')->group(function () {
 // ============================================================
 // ASISTENCIAS
 // ============================================================
-Route::prefix('attendance')->group(function () {
+Route::prefix('attendance')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Attendance\Attendance'])->group(function () {
     Route::get('/list', [AttendanceController::class, 'list']);
     Route::get('/{idAttendance}', [AttendanceController::class, 'detail'])->whereNumber('idAttendance');
     Route::post('/create', [AttendanceController::class, 'store']);
@@ -118,7 +119,7 @@ Route::prefix('attendance')->group(function () {
 // ============================================================
 // ACTIVIDADES
 // ============================================================
-Route::prefix('activity')->group(function () {
+Route::prefix('activity')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Activity\Activity'])->group(function () {
     Route::get('/', [ActivityController::class, 'list']);
     Route::get('/{idActivity}', [ActivityController::class, 'detail'])->whereNumber('idActivity');
     Route::post('/', [ActivityController::class, 'store']);
@@ -130,7 +131,7 @@ Route::prefix('activity')->group(function () {
 // ============================================================
 // SESIONES DE ACTIVIDAD
 // ============================================================
-Route::prefix('activity-session')->group(function () {
+Route::prefix('activity-session')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\ActivitySession\ActivitySession'])->group(function () {
     Route::get('/', [ActivitySessionController::class, 'list']);
     Route::get('/{idActivitySession}', [ActivitySessionController::class, 'detail'])->whereNumber('idActivitySession');
     Route::post('/', [ActivitySessionController::class, 'store']);
@@ -142,7 +143,7 @@ Route::prefix('activity-session')->group(function () {
 // ============================================================
 // TIPOS DE ACTIVIDAD
 // ============================================================
-Route::prefix('ativicty-type')->group(function () {
+Route::prefix('ativicty-type')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\ActivityType\ActivityType'])->group(function () {
     Route::get('/', [ActivityTypeController::class, 'list']);
     Route::get('/{idActivityType}', [ActivityTypeController::class, 'detail'])->whereNumber('idActivityType');
     Route::post('/', [ActivityTypeController::class, 'store']);
@@ -154,7 +155,7 @@ Route::prefix('ativicty-type')->group(function () {
 // ============================================================
 // PONENTES DE ACTIVIDADES
 // ============================================================
-Route::prefix('activity-speaker')->group(function () {
+Route::prefix('activity-speaker')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\ActivitySpeaker\ActivitySpeaker'])->group(function () {
     Route::get('/', [ActivitySpeakerController::class, 'list']);
     Route::get('/{idActivitySpeaker}', [ActivitySpeakerController::class, 'detail'])->whereNumber('idActivitySpeaker');
     Route::post('/', [ActivitySpeakerController::class, 'store']);
@@ -166,7 +167,7 @@ Route::prefix('activity-speaker')->group(function () {
 // ============================================================
 // PARTICIPACIONES
 // ============================================================
-Route::prefix('participation')->group(function () {
+Route::prefix('participation')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Participation\Participation'])->group(function () {
     Route::get('/', [ParticipationController::class, 'list']);
     Route::get('/{idParticipation}', [ParticipationController::class, 'detail'])->whereNumber('idParticipation');
     Route::post('/', [ParticipationController::class, 'store']);
@@ -178,7 +179,7 @@ Route::prefix('participation')->group(function () {
 // ============================================================
 // TIPOS DE PARTICIPACIÓN
 // ============================================================
-Route::prefix('participation-type')->group(function () {
+Route::prefix('participation-type')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\ParticipationType\ParticipationType'])->group(function () {
     Route::get('/', [ParticipationTypeController::class, 'list']);
     Route::get('/{idParticipationType}', [ParticipationTypeController::class, 'detail'])->whereNumber('idParticipationType');
     Route::post('/', [ParticipationTypeController::class, 'store']);

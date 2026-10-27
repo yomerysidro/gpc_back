@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CertificateInquiry extends Model
 {
-    protected $table = 'consulta_certificado';
+    protected $table = 'certificado.consulta_certificado';
 
     protected $primaryKey = 'id_consulta_certificado';
 

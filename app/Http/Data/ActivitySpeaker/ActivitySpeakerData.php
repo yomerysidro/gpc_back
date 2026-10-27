@@ -153,6 +153,13 @@ class ActivitySpeakerData
                 return ['success' => false, 'message' => 'El ponente ya está asignado a esta actividad.', 'status' => 409];
             }
 
+            $updateData = array_filter($updateData, function ($value, string $field) use ($activitySpeaker): bool {
+                $previous = $activitySpeaker->{strtolower($field)} ?? null;
+                $currentValue = is_bool($value) ? (int) $value : $value;
+                $previous = is_bool($previous) ? (int) $previous : $previous;
+
+                return $currentValue === null ? $previous !== null : ($previous === null || (string) $currentValue !== (string) $previous);
+            }, ARRAY_FILTER_USE_BOTH);
             if (! empty($updateData)) {
                 DB::table('certificado.actividad_ponente')
                     ->where('id_actividad_ponente', $id)

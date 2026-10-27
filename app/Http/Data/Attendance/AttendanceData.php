@@ -81,6 +81,12 @@ class AttendanceData
         try {
             self::validateBusinessRules($data);
 
+            if (DB::table('certificado.certificado')->where('id_participacion', $data['ID_PARTICIPACION'])->lockForUpdate()->exists()) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'La participación ya sustenta certificados; sus asistencias deben conservarse.', 'status' => 409];
+            }
+
             $idAttendance = DB::table('certificado.asistencia')
                 ->insertGetId([
                     'id_participacion' => $data['ID_PARTICIPACION'],
@@ -165,6 +171,19 @@ class AttendanceData
 
             self::validateBusinessRules($finalData);
 
+            if (DB::table('certificado.certificado')->whereIn('id_participacion', [$attendance->id_participacion, $finalData['ID_PARTICIPACION']])->lockForUpdate()->exists()) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'La asistencia sustenta certificados y debe conservarse.', 'status' => 409];
+            }
+
+            $updateData = array_filter($updateData, function ($value, string $field) use ($attendance): bool {
+                $previous = $attendance->{strtolower($field)} ?? null;
+                $currentValue = is_bool($value) ? (int) $value : $value;
+                $previous = is_bool($previous) ? (int) $previous : $previous;
+
+                return $currentValue === null ? $previous !== null : ($previous === null || (string) $currentValue !== (string) $previous);
+            }, ARRAY_FILTER_USE_BOTH);
             if (! empty($updateData)) {
                 DB::table('certificado.asistencia')
                     ->where('id_asistencia', $id)
@@ -228,6 +247,12 @@ class AttendanceData
                 ];
             }
 
+            DB::table('certificado.participacion')->where('id_participacion', $attendance->id_participacion)->lockForUpdate()->first();
+            if (DB::table('certificado.certificado')->where('id_participacion', $attendance->id_participacion)->lockForUpdate()->exists()) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'La asistencia sustenta certificados y debe conservarse.', 'status' => 409];
+            }
             DB::table('certificado.asistencia')
                 ->where('id_asistencia', $id)
                 ->delete();
@@ -262,10 +287,12 @@ class AttendanceData
 
         $participation = DB::table('certificado.participacion')
             ->where('id_participacion', $data['ID_PARTICIPACION'])
+            ->lockForUpdate()
             ->first();
 
         $activitySession = DB::table('certificado.actividad_sesion')
             ->where('id_actividad_sesion', $data['ID_ACTIVIDAD_SESION'])
+            ->sharedLock()
             ->first();
 
         if (! $participation) {

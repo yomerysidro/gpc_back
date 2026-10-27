@@ -12,7 +12,7 @@ use Throwable;
 
 class CertificateInquiryData
 {
-    private const TABLE = 'consulta_certificado';
+    private const TABLE = 'certificado.consulta_certificado';
 
     private const KEY = 'id_consulta_certificado';
 
@@ -26,7 +26,7 @@ class CertificateInquiryData
 
     private const FOREIGN_KEYS = [
         'id_certificado_documento' => [
-            0 => 'certificado_documento',
+            0 => 'certificado.certificado_documento',
             1 => 'id_certificado_documento',
         ],
     ];
@@ -179,7 +179,7 @@ class CertificateInquiryData
     private static function columns(): array
     {
         $columns = array_merge([self::KEY], array_keys(self::RULES));
-        if (self::TABLE === 'certificado_documento') {
+        if (self::TABLE === 'certificado.certificado_documento') {
             $columns[] = 'hash_certificado';
         }
 

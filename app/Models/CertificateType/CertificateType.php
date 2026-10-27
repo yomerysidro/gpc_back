@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class CertificateType extends Model
 {
-    protected $table = 'tipo_certificado';
+    protected $table = 'certificado.tipo_certificado';
 
     protected $primaryKey = 'id_tipo_certificado';
 

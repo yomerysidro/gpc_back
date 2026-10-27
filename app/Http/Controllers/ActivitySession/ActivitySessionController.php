@@ -41,7 +41,7 @@ class ActivitySessionController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'id_actividad' => ['bail', 'required', 'integer', Rule::exists('pgsql.certificado.actividad', 'id_actividad')],
+                'id_actividad' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.actividad', 'id_actividad')],
                 'nombre' => ['required', 'string', 'max:150'],
                 'fecha' => ['required', 'date'],
                 'hora_inicio' => ['required', 'date_format:H:i,H:i:s'],
@@ -76,7 +76,7 @@ class ActivitySessionController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'id_actividad' => ['sometimes', 'bail', 'required', 'integer', Rule::exists('pgsql.certificado.actividad', 'id_actividad')],
+                'id_actividad' => ['sometimes', 'bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.actividad', 'id_actividad')],
                 'nombre' => ['sometimes', 'required', 'string', 'max:150'],
                 'fecha' => ['sometimes', 'required', 'date'],
                 'hora_inicio' => ['sometimes', 'required', 'date_format:H:i,H:i:s'],

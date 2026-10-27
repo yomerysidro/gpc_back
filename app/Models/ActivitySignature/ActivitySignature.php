@@ -2,13 +2,14 @@
 
 namespace App\Models\ActivitySignature;
 
+use App\Models\Activity\Activity;
 use App\Models\Signature\Signature;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ActivitySignature extends Model
 {
-    protected $table = 'actividad_firma';
+    protected $table = 'certificado.actividad_firma';
 
     protected $primaryKey = 'id_actividad_firma';
 
@@ -32,5 +33,10 @@ class ActivitySignature extends Model
     public function firma(): BelongsTo
     {
         return $this->belongsTo(Signature::class, 'id_firma', 'id_firma');
+    }
+
+    public function activity(): BelongsTo
+    {
+        return $this->belongsTo(Activity::class, 'id_actividad', 'id_actividad');
     }
 }

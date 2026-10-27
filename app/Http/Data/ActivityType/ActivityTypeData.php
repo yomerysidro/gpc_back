@@ -154,6 +154,13 @@ class ActivityTypeData
                 'estado',
             ]));
 
+            $updateData = array_filter($updateData, function ($value, string $field) use ($activityType): bool {
+                $previous = $activityType->{strtolower($field)} ?? null;
+                $currentValue = is_bool($value) ? (int) $value : $value;
+                $previous = is_bool($previous) ? (int) $previous : $previous;
+
+                return $currentValue === null ? $previous !== null : ($previous === null || (string) $currentValue !== (string) $previous);
+            }, ARRAY_FILTER_USE_BOTH);
             if (! empty($updateData)) {
                 DB::table('certificado.tipo_actividad')
                     ->where('id_tipo_actividad', $id)

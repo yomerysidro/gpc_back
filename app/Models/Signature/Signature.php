@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Signature extends Model
 {
-    protected $table = 'firma';
+    protected $table = 'certificado.firma';
 
     protected $primaryKey = 'id_firma';
 

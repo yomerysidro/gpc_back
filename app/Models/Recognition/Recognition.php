@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Recognition extends Model
 {
-    protected $table = 'reconocimiento';
+    protected $table = 'certificado.reconocimiento';
 
     protected $primaryKey = 'id_reconocimiento';
 

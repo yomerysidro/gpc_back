@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class CertificateDocument extends Model
 {
-    protected $table = 'certificado_documento';
+    protected $table = 'certificado.certificado_documento';
 
     protected $primaryKey = 'id_certificado_documento';
 

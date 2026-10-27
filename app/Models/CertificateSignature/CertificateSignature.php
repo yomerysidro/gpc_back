@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CertificateSignature extends Model
 {
-    protected $table = 'certificado_firma';
+    protected $table = 'certificado.certificado_firma';
 
     protected $primaryKey = 'id_certificado_firma';
 

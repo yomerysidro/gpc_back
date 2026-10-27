@@ -13,7 +13,7 @@ use Throwable;
 
 class CertificateDocumentData
 {
-    private const TABLE = 'certificado_documento';
+    private const TABLE = 'certificado.certificado_documento';
 
     private const KEY = 'id_certificado_documento';
 
@@ -28,7 +28,7 @@ class CertificateDocumentData
 
     private const FOREIGN_KEYS = [
         'id_certificado' => [
-            0 => 'certificado',
+            0 => 'certificado.certificado',
             1 => 'id_certificado',
         ],
     ];
@@ -41,11 +41,11 @@ class CertificateDocumentData
 
     private const DEPENDENCIES = [
         0 => [
-            0 => 'certificado_firma',
+            0 => 'certificado.certificado_firma',
             1 => 'id_certificado_documento',
         ],
         1 => [
-            0 => 'consulta_certificado',
+            0 => 'certificado.consulta_certificado',
             1 => 'id_certificado_documento',
         ],
     ];
@@ -193,7 +193,7 @@ class CertificateDocumentData
     private static function columns(): array
     {
         $columns = array_merge([self::KEY], array_keys(self::RULES));
-        if (self::TABLE === 'certificado_documento') {
+        if (self::TABLE === 'certificado.certificado_documento') {
             $columns[] = 'hash_certificado';
         }
 

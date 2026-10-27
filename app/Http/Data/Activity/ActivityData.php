@@ -157,8 +157,38 @@ class ActivityData
                 'estado',
             ]));
 
-            self::validateBusinessRules(array_replace((array) $activity, $updateData));
+            $finalData = array_replace((array) $activity, $updateData);
+            self::validateBusinessRules($finalData);
+            if ((string) $finalData['fecha_inicio'] !== (string) $activity->fecha_inicio || (string) ($finalData['fecha_fin'] ?? '') !== (string) ($activity->fecha_fin ?? '')) {
+                $outside = DB::table('certificado.actividad_sesion')->where('id_actividad', $id)
+                    ->where(function ($query) use ($finalData) {
+                        $query->where('fecha', '<', date('Y-m-d', strtotime($finalData['fecha_inicio'])));
+                        if (! empty($finalData['fecha_fin'])) {
+                            $query->orWhere('fecha', '>', date('Y-m-d', strtotime($finalData['fecha_fin'])));
+                        }
+                    })->lockForUpdate()->exists();
+                if ($outside) {
+                    throw ValidationException::withMessages(['fecha_inicio' => 'El periodo debe incluir todas las sesiones existentes.', 'fecha_fin' => 'El periodo debe incluir todas las sesiones existentes.']);
+                }
+            }
+            $historicalChanges = array_intersect_key($updateData, array_flip(['id_area', 'id_tipo_actividad', 'nombre', 'descripcion', 'fecha_inicio', 'fecha_fin', 'sede']));
+            $historicalChanges = array_filter($historicalChanges, fn ($value, $field) => $value !== ($activity->$field ?? null)
+                && ($value === null || ($activity->$field ?? null) === null || (string) $value !== (string) $activity->$field), ARRAY_FILTER_USE_BOTH);
+            if ($historicalChanges !== [] && DB::table('certificado.participacion as participacion')
+                ->join('certificado.certificado as certificado', 'certificado.id_participacion', '=', 'participacion.id_participacion')
+                ->where('participacion.id_actividad', $id)->exists()) {
+                DB::rollBack();
 
+                return ['success' => false, 'message' => 'La actividad sustenta certificados y sus datos históricos deben conservarse.', 'status' => 409];
+            }
+
+            $updateData = array_filter($updateData, function ($value, string $field) use ($activity): bool {
+                $previous = $activity->{strtolower($field)} ?? null;
+                $currentValue = is_bool($value) ? (int) $value : $value;
+                $previous = is_bool($previous) ? (int) $previous : $previous;
+
+                return $currentValue === null ? $previous !== null : ($previous === null || (string) $currentValue !== (string) $previous);
+            }, ARRAY_FILTER_USE_BOTH);
             if (! empty($updateData)) {
                 DB::table('certificado.actividad')->where('id_actividad', $id)->update($updateData);
             }
@@ -222,6 +252,8 @@ class ActivityData
             if (
                 DB::table('certificado.participacion')->where('id_actividad', $id)->exists()
                 || DB::table('certificado.actividad_sesion')->where('id_actividad', $id)->exists()
+                || DB::table('certificado.actividad_ponente')->where('id_actividad', $id)->exists()
+                || DB::table('certificado.actividad_firma')->where('id_actividad', $id)->exists()
             ) {
                 DB::rollBack();
 

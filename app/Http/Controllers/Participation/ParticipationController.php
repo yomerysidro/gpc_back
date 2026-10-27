@@ -41,9 +41,9 @@ class ParticipationController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'id_persona' => ['bail', 'required', 'integer', Rule::exists('pgsql.gestion.persona', 'id_persona')],
-                'id_actividad' => ['bail', 'required', 'integer', Rule::exists('pgsql.certificado.actividad', 'id_actividad')],
-                'id_tipo_participacion' => ['bail', 'required', 'integer', Rule::exists('pgsql.certificado.tipo_participacion', 'id_tipo_participacion')],
+                'id_persona' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.gestion.persona', 'id_persona')],
+                'id_actividad' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.actividad', 'id_actividad')],
+                'id_tipo_participacion' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.tipo_participacion', 'id_tipo_participacion')],
                 'fecha_inscripcion' => ['required', 'date'],
                 'estado' => ['required', 'string', 'max:30'],
             ]);
@@ -74,9 +74,9 @@ class ParticipationController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'id_persona' => ['sometimes', 'bail', 'required', 'integer', Rule::exists('pgsql.gestion.persona', 'id_persona')],
-                'id_actividad' => ['sometimes', 'bail', 'required', 'integer', Rule::exists('pgsql.certificado.actividad', 'id_actividad')],
-                'id_tipo_participacion' => ['sometimes', 'bail', 'required', 'integer', Rule::exists('pgsql.certificado.tipo_participacion', 'id_tipo_participacion')],
+                'id_persona' => ['sometimes', 'bail', 'required', 'integer', Rule::exists(config('database.default').'.gestion.persona', 'id_persona')],
+                'id_actividad' => ['sometimes', 'bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.actividad', 'id_actividad')],
+                'id_tipo_participacion' => ['sometimes', 'bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.tipo_participacion', 'id_tipo_participacion')],
                 'fecha_inscripcion' => ['sometimes', 'required', 'date'],
                 'estado' => ['sometimes', 'required', 'string', 'max:30'],
             ]);

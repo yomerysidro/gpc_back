@@ -14,6 +14,11 @@ class ActivitySpeaker extends Model
 
     public $timestamps = false;
 
+    protected $casts = [
+        'id_actividad' => 'integer',
+        'id_persona_ponente' => 'integer',
+    ];
+
     protected $fillable = [
         'id_actividad',
         'id_persona_ponente',

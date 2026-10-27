@@ -4,6 +4,7 @@ namespace App\Models\Certificate;
 
 use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\CertificateType\CertificateType;
+use App\Models\Participation\Participation;
 use App\Models\Recognition\Recognition;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Certificate extends Model
 {
-    protected $table = 'certificado';
+    protected $table = 'certificado.certificado';
 
     protected $primaryKey = 'id_certificado';
 
@@ -57,5 +58,10 @@ class Certificate extends Model
     public function documentos(): HasMany
     {
         return $this->hasMany(CertificateDocument::class, 'id_certificado', 'id_certificado');
+    }
+
+    public function participation(): BelongsTo
+    {
+        return $this->belongsTo(Participation::class, 'id_participacion', 'id_participacion');
     }
 }

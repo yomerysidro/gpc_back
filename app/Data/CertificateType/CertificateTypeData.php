@@ -12,7 +12,7 @@ use Throwable;
 
 class CertificateTypeData
 {
-    private const TABLE = 'tipo_certificado';
+    private const TABLE = 'certificado.tipo_certificado';
 
     private const KEY = 'id_tipo_certificado';
 
@@ -32,7 +32,7 @@ class CertificateTypeData
 
     private const DEPENDENCIES = [
         0 => [
-            0 => 'certificado',
+            0 => 'certificado.certificado',
             1 => 'id_tipo_certificado',
         ],
     ];
@@ -183,7 +183,7 @@ class CertificateTypeData
     private static function columns(): array
     {
         $columns = array_merge([self::KEY], array_keys(self::RULES));
-        if (self::TABLE === 'certificado_documento') {
+        if (self::TABLE === 'certificado.certificado_documento') {
             $columns[] = 'hash_certificado';
         }
 

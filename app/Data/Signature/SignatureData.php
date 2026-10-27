@@ -14,7 +14,7 @@ use Throwable;
 
 class SignatureData
 {
-    private const TABLE = 'firma';
+    private const TABLE = 'certificado.firma';
 
     private const KEY = 'id_firma';
 
@@ -27,7 +27,7 @@ class SignatureData
 
     private const FOREIGN_KEYS = [
         'id_persona_trabajador' => [
-            0 => 'persona_trabajador',
+            0 => 'gestion.persona_trabajador',
             1 => 'id_persona_trabajador',
         ],
     ];
@@ -41,11 +41,11 @@ class SignatureData
 
     private const DEPENDENCIES = [
         0 => [
-            0 => 'certificado_firma',
+            0 => 'certificado.certificado_firma',
             1 => 'id_firma',
         ],
         1 => [
-            0 => 'actividad_firma',
+            0 => 'certificado.actividad_firma',
             1 => 'id_firma',
         ],
     ];
@@ -198,7 +198,7 @@ class SignatureData
     private static function columns(): array
     {
         $columns = array_merge([self::KEY], array_keys(self::RULES));
-        if (self::TABLE === 'certificado_documento') {
+        if (self::TABLE === 'certificado.certificado_documento') {
             $columns[] = 'hash_certificado';
         }
 

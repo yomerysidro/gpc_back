@@ -153,6 +153,29 @@ class ActivitySessionData
 
             self::validateBusinessRules(array_replace((array) $activitySession, $updateData));
 
+            if (isset($updateData['id_actividad']) && (string) $updateData['id_actividad'] !== (string) $activitySession->id_actividad
+                && DB::table('certificado.asistencia')->where('id_actividad_sesion', $id)->lockForUpdate()->exists()) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'No se puede trasladar una sesión con asistencias registradas.', 'status' => 409];
+            }
+            $changed = array_filter($updateData, fn ($value, $field) => $value !== ($activitySession->$field ?? null)
+                && ($value === null || ($activitySession->$field ?? null) === null || (string) $value !== (string) $activitySession->$field), ARRAY_FILTER_USE_BOTH);
+            if ($changed !== [] && DB::table('certificado.asistencia as asistencia')
+                ->join('certificado.certificado as certificado', 'certificado.id_participacion', '=', 'asistencia.id_participacion')
+                ->where('asistencia.id_actividad_sesion', $id)->exists()) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'La sesión sustenta certificados y debe conservarse.', 'status' => 409];
+            }
+
+            $updateData = array_filter($updateData, function ($value, string $field) use ($activitySession): bool {
+                $previous = $activitySession->{strtolower($field)} ?? null;
+                $currentValue = is_bool($value) ? (int) $value : $value;
+                $previous = is_bool($previous) ? (int) $previous : $previous;
+
+                return $currentValue === null ? $previous !== null : ($previous === null || (string) $currentValue !== (string) $previous);
+            }, ARRAY_FILTER_USE_BOTH);
             if (! empty($updateData)) {
                 DB::table('certificado.actividad_sesion')
                     ->where('id_actividad_sesion', $id)

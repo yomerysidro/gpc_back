@@ -12,7 +12,7 @@ use Throwable;
 
 class CertificateData
 {
-    private const TABLE = 'certificado';
+    private const TABLE = 'certificado.certificado';
 
     private const KEY = 'id_certificado';
 
@@ -30,23 +30,23 @@ class CertificateData
 
     private const FOREIGN_KEYS = [
         'id_persona' => [
-            0 => 'persona',
+            0 => 'gestion.persona',
             1 => 'id_persona',
         ],
         'id_tipo_certificado' => [
-            0 => 'tipo_certificado',
+            0 => 'certificado.tipo_certificado',
             1 => 'id_tipo_certificado',
         ],
         'id_reconocimiento' => [
-            0 => 'reconocimiento',
+            0 => 'certificado.reconocimiento',
             1 => 'id_reconocimiento',
         ],
         'id_participacion' => [
-            0 => 'participacion',
+            0 => 'certificado.participacion',
             1 => 'id_participacion',
         ],
         'id_practica' => [
-            0 => 'practica',
+            0 => 'gestion.practica',
             1 => 'id_practica',
         ],
     ];
@@ -63,7 +63,7 @@ class CertificateData
 
     private const DEPENDENCIES = [
         0 => [
-            0 => 'certificado_documento',
+            0 => 'certificado.certificado_documento',
             1 => 'id_certificado',
         ],
     ];
@@ -214,7 +214,7 @@ class CertificateData
     private static function columns(): array
     {
         $columns = array_merge([self::KEY], array_keys(self::RULES));
-        if (self::TABLE === 'certificado_documento') {
+        if (self::TABLE === 'certificado.certificado_documento') {
             $columns[] = 'hash_certificado';
         }
 
@@ -254,8 +254,8 @@ class CertificateData
                 $person = $origin->id_persona;
             } else {
                 [$personTable, $personKey] = $field === 'id_practica'
-                    ? ['persona_practicante', 'id_persona_practicante']
-                    : ['persona_trabajador', 'id_persona_trabajador'];
+                    ? ['gestion.persona_practicante', 'id_persona_practicante']
+                    : ['gestion.persona_trabajador', 'id_persona_trabajador'];
                 abort_unless(Schema::hasTable($personTable), 503, 'Dependencia del módulo no disponible.');
                 $related = DB::table($personTable)->where($personKey, $origin->$personKey)->lockForUpdate()->first();
                 if (! $related) {

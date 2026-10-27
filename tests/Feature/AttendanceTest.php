@@ -3,10 +3,14 @@
 namespace Tests\Feature;
 
 use App\Http\Data\Attendance\AttendanceData;
+use App\Models\Attendance\Attendance;
+use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Fixtures\ModulePolicy;
 use Tests\TestCase;
 
 class AttendanceTest extends TestCase
@@ -22,6 +26,12 @@ class AttendanceTest extends TestCase
         ]);
         DB::purge('sqlite');
         DB::statement("ATTACH DATABASE ':memory:' AS certificado");
+        $this->actingAs(new User(['name' => 'Authorized fixture']));
+        Gate::policy(Attendance::class, ModulePolicy::class);
+        Schema::create('certificado.certificado', function (Blueprint $table) {
+            $table->increments('id_certificado');
+            $table->integer('id_participacion')->nullable();
+        });
 
         /*
          * Esquema de prueba basado en el diseño proporcionado.
@@ -307,6 +317,7 @@ class AttendanceTest extends TestCase
     public function test_returns_500_with_api_response_when_validation_database_query_fails(): void
     {
         $data = $this->attendanceData();
+        DB::table('certificado.asistencia')->insert($data + ['ID_ASISTENCIA' => 1]);
         Schema::rename('certificado.participacion', 'participacion_unavailable');
 
         $this->postJson('/api/attendance/create', $data)
@@ -316,7 +327,7 @@ class AttendanceTest extends TestCase
             ->assertInternalServerError()
             ->assertExactJson(['success' => false, 'message' => 'Error al actualizar la asistencia.', 'data' => []]);
 
-        $this->assertDatabaseCount('certificado.asistencia', 0);
+        $this->assertDatabaseCount('certificado.asistencia', 1);
     }
 
     /**

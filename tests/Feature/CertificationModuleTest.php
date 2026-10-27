@@ -14,19 +14,20 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Fixtures\ModulePolicy;
 use Tests\TestCase;
 
 class CertificationModuleTest extends TestCase
 {
     private array $entities = [
-        'CertificateType' => ['tipos-certificado', 'tipo_certificado', 'id_tipo_certificado', ['nombre_tipo', 'estado']],
-        'Certificate' => ['certificados', 'certificado', 'id_certificado', ['id_persona', 'id_tipo_certificado', 'id_reconocimiento', 'id_participacion', 'id_practica', 'fecha_emision', 'estado', 'notificado', 'fecha_notificacion']],
-        'Recognition' => ['reconocimientos', 'reconocimiento', 'id_reconocimiento', ['id_persona_trabajador', 'titulo', 'descripcion', 'motivo', 'fecha_reconocimiento', 'estado']],
-        'CertificateDocument' => ['certificados-documentos', 'certificado_documento', 'id_certificado_documento', ['id_certificado', 'codigo_verificacion', 'hash_certificado', 'ruta_archivo', 'motivo_reemision', 'estado', 'fecha_generacion']],
-        'Signature' => ['firmas', 'firma', 'id_firma', ['id_persona_trabajador', 'ruta_archivo_pfx', 'passphrase_cifrada', 'fecha_firma']],
-        'CertificateSignature' => ['certificados-firmas', 'certificado_firma', 'id_certificado_firma', ['id_certificado_documento', 'id_firma', 'fecha_firma', 'orden_firma']],
-        'CertificateInquiry' => ['consultas-certificado', 'consulta_certificado', 'id_consulta_certificado', ['id_certificado_documento', 'dni_consulta', 'codigo_consulta', 'fecha_consulta', 'resultado']],
-        'ActivitySignature' => ['actividades-firmas', 'actividad_firma', 'id_actividad_firma', ['id_actividad', 'id_firma', 'orden_firma']],
+        'CertificateType' => ['tipos-certificado', 'certificado.tipo_certificado', 'id_tipo_certificado', ['nombre_tipo', 'estado']],
+        'Certificate' => ['certificados', 'certificado.certificado', 'id_certificado', ['id_persona', 'id_tipo_certificado', 'id_reconocimiento', 'id_participacion', 'id_practica', 'fecha_emision', 'estado', 'notificado', 'fecha_notificacion']],
+        'Recognition' => ['reconocimientos', 'certificado.reconocimiento', 'id_reconocimiento', ['id_persona_trabajador', 'titulo', 'descripcion', 'motivo', 'fecha_reconocimiento', 'estado']],
+        'CertificateDocument' => ['certificados-documentos', 'certificado.certificado_documento', 'id_certificado_documento', ['id_certificado', 'codigo_verificacion', 'hash_certificado', 'ruta_archivo', 'motivo_reemision', 'estado', 'fecha_generacion']],
+        'Signature' => ['firmas', 'certificado.firma', 'id_firma', ['id_persona_trabajador', 'ruta_archivo_pfx', 'passphrase_cifrada', 'fecha_firma']],
+        'CertificateSignature' => ['certificados-firmas', 'certificado.certificado_firma', 'id_certificado_firma', ['id_certificado_documento', 'id_firma', 'fecha_firma', 'orden_firma']],
+        'CertificateInquiry' => ['consultas-certificado', 'certificado.consulta_certificado', 'id_consulta_certificado', ['id_certificado_documento', 'dni_consulta', 'codigo_consulta', 'fecha_consulta', 'resultado']],
+        'ActivitySignature' => ['actividades-firmas', 'certificado.actividad_firma', 'id_actividad_firma', ['id_actividad', 'id_firma', 'orden_firma']],
     ];
 
     protected function setUp(): void
@@ -35,8 +36,10 @@ class CertificationModuleTest extends TestCase
         // Fixtures exist exclusively in memory. Never use application credentials.
         config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:', 'database.connections.sqlite.url' => null]);
         DB::purge('sqlite');
+        DB::statement("ATTACH DATABASE ':memory:' AS certificado");
+        DB::statement("ATTACH DATABASE ':memory:' AS gestion");
         $definitions = array_values($this->entities);
-        foreach (['persona' => ['id_persona', []], 'persona_trabajador' => ['id_persona_trabajador', ['id_persona']], 'persona_practicante' => ['id_persona_practicante', ['id_persona']], 'actividad' => ['id_actividad', []], 'participacion' => ['id_participacion', ['id_persona']], 'practica' => ['id_practica', ['id_persona_practicante']]] as $table => [$key, $fields]) {
+        foreach (['gestion.persona' => ['id_persona', []], 'gestion.persona_trabajador' => ['id_persona_trabajador', ['id_persona']], 'gestion.persona_practicante' => ['id_persona_practicante', ['id_persona']], 'certificado.actividad' => ['id_actividad', []], 'certificado.participacion' => ['id_participacion', ['id_persona']], 'gestion.practica' => ['id_practica', ['id_persona_practicante']]] as $table => [$key, $fields]) {
             $definitions[] = ['', $table, $key, $fields];
         }
         foreach ($definitions as [$prefix, $table, $key, $fields]) {
@@ -51,20 +54,22 @@ class CertificationModuleTest extends TestCase
                 }
             });
         }
-        DB::table('persona')->insert([['id_persona' => 1], ['id_persona' => 2]]);
-        DB::table('persona_trabajador')->insert(['id_persona_trabajador' => 1, 'id_persona' => 1]);
-        DB::table('actividad')->insert(['id_actividad' => 1]);
-        DB::table('participacion')->insert(['id_participacion' => 1, 'id_persona' => 1]);
-        DB::table('persona_practicante')->insert(['id_persona_practicante' => 1, 'id_persona' => 2]);
-        DB::table('practica')->insert(['id_practica' => 1, 'id_persona_practicante' => 1]);
-        DB::table('tipo_certificado')->insert(['id_tipo_certificado' => 1, 'nombre_tipo' => 'Asistencia', 'estado' => 'ACTIVO']);
+        DB::table('gestion.persona')->insert([['id_persona' => 1], ['id_persona' => 2]]);
+        DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 1, 'id_persona' => 1]);
+        DB::table('certificado.actividad')->insert(['id_actividad' => 1]);
+        DB::table('certificado.participacion')->insert(['id_participacion' => 1, 'id_persona' => 1]);
+        DB::table('gestion.persona_practicante')->insert(['id_persona_practicante' => 1, 'id_persona' => 2]);
+        DB::table('gestion.practica')->insert(['id_practica' => 1, 'id_persona_practicante' => 1]);
+        DB::table('certificado.tipo_certificado')->insert(['id_tipo_certificado' => 1, 'nombre_tipo' => 'Asistencia', 'estado' => 'ACTIVO']);
         Storage::fake('local');
     }
 
     private function administrator(): void
     {
-        $this->actingAs(new User(['name' => 'Test administrator']));
-        Gate::before(fn () => true); // Test-only authorization, never installed in production.
+        $this->actingAs(new User(['name' => 'Authorized fixture']));
+        foreach (array_keys($this->entities) as $entity) {
+            Gate::policy("App\\Models\\$entity\\$entity", ModulePolicy::class);
+        }
     }
 
     private function certificate(): array
@@ -74,7 +79,7 @@ class CertificationModuleTest extends TestCase
 
     private function seedDocument(): void
     {
-        DB::table('certificado_documento')->insert(['id_certificado_documento' => 1, 'id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'hash_certificado' => str_repeat('a', 64), 'ruta_archivo' => 'certificados/private.pdf', 'estado' => 'GENERADO', 'fecha_generacion' => '2026-01-01']);
+        DB::table('certificado.certificado_documento')->insert(['id_certificado_documento' => 1, 'id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'hash_certificado' => str_repeat('a', 64), 'ruta_archivo' => 'certificados/private.pdf', 'estado' => 'GENERADO', 'fecha_generacion' => '2026-01-01']);
     }
 
     public function test_all_48_routes_require_authentication(): void
@@ -179,7 +184,7 @@ class CertificationModuleTest extends TestCase
         $this->postJson('/api/certificados-documentos/create', $payload)->assertUnprocessable();
         Storage::disk('local')->put('certificados/not-pdf.pdf', 'not a PDF');
         $this->postJson('/api/certificados-documentos/create', array_replace($payload, ['ruta_archivo' => 'certificados/not-pdf.pdf']))->assertUnprocessable();
-        $this->assertSame(0, DB::table('certificado_documento')->count());
+        $this->assertSame(0, DB::table('certificado.certificado_documento')->count());
     }
 
     public function test_hash_matches_document_bytes_and_evidence_cannot_be_deleted(): void
@@ -197,20 +202,20 @@ class CertificationModuleTest extends TestCase
     public function test_signature_secrets_are_hidden_and_unverified_signing_is_blocked(): void
     {
         $this->administrator();
-        DB::table('firma')->insert(['id_firma' => 1, 'id_persona_trabajador' => 1, 'ruta_archivo_pfx' => 'firmas/secret.pfx', 'passphrase_cifrada' => 'secret-ciphertext', 'fecha_firma' => '2026-01-01']);
+        DB::table('certificado.firma')->insert(['id_firma' => 1, 'id_persona_trabajador' => 1, 'ruta_archivo_pfx' => 'firmas/secret.pfx', 'passphrase_cifrada' => 'secret-ciphertext', 'fecha_firma' => '2026-01-01']);
         $this->seedDocument();
         $this->getJson('/api/firmas/detail/1')->assertOk()->assertJsonMissingPath('data.passphrase_cifrada')->assertJsonMissingPath('data.ruta_archivo_pfx');
         $this->getJson('/api/firmas/list')->assertOk()->assertDontSee('secret-ciphertext')->assertDontSee('secret.pfx');
         $this->postJson('/api/certificados-firmas/create', ['id_certificado_documento' => 1, 'id_firma' => 1, 'fecha_firma' => '2026-01-01', 'orden_firma' => 1])->assertConflict();
-        $this->assertSame(0, DB::table('certificado_firma')->count());
+        $this->assertSame(0, DB::table('certificado.certificado_firma')->count());
         $this->postJson('/api/firmas/create', ['id_persona_trabajador' => 1, 'ruta_archivo_pfx' => 'public/secret.pfx', 'passphrase' => 'password', 'fecha_firma' => '2026-01-01'])->assertUnprocessable()->assertDontSee('password');
     }
 
     public function test_activity_order_duplicates_update_and_delete(): void
     {
         $this->administrator();
-        DB::table('firma')->insert(['id_firma' => 1]);
-        DB::table('firma')->insert(['id_firma' => 2]);
+        DB::table('certificado.firma')->insert(['id_firma' => 1]);
+        DB::table('certificado.firma')->insert(['id_firma' => 2]);
         $payload = ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1];
         $this->postJson('/api/actividades-firmas/create', $payload)->assertCreated();
         $this->postJson('/api/actividades-firmas/create', $payload)->assertConflict();
@@ -245,7 +250,7 @@ class CertificationModuleTest extends TestCase
         $model = new Certificate;
         $this->assertInstanceOf(BelongsTo::class, $model->tipoCertificado());
         $this->assertInstanceOf(HasMany::class, $model->documentos());
-        Schema::drop('certificado');
+        Schema::drop('certificado.certificado');
         $this->assertSame(503, CertificateData::list()['status']);
     }
 
@@ -265,23 +270,23 @@ class CertificationModuleTest extends TestCase
         $payload = ['id_persona_trabajador' => 1, 'ruta_archivo_pfx' => 'firmas/fixture.pfx', 'passphrase' => 'test-secret', 'fecha_firma' => '2026-01-01'];
         $this->postJson('/api/firmas/create', array_replace($payload, ['passphrase' => 'wrong-secret']))->assertUnprocessable()->assertDontSee('wrong-secret');
         $this->postJson('/api/firmas/create', $payload)->assertCreated()->assertJsonMissingPath('data.passphrase_cifrada')->assertJsonMissingPath('data.ruta_archivo_pfx')->assertDontSee('test-secret');
-        $encrypted = DB::table('firma')->value('passphrase_cifrada');
+        $encrypted = DB::table('certificado.firma')->value('passphrase_cifrada');
         $this->assertNotSame('test-secret', $encrypted);
         $this->assertSame('test-secret', Crypt::decryptString($encrypted));
         $this->postJson('/api/firmas/create', $payload)->assertConflict();
-        Schema::table('firma', fn (Blueprint $blueprint) => $blueprint->string('integration_metadata')->nullable());
-        DB::table('firma')->update(['integration_metadata' => 'preserve']);
-        $this->assertSame(['fecha_firma'], $this->updateColumns(fn () => $this->patchJson('/api/firmas/update/1', ['fecha_firma' => '2026-02-01', 'integration_metadata' => 'tampered'])->assertOk(), 'firma'));
-        $this->assertSame($encrypted, DB::table('firma')->value('passphrase_cifrada'));
-        $this->assertSame(['fecha_firma'], $this->updateColumns(fn () => $this->putJson('/api/firmas/update/1', $payload + ['integration_metadata' => 'tampered'])->assertOk(), 'firma'));
-        $this->assertSame($encrypted, DB::table('firma')->value('passphrase_cifrada'));
-        $this->assertSame('preserve', DB::table('firma')->value('integration_metadata'));
-        $this->assertSame('test-secret', Crypt::decryptString(DB::table('firma')->value('passphrase_cifrada')));
-        $this->assertSame([], $this->updateColumns(fn () => $this->patchJson('/api/firmas/update/1', ['fecha_firma' => '2026-01-01'])->assertOk(), 'firma'));
+        Schema::table('certificado.firma', fn (Blueprint $blueprint) => $blueprint->string('integration_metadata')->nullable());
+        DB::table('certificado.firma')->update(['integration_metadata' => 'preserve']);
+        $this->assertSame(['fecha_firma'], $this->updateColumns(fn () => $this->patchJson('/api/firmas/update/1', ['fecha_firma' => '2026-02-01', 'integration_metadata' => 'tampered'])->assertOk(), 'certificado.firma'));
+        $this->assertSame($encrypted, DB::table('certificado.firma')->value('passphrase_cifrada'));
+        $this->assertSame(['fecha_firma'], $this->updateColumns(fn () => $this->putJson('/api/firmas/update/1', $payload + ['integration_metadata' => 'tampered'])->assertOk(), 'certificado.firma'));
+        $this->assertSame($encrypted, DB::table('certificado.firma')->value('passphrase_cifrada'));
+        $this->assertSame('preserve', DB::table('certificado.firma')->value('integration_metadata'));
+        $this->assertSame('test-secret', Crypt::decryptString(DB::table('certificado.firma')->value('passphrase_cifrada')));
+        $this->assertSame([], $this->updateColumns(fn () => $this->patchJson('/api/firmas/update/1', ['fecha_firma' => '2026-01-01'])->assertOk(), 'certificado.firma'));
         $this->assertTrue(openssl_pkcs12_export($certificate, $pfx, $key, 'new-test-secret'));
         Storage::disk('local')->put('firmas/fixture.pfx', $pfx);
-        $this->assertSame(['passphrase_cifrada'], $this->updateColumns(fn () => $this->patchJson('/api/firmas/update/1', ['passphrase' => 'new-test-secret'])->assertOk()->assertJsonMissingPath('data.passphrase_cifrada'), 'firma'));
-        $this->assertSame('new-test-secret', Crypt::decryptString(DB::table('firma')->value('passphrase_cifrada')));
+        $this->assertSame(['passphrase_cifrada'], $this->updateColumns(fn () => $this->patchJson('/api/firmas/update/1', ['passphrase' => 'new-test-secret'])->assertOk()->assertJsonMissingPath('data.passphrase_cifrada'), 'certificado.firma'));
+        $this->assertSame('new-test-secret', Crypt::decryptString(DB::table('certificado.firma')->value('passphrase_cifrada')));
         $this->deleteJson('/api/firmas/delete/1')->assertOk();
         Storage::disk('local')->assertExists('firmas/fixture.pfx');
     }
@@ -300,17 +305,17 @@ class CertificationModuleTest extends TestCase
         $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2, 'id_practica' => 1]))->assertCreated();
         $this->postJson('/api/certificados/create', $this->certificate() + ['id_practica' => 1])->assertUnprocessable()->assertJsonValidationErrors('id_practica', 'data');
         $this->postJson('/api/certificados/create', $this->certificate() + ['id_practica' => 99])->assertUnprocessable();
-        DB::table('practica')->insert(['id_practica' => 2, 'id_persona_practicante' => 99]);
+        DB::table('gestion.practica')->insert(['id_practica' => 2, 'id_persona_practicante' => 99]);
         $this->postJson('/api/certificados/create', $this->certificate() + ['id_practica' => 2])->assertUnprocessable()->assertJsonValidationErrors('id_practica', 'data');
     }
 
     public function test_recognition_uses_the_worker_beneficiary(): void
     {
         $this->administrator();
-        DB::table('reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1]);
+        DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1]);
         $this->postJson('/api/certificados/create', $this->certificate() + ['id_reconocimiento' => 1])->assertCreated();
         $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2, 'id_reconocimiento' => 1]))->assertUnprocessable()->assertJsonValidationErrors('id_reconocimiento', 'data');
-        DB::table('reconocimiento')->insert(['id_reconocimiento' => 2, 'id_persona_trabajador' => 99]);
+        DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 2, 'id_persona_trabajador' => 99]);
         $this->postJson('/api/certificados/create', $this->certificate() + ['id_reconocimiento' => 2])->assertUnprocessable();
     }
 
@@ -321,8 +326,8 @@ class CertificationModuleTest extends TestCase
         $this->patchJson('/api/certificados/update/1', ['id_practica' => 1])->assertUnprocessable();
         $this->patchJson('/api/certificados/update/1', ['id_persona' => 2])->assertUnprocessable();
         $this->putJson('/api/certificados/update/1', array_replace($this->certificate(), ['id_persona' => 2, 'id_participacion' => 1]))->assertUnprocessable();
-        $this->assertSame(['id_participacion'], $this->updateColumns(fn () => $this->patchJson('/api/certificados/update/1', ['id_participacion' => null])->assertOk(), 'certificado'));
-        $this->assertSame(['id_persona', 'id_practica'], $this->updateColumns(fn () => $this->patchJson('/api/certificados/update/1', ['id_persona' => 2, 'id_practica' => 1])->assertOk(), 'certificado'));
+        $this->assertSame(['id_participacion'], $this->updateColumns(fn () => $this->patchJson('/api/certificados/update/1', ['id_participacion' => null])->assertOk(), 'certificado.certificado'));
+        $this->assertSame(['id_persona', 'id_practica'], $this->updateColumns(fn () => $this->patchJson('/api/certificados/update/1', ['id_persona' => 2, 'id_practica' => 1])->assertOk(), 'certificado.certificado'));
         $this->patchJson('/api/certificados/update/1', ['id_persona' => 1])->assertUnprocessable();
     }
 
@@ -333,29 +338,29 @@ class CertificationModuleTest extends TestCase
         $this->seedDocument();
         Storage::disk('local')->put('certificados/private.pdf', '%PDF-1.4 updated fixture');
         $this->patchJson('/api/certificados-documentos/update/1', ['hash_certificado' => str_repeat('b', 64)])->assertUnprocessable();
-        $this->assertSame(['hash_certificado'], $this->updateColumns(fn () => $this->patchJson('/api/certificados-documentos/update/1', ['estado' => 'GENERADO'])->assertOk()->assertJsonPath('data.hash_certificado', hash('sha256', '%PDF-1.4 updated fixture')), 'certificado_documento'));
+        $this->assertSame(['hash_certificado'], $this->updateColumns(fn () => $this->patchJson('/api/certificados-documentos/update/1', ['estado' => 'GENERADO'])->assertOk()->assertJsonPath('data.hash_certificado', hash('sha256', '%PDF-1.4 updated fixture')), 'certificado.certificado_documento'));
     }
 
     #[DataProvider('missingExternalTables')]
     public function test_missing_external_tables_are_controlled(string $table, string $prefix, array $extra): void
     {
         $this->administrator();
-        DB::table('reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1]);
+        DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1]);
         Schema::drop($table);
         $payload = $prefix === 'certificados' ? array_replace($this->certificate(), $extra) : $extra;
         $this->postJson("/api/$prefix/create", $payload)->assertStatus(503);
-        $this->assertSame(0, DB::table('certificado')->count());
+        $this->assertSame(0, DB::table('certificado.certificado')->count());
     }
 
     public static function missingExternalTables(): array
     {
         return [
-            'person' => ['persona', 'certificados', []],
-            'participation' => ['participacion', 'certificados', ['id_participacion' => 1]],
-            'practice' => ['practica', 'certificados', ['id_practica' => 1]],
-            'practitioner' => ['persona_practicante', 'certificados', ['id_practica' => 1]],
-            'worker' => ['persona_trabajador', 'certificados', ['id_reconocimiento' => 1]],
-            'activity' => ['actividad', 'actividades-firmas', ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]],
+            'person' => ['gestion.persona', 'certificados', []],
+            'participation' => ['certificado.participacion', 'certificados', ['id_participacion' => 1]],
+            'practice' => ['gestion.practica', 'certificados', ['id_practica' => 1]],
+            'practitioner' => ['gestion.persona_practicante', 'certificados', ['id_practica' => 1]],
+            'worker' => ['gestion.persona_trabajador', 'certificados', ['id_reconocimiento' => 1]],
+            'activity' => ['certificado.actividad', 'actividades-firmas', ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]],
         ];
     }
 
@@ -365,7 +370,8 @@ class CertificationModuleTest extends TestCase
         DB::connection()->enableQueryLog();
         try {
             $operation();
-            $updates = array_values(array_filter(DB::connection()->getQueryLog(), fn (array $query) => str_starts_with($query['query'], 'update "'.$table.'" set ')));
+            $wrapped = DB::connection()->getQueryGrammar()->wrapTable($table);
+            $updates = array_values(array_filter(DB::connection()->getQueryLog(), fn (array $query) => str_starts_with($query['query'], 'update '.$wrapped.' set ')));
             if ($updates === []) {
                 return [];
             }
@@ -384,19 +390,19 @@ class CertificationModuleTest extends TestCase
     {
         $this->administrator();
         CertificateData::store($this->certificate());
-        DB::table('reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']);
-        DB::table('firma')->insert(['id_firma' => 1]);
-        DB::table('actividad_firma')->insert(['id_actividad_firma' => 1, 'id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]);
+        DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']);
+        DB::table('certificado.firma')->insert(['id_firma' => 1]);
+        DB::table('certificado.actividad_firma')->insert(['id_actividad_firma' => 1, 'id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]);
         $this->seedDocument();
         Storage::disk('local')->put('certificados/private.pdf', '%PDF-1.4 fixture');
         $cases = [
-            ['tipos-certificado', 'tipo_certificado', 'estado', 'INACTIVO', 'ACTIVO', ['nombre_tipo' => 'Asistencia', 'estado' => 'ACTIVO']],
-            ['certificados', 'certificado', 'estado', false, true, $this->certificate()],
-            ['reconocimientos', 'reconocimiento', 'titulo', 'Otro título', 'Título', ['id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']],
-            ['actividades-firmas', 'actividad_firma', 'orden_firma', 2, 1, ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]],
-            ['certificados-documentos', 'certificado_documento', 'estado', 'ANULADO', 'GENERADO', ['id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'ruta_archivo' => 'certificados/private.pdf', 'estado' => 'GENERADO', 'fecha_generacion' => '2026-01-01']],
+            ['tipos-certificado', 'certificado.tipo_certificado', 'estado', 'INACTIVO', 'ACTIVO', ['nombre_tipo' => 'Asistencia', 'estado' => 'ACTIVO']],
+            ['certificados', 'certificado.certificado', 'estado', false, true, $this->certificate()],
+            ['reconocimientos', 'certificado.reconocimiento', 'titulo', 'Otro título', 'Título', ['id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']],
+            ['actividades-firmas', 'certificado.actividad_firma', 'orden_firma', 2, 1, ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]],
+            ['certificados-documentos', 'certificado.certificado_documento', 'estado', 'ANULADO', 'GENERADO', ['id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'ruta_archivo' => 'certificados/private.pdf', 'estado' => 'GENERADO', 'fecha_generacion' => '2026-01-01']],
         ];
-        DB::table('certificado_documento')->where('id_certificado_documento', 1)->update(['hash_certificado' => hash('sha256', '%PDF-1.4 fixture')]);
+        DB::table('certificado.certificado_documento')->where('id_certificado_documento', 1)->update(['hash_certificado' => hash('sha256', '%PDF-1.4 fixture')]);
         foreach ($cases as [$prefix, $table, $field, $changed, $original, $put]) {
             Schema::table($table, fn (Blueprint $blueprint) => $blueprint->string('integration_metadata')->nullable());
             DB::table($table)->update(['integration_metadata' => 'preserve']);
@@ -412,22 +418,22 @@ class CertificationModuleTest extends TestCase
         $this->administrator();
         CertificateData::store($this->certificate());
         $this->seedDocument();
-        DB::table('firma')->insert(['id_firma' => 1]);
-        DB::table('actividad_firma')->insert(['id_actividad_firma' => 1, 'id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]);
-        DB::table('reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']);
-        DB::table('certificado')->update(['id_reconocimiento' => 1]);
-        DB::table('certificado_firma')->insert(['id_certificado_firma' => 1, 'id_certificado_documento' => 1, 'id_firma' => 1, 'fecha_firma' => '2026-01-01', 'orden_firma' => 1]);
-        DB::table('consulta_certificado')->insert(['id_consulta_certificado' => 1, 'id_certificado_documento' => 1, 'dni_consulta' => '12345678', 'codigo_consulta' => 'TEST', 'fecha_consulta' => '2026-01-01', 'resultado' => 'ENCONTRADO']);
+        DB::table('certificado.firma')->insert(['id_firma' => 1]);
+        DB::table('certificado.actividad_firma')->insert(['id_actividad_firma' => 1, 'id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]);
+        DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']);
+        DB::table('certificado.certificado')->update(['id_reconocimiento' => 1]);
+        DB::table('certificado.certificado_firma')->insert(['id_certificado_firma' => 1, 'id_certificado_documento' => 1, 'id_firma' => 1, 'fecha_firma' => '2026-01-01', 'orden_firma' => 1]);
+        DB::table('certificado.consulta_certificado')->insert(['id_consulta_certificado' => 1, 'id_certificado_documento' => 1, 'dni_consulta' => '12345678', 'codigo_consulta' => 'TEST', 'fecha_consulta' => '2026-01-01', 'resultado' => 'ENCONTRADO']);
         foreach (['PUT', 'PATCH'] as $method) {
             $cases = [
-                ['tipos-certificado', 'tipo_certificado', ['nombre_tipo' => 'Otro nombre', 'estado' => 'ACTIVO']],
-                ['certificados', 'certificado', $this->certificate() + ['fecha_emision' => '2026-02-01']],
-                ['reconocimientos', 'reconocimiento', ['id_persona_trabajador' => 1, 'titulo' => 'Otro título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']],
-                ['firmas', 'firma', ['id_persona_trabajador' => 1, 'ruta_archivo_pfx' => 'firmas/fixture.pfx', 'passphrase' => 'test-only', 'fecha_firma' => '2026-01-01']],
-                ['actividades-firmas', 'actividad_firma', ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 2]],
-                ['certificados-documentos', 'certificado_documento', ['id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'ruta_archivo' => 'certificados/private.pdf', 'estado' => 'ANULADO', 'fecha_generacion' => '2026-01-01']],
-                ['certificados-firmas', 'certificado_firma', ['id_certificado_documento' => 1, 'id_firma' => 1, 'fecha_firma' => '2026-01-02', 'orden_firma' => 1]],
-                ['consultas-certificado', 'consulta_certificado', ['id_certificado_documento' => 1, 'dni_consulta' => '12345678', 'codigo_consulta' => 'TEST', 'fecha_consulta' => '2026-01-01', 'resultado' => 'ALTERADO']],
+                ['tipos-certificado', 'certificado.tipo_certificado', ['nombre_tipo' => 'Otro nombre', 'estado' => 'ACTIVO']],
+                ['certificados', 'certificado.certificado', $this->certificate() + ['fecha_emision' => '2026-02-01']],
+                ['reconocimientos', 'certificado.reconocimiento', ['id_persona_trabajador' => 1, 'titulo' => 'Otro título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']],
+                ['firmas', 'certificado.firma', ['id_persona_trabajador' => 1, 'ruta_archivo_pfx' => 'firmas/fixture.pfx', 'passphrase' => 'test-only', 'fecha_firma' => '2026-01-01']],
+                ['actividades-firmas', 'certificado.actividad_firma', ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 2]],
+                ['certificados-documentos', 'certificado.certificado_documento', ['id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'ruta_archivo' => 'certificados/private.pdf', 'estado' => 'ANULADO', 'fecha_generacion' => '2026-01-01']],
+                ['certificados-firmas', 'certificado.certificado_firma', ['id_certificado_documento' => 1, 'id_firma' => 1, 'fecha_firma' => '2026-01-02', 'orden_firma' => 1]],
+                ['consultas-certificado', 'certificado.consulta_certificado', ['id_certificado_documento' => 1, 'dni_consulta' => '12345678', 'codigo_consulta' => 'TEST', 'fecha_consulta' => '2026-01-01', 'resultado' => 'ALTERADO']],
             ];
             foreach ($cases as [$prefix, $table, $payload]) {
                 $this->assertSame([], $this->updateColumns(fn () => $this->json($method, "/api/$prefix/update/1", $payload)->assertConflict(), $table));
@@ -437,6 +443,8 @@ class CertificationModuleTest extends TestCase
 
     public function test_user_crud_contract_remains_available(): void
     {
+        $this->actingAs(new User(['name' => 'Authorized fixture']));
+        Gate::policy(User::class, ModulePolicy::class);
         Schema::create('users', function (Blueprint $table) {
             $table->increments('id');
             $table->string('name');

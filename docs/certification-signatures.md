@@ -105,22 +105,24 @@ de Signature omiten tanto la contraseña cifrada como la ruta PFX.
 | Modelo | Relaciones Eloquent |
 |---|---|
 | CertificateType | hasMany certificados |
-| Certificate | belongsTo tipoCertificado; belongsTo reconocimiento opcional; hasMany documentos |
+| Certificate | belongsTo tipoCertificado, reconocimiento opcional y participation opcional; hasMany documentos |
 | Recognition | hasMany certificados |
 | CertificateDocument | belongsTo certificado; hasMany firmas y consultas |
 | Signature | hasMany certificadosFirmas y actividadesFirmas |
 | CertificateSignature | belongsTo documento y firma |
 | CertificateInquiry | belongsTo documento |
-| ActivitySignature | belongsTo firma |
+| ActivitySignature | belongsTo firma y activity |
 
-Se declaran explícitamente tablas y PK en mayúsculas, sin timestamps automáticos,
+Se declaran explícitamente tablas y columnas en minúsculas, con tablas del módulo
+calificadas por el esquema `certificado`, sin timestamps automáticos,
 según los campos solicitados. Se configuran fillable, hidden y casts de fechas,
 fechas/horas, enteros y booleanos según corresponda.
 
-No existen modelos ni migraciones de PERSONA, PERSONA_TRABAJADOR, PARTICIPACION,
-PRACTICA o ACTIVIDAD en el repositorio. Sus FK se validan mediante consultas a
-las tablas correspondientes, sin inventar modelos de otros módulos. Las relaciones
-Eloquent con esas entidades quedan pendientes hasta que existan sus modelos reales.
+Existen los modelos Activity y Participation después del merge. Sus relaciones
+internas se completaron utilizando esas clases reales. No existen modelos de
+`gestion.persona`, `gestion.persona_trabajador`, `gestion.persona_practicante`,
+`gestion.practica`, `gestion.area` o `gestion.persona_ponente` en esta rama.
+Sus referencias se comprueban con consultas calificadas, sin duplicar modelos.
 
 ## Validaciones y conservación
 
@@ -139,8 +141,8 @@ Eloquent con esas entidades quedan pendientes hasta que existan sus modelos real
   Las modificaciones se bloquean cuando existen firmas o consultas asociadas.
 - Signature: trabajador existente, archivo real debajo de `firmas/` en el disco local
   privado; comprobación de contenedor PKCS#12, contraseña y correspondencia entre
-  certificado y clave privada. Recibe `PASSPHRASE` y usa `Crypt::encryptString`
-  para guardar `PASSPHRASE_CIFRADA`, verificando el límite de 255 caracteres.
+  certificado y clave privada. Recibe `passphrase` y usa `Crypt::encryptString`
+  para guardar `passphrase_cifrada`, verificando el límite de 255 caracteres.
   Nunca recibe ciphertext elegido por el cliente. En PATCH puede omitirse la
   contraseña para conservarla. No modifica ni elimina referencias utilizadas.
 - CertificateSignature: FK y orden positivo, reglas de unicidad documento/firma y
@@ -183,19 +185,24 @@ PUT/PATCH, paginación, FK, orígenes, duplicados, 404/422/409, confidencialidad
 historial, hash sobre bytes y un PFX real generado únicamente como fixture de pruebas.
 También comprueba el contrato CRUD original de User en memoria.
 
-Resultado de la suite completa: **16 pruebas aprobadas, 240 aserciones**
-(14 pruebas del módulo y 2 preexistentes). Las 48 rutas nuevas están registradas.
+Resultado de la suite completa posterior a la corrección del merge:
+**85 pruebas aprobadas, 1822 aserciones**. Incluye los dos bloques del módulo,
+90 rutas administrativas y regresiones de User. Las pruebas de autorización usan
+políticas limitadas a modelos y usuarios de prueba, sin Gate global permisivo.
 Se ejecutaron Laravel Pint y verificación de whitespace con `git diff --check`.
 
 ## Límites de despliegue
 
-1. La consulta de solo lectura al esquema configurado falló. No se puede afirmar
+1. No se consultó la conexión remota en esta corrección: no está confirmada como
+   desarrollo o pruebas. No se puede afirmar
    que las tablas existan ni que sus nombres, nulabilidad y PK coincidan con la BD
    real. La implementación usa los nombres exactos del requerimiento y devuelve
    un error controlado si faltan tablas; debe contrastarse con el DDL institucional.
-2. Se necesitan las tablas externas y sus columnas reales para validar los orígenes.
-   Se acepta ID_PERSONA directo o ID_PERSONA_TRABAJADOR enlazado a ID_PERSONA.
-   Un origen cuya titularidad no pueda comprobarse se rechaza.
+2. Las consultas siguen el contrato confirmado: participación mediante
+   `certificado.participacion.id_persona`; reconocimiento mediante
+   `gestion.persona_trabajador.id_persona`; práctica mediante
+   `gestion.practica.id_persona_practicante` y `gestion.persona_practicante.id_persona`.
+   Se conserva la regla de cero o un origen. Debe comprobarse el DDL físico.
 3. Se necesitan políticas administrativas reales antes de habilitar acceso.
 4. Se necesita una integración criptográfica que proporcione evidencia verificable
    para habilitar escrituras en CertificateSignature. No se simula éxito.
@@ -204,3 +211,50 @@ Se ejecutaron Laravel Pint y verificación de whitespace con `git diff --check`.
    real (especialmente nombres y códigos globales). No se agregaron restricciones,
    índices ni migraciones por instrucción del usuario. No se verificó concurrencia
    contra MySQL/PostgreSQL con SQLite en memoria.
+
+## Integración posterior al merge
+
+Las 15 entidades consultan `certificado.*` y sus dependencias `gestion.*`.
+No se cambió el search_path. Las validaciones de actividades seleccionan la misma
+conexión predeterminada que sus Data, sin forzar PostgreSQL en las pruebas SQLite.
+
+Las 90 rutas requieren Sanctum y autorización por operación. Actividades utiliza
+AuthorizeModuleOperation con las capacidades nativas viewAny, view, create,
+update y delete. Sin políticas institucionales devuelve 403. Se agregó HasApiTokens
+al modelo autenticable existente; una prueba con Bearer confirma que autenticar
+no equivale a autorizar. La correspondencia del usuario, roles y permisos con
+el esquema `acceso` continúa pendiente de integrar.
+
+Las seis rutas administrativas de User también requieren Sanctum y autorización
+por operación sobre el modelo autenticable actual. UserSecurityTest comprueba
+401 sin sesión, 403 sin políticas antes de consultar datos y lectura sin permisos
+de escritura. En total hay 96 rutas administrativas protegidas y `/api/user`.
+
+Se inspeccionaron, sin fusionarlas ni ejecutarlas, las referencias Git disponibles
+de `origin/dev-juan`. Su migración de acceso declara `acceso.usuario` con
+`id_usuario`, `id_persona`, `correo` y `password_hash`, sin timestamps. Su modelo
+institucional, sus roles/permisos y su autenticación JWT en cookie no están
+incorporados en esta rama, que conserva `users` y Sanctum. Por tanto, cambiar solo
+el esquema de la tabla dejaría columnas y contratos incompatibles. Se necesita
+decidir si se integra la autenticación JWT existente o se adapta el contrato
+institucional a Sanctum. No se inventó una tabla `acceso.users`, permisos ni una
+ubicación para tokens. La migración técnica de Sanctum disponible sigue declarando
+`personal_access_tokens` sin esquema; su existencia física no se ha verificado.
+
+Las participaciones certificadas conservan beneficiario y datos de origen; las
+participaciones con asistencias no pueden reasignarse. Las sesiones con asistencia
+no pueden trasladarse de actividad. Los cambios del periodo deben incluir todas
+las sesiones existentes. Actividades y sesiones que sustentan certificados
+conservan sus datos históricos. No se agregan, modifican ni borran asistencias
+de participaciones ya certificadas. Los borrados de actividad también comprueban
+ponentes y firmas asignadas. Los 15 UPDATE filtran columnas autorizadas y valores
+sin cambios; hash y ciphertext siguen bajo control exclusivo del backend.
+
+Está pendiente definir si asistencia admite un registro por participación/sesión
+o varios intervalos. Se conserva el comportamiento anterior, sin agregar UNIQUE,
+deduplicar datos ni prohibir intervalos múltiples sin una decisión institucional.
+
+ModuleIntegrationTest ejecuta ambos bloques con esquemas adjuntos SQLite en
+memoria, prueba CRUD de actividades y su relación con certificados, protección
+de rutas, permisos por operación, históricos y columnas reales de UPDATE.
+SQLite no acredita restricciones PostgreSQL, aislamiento ni concurrencia real.

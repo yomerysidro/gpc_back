@@ -41,8 +41,8 @@ class ActivitySpeakerController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'id_actividad' => ['bail', 'required', 'integer', Rule::exists('pgsql.certificado.actividad', 'id_actividad')],
-                'id_persona_ponente' => ['bail', 'required', 'integer', Rule::exists('pgsql.gestion.persona_ponente', 'id_persona_ponente')],
+                'id_actividad' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.actividad', 'id_actividad')],
+                'id_persona_ponente' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.gestion.persona_ponente', 'id_persona_ponente')],
             ]);
 
             if ($validator->fails()) {
@@ -71,8 +71,8 @@ class ActivitySpeakerController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'id_actividad' => ['sometimes', 'bail', 'required', 'integer', Rule::exists('pgsql.certificado.actividad', 'id_actividad')],
-                'id_persona_ponente' => ['sometimes', 'bail', 'required', 'integer', Rule::exists('pgsql.gestion.persona_ponente', 'id_persona_ponente')],
+                'id_actividad' => ['sometimes', 'bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.actividad', 'id_actividad')],
+                'id_persona_ponente' => ['sometimes', 'bail', 'required', 'integer', Rule::exists(config('database.default').'.gestion.persona_ponente', 'id_persona_ponente')],
             ]);
 
             if ($validator->fails()) {

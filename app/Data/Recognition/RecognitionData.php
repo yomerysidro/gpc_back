@@ -12,7 +12,7 @@ use Throwable;
 
 class RecognitionData
 {
-    private const TABLE = 'reconocimiento';
+    private const TABLE = 'certificado.reconocimiento';
 
     private const KEY = 'id_reconocimiento';
 
@@ -27,7 +27,7 @@ class RecognitionData
 
     private const FOREIGN_KEYS = [
         'id_persona_trabajador' => [
-            0 => 'persona_trabajador',
+            0 => 'gestion.persona_trabajador',
             1 => 'id_persona_trabajador',
         ],
     ];
@@ -37,7 +37,7 @@ class RecognitionData
 
     private const DEPENDENCIES = [
         0 => [
-            0 => 'certificado',
+            0 => 'certificado.certificado',
             1 => 'id_reconocimiento',
         ],
     ];
@@ -188,7 +188,7 @@ class RecognitionData
     private static function columns(): array
     {
         $columns = array_merge([self::KEY], array_keys(self::RULES));
-        if (self::TABLE === 'certificado_documento') {
+        if (self::TABLE === 'certificado.certificado_documento') {
             $columns[] = 'hash_certificado';
         }
 

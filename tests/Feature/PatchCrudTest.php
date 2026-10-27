@@ -2,10 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Models\User;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Fixtures\ModulePolicy;
 use Tests\TestCase;
 
 class PatchCrudTest extends TestCase
@@ -16,11 +21,32 @@ class PatchCrudTest extends TestCase
     {
         parent::setUp();
         config(['app.key' => 'base64:'.base64_encode(str_repeat('a', 32))]);
+        $this->actingAs(new User(['name' => 'Authorized fixture']));
+        Gate::policy(User::class, ModulePolicy::class);
     }
 
     #[DataProvider('crudUpdateRequests')]
     public function test_patch_and_put_reach_validation_for_each_crud(string $path, string $field): void
     {
+        $prefix = explode('/', $path)[2];
+        if ($prefix === 'users') {
+            $this->createUser();
+        }
+        $entities = ['attendance' => 'Attendance', 'activity' => 'Activity', 'activity-session' => 'ActivitySession', 'ativicty-type' => 'ActivityType', 'activity-speaker' => 'ActivitySpeaker', 'participation' => 'Participation', 'participation-type' => 'ParticipationType'];
+        if (isset($entities[$prefix])) {
+            if (! in_array('certificado', array_column(DB::select('PRAGMA database_list'), 'name'), true)) {
+                DB::statement("ATTACH DATABASE ':memory:' AS certificado");
+            }
+            $entity = $entities[$prefix];
+            $class = "App\\Models\\$entity\\$entity";
+            $model = new $class;
+            Schema::create($model->getTable(), function (Blueprint $table) use ($model) {
+                $table->increments($model->getKeyName());
+            });
+            DB::table($model->getTable())->insert([$model->getKeyName() => 1]);
+            $this->actingAs(new User(['name' => 'Authorized fixture']));
+            Gate::policy($class, ModulePolicy::class);
+        }
         foreach (['PATCH', 'PUT'] as $method) {
             $this->json($method, $path, [$field => null])
                 ->assertUnprocessable()
