@@ -26,6 +26,15 @@ class Module extends Model
         'estado' => 'boolean',
     ];
 
+    /**
+     * Prefijo de las claves de sus permisos: la url sin la "/" inicial y con
+     * las "/" internas como "-" (/reportes/anuales → reportes-anuales).
+     */
+    public function slug(): string
+    {
+        return str_replace('/', '-', ltrim($this->url, '/'));
+    }
+
     public function roles(): BelongsToMany
     {
         return $this->belongsToMany(Role::class, 'acceso.rol_modulo', 'id_modulo', 'id_rol');

@@ -8,8 +8,9 @@ use Illuminate\Support\Facades\DB;
 use Throwable;
 
 /**
- * Si el módulo no existe se devuelve success true y data null:
- * el controller responde 404.
+ * Si el módulo no existe se devuelve success true y data null (el controller
+ * responde 404). Las reglas de negocio incumplidas devuelven success false
+ * con 'code' (409) para que el controller no las confunda con un 500.
  */
 class ModuleData
 {
@@ -96,13 +97,26 @@ class ModuleData
 
     /**
      * Actualizar nombre, url e imagen del módulo.
+     *
+     * La url no puede cambiar si el módulo tiene permisos: sus claves llevan
+     * el slug de la url como prefijo (PermissionRequest).
      */
     public static function updateModule(int $idModule, array $data): array
     {
         DB::beginTransaction();
 
         try {
-            $module = Module::find($idModule);
+            $module = Module::lockForUpdate()->find($idModule);
+
+            if ($module && $data['url'] !== $module->url && $module->permissions()->exists()) {
+                DB::rollBack();
+
+                return [
+                    'success' => false,
+                    'code' => 409,
+                    'message' => 'No se puede cambiar la URL de un módulo que tiene permisos: las claves de permiso dependen de ella'
+                ];
+            }
 
             if ($module) {
                 $module->update([

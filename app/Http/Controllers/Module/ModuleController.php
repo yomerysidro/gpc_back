@@ -46,12 +46,13 @@ class ModuleController extends Controller
     }
 
     /**
-     * data null means the module does not exist.
+     * data null means the module does not exist; a failure without
+     * 'code' is a database error.
      */
     private function respond(array $response, int $code = 200): JsonResponse
     {
         if (! $response['success']) {
-            return $this->error($response['message'], 500);
+            return $this->error($response['message'], $response['code'] ?? 500);
         }
 
         if ($response['data'] === null) {
