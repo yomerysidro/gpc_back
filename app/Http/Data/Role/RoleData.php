@@ -16,6 +16,14 @@ class RoleData
     private const ADMIN_ROLE = 'Administrador';
 
     /**
+     * Módulos (por url) y permisos (por clave) que el rol Administrador no
+     * puede perder: sin ellos nadie podría volver a asignar roles ni usuarios.
+     */
+    private const ADMIN_MODULES = ['/roles', '/usuarios'];
+
+    private const ADMIN_PERMISSIONS = ['roles.ver', 'roles.editar', 'usuarios.ver', 'usuarios.editar'];
+
+    /**
      * Listar los roles con la cantidad de usuarios de cada uno.
      */
     public static function getRoles(): array
@@ -215,6 +223,25 @@ class RoleData
                 ];
             }
 
+            if ($role->nombre === self::ADMIN_ROLE) {
+                $removesProtected = DB::table('acceso.rol_modulo as rm')
+                    ->join('acceso.modulo as m', 'm.id_modulo', '=', 'rm.id_modulo')
+                    ->where('rm.id_rol', $idRole)
+                    ->whereIn('m.url', self::ADMIN_MODULES)
+                    ->whereNotIn('rm.id_modulo', $moduleIds)
+                    ->exists();
+
+                if ($removesProtected) {
+                    DB::rollBack();
+
+                    return [
+                        'success' => false,
+                        'code' => 409,
+                        'message' => 'No se puede quitar este módulo al rol Administrador'
+                    ];
+                }
+            }
+
             $role->modules()->sync($moduleIds);
 
             DB::table('acceso.rol_modulo_permiso')
@@ -320,6 +347,25 @@ class RoleData
                     'message' => 'Hay permisos que no se pueden asignar al rol.',
                     'data' => $errors
                 ];
+            }
+
+            if ($role->nombre === self::ADMIN_ROLE) {
+                $removesProtected = DB::table('acceso.rol_modulo_permiso as rmp')
+                    ->join('acceso.permiso as p', 'p.id_permiso', '=', 'rmp.id_permiso')
+                    ->where('rmp.id_rol', $idRole)
+                    ->whereIn('p.clave', self::ADMIN_PERMISSIONS)
+                    ->whereNotIn('rmp.id_permiso', $pairs->pluck('idPermiso'))
+                    ->exists();
+
+                if ($removesProtected) {
+                    DB::rollBack();
+
+                    return [
+                        'success' => false,
+                        'code' => 409,
+                        'message' => 'No se puede quitar este permiso al rol Administrador'
+                    ];
+                }
             }
 
             DB::table('acceso.rol_modulo_permiso')
