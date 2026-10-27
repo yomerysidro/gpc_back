@@ -5,6 +5,7 @@ namespace App\Http\Controllers\User;
 use App\Http\Controllers\Controller;
 use App\Http\Data\User\UserData;
 use App\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -20,7 +21,7 @@ class UserController extends Controller
     {
         $response = UserData::getUsers();
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 500
@@ -40,7 +41,7 @@ class UserController extends Controller
     {
         $response = UserData::getUserById($idUser);
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 404
@@ -92,7 +93,7 @@ class UserController extends Controller
             $validator->validated()
         );
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 400
@@ -109,16 +110,18 @@ class UserController extends Controller
     /**
      * Update user.
      */
-    public function update(Request $request, int $idUser)
+    public function update(Request $request, int $idUser): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'name' => [
+                ...($request->isMethod('PATCH') ? ['sometimes'] : []),
                 'required',
                 'string',
                 'max:255',
             ],
 
             'email' => [
+                ...($request->isMethod('PATCH') ? ['sometimes'] : []),
                 'required',
                 'email',
                 'max:255',
@@ -147,7 +150,7 @@ class UserController extends Controller
             $validator->validated()
         );
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 404
@@ -167,7 +170,7 @@ class UserController extends Controller
     {
         $response = UserData::deleteUser($idUser);
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 404
