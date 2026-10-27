@@ -59,6 +59,10 @@ return new class extends Migration
             $table->foreignId('id_persona')->constrained('gestion.persona', 'id_persona');
             $table->string('correo', 150)->unique();
             $table->string('password_hash', 255);
+            $table->boolean('estado')->default(true);
+            $table->integer('intentos_fallidos')->default(0);
+            $table->timestamp('bloqueado_hasta')->nullable();
+            $table->timestamp('ultimo_acceso')->nullable();
         });
 
         Schema::create('acceso.usuario_rol', function (Blueprint $table) {

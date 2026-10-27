@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\DocumentType;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -83,6 +84,10 @@ class TipoDocumentoData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al crear el registro.',
@@ -111,7 +116,10 @@ class TipoDocumentoData
                     ];
                 }
 
-                DB::table('gestion.tipo_documento')->where('id_tipo_documento', $id)->update($data);
+                $changes = GestionIntegrity::changes('gestion.tipo_documento', $data, $record);
+                if ($changes !== []) {
+                    DB::table('gestion.tipo_documento')->where('id_tipo_documento', $id)->update($changes);
+                }
                 $updatedRecord = DB::table('gestion.tipo_documento')->where('id_tipo_documento', $id)->first();
 
                 return [
@@ -122,6 +130,10 @@ class TipoDocumentoData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al actualizar el registro.',
@@ -138,6 +150,8 @@ class TipoDocumentoData
     {
         try {
             return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.tipo_documento', $id);
+
                 $record = DB::table('gestion.tipo_documento')->where('id_tipo_documento', $id)->lockForUpdate()->first();
 
                 if (! $record) {
@@ -159,6 +173,10 @@ class TipoDocumentoData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al eliminar el registro.',

@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\PersonDocument;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -83,6 +84,10 @@ class PersonaDocumentoData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al crear el registro.',
@@ -111,7 +116,11 @@ class PersonaDocumentoData
                     ];
                 }
 
-                DB::table('gestion.persona_documento')->where('id_persona_documento', $id)->update($data);
+                $changes = GestionIntegrity::changes('gestion.persona_documento', $data, $record);
+                GestionIntegrity::assertHistoricalUpdate('gestion.persona_documento', $record, $changes);
+                if ($changes !== []) {
+                    DB::table('gestion.persona_documento')->where('id_persona_documento', $id)->update($changes);
+                }
                 $updatedRecord = DB::table('gestion.persona_documento')->where('id_persona_documento', $id)->first();
 
                 return [
@@ -122,6 +131,10 @@ class PersonaDocumentoData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al actualizar el registro.',
@@ -138,6 +151,8 @@ class PersonaDocumentoData
     {
         try {
             return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.persona_documento', $id);
+
                 $record = DB::table('gestion.persona_documento')->where('id_persona_documento', $id)->lockForUpdate()->first();
 
                 if (! $record) {
@@ -159,6 +174,10 @@ class PersonaDocumentoData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al eliminar el registro.',

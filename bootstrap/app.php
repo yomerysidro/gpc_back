@@ -1,5 +1,10 @@
 <?php
 
+use App\Http\Middleware\Auth\AuthenticateCookie;
+use App\Http\Middleware\Auth\EnsurePermission;
+use App\Http\Middleware\Auth\EnsureRole;
+use App\Services\Auth\JwtService;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -13,9 +18,22 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->encryptCookies(except: [JwtService::COOKIE]);
+        $middleware->alias(['auth.cookie' => AuthenticateCookie::class, 'role' => EnsureRole::class, 'permission' => EnsurePermission::class]);
+        $middleware->redirectGuestsTo(
+            fn (Request $request) => $request->is('api/*') ? null : route('login'),
+        );
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->render(function (AuthenticationException $exception, Request $request) {
+            if ($request->is('api/*')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No autenticado.',
+                    'data' => [],
+                ], 401);
+            }
+        });
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
         );

@@ -2,116 +2,185 @@
 
 namespace App\Http\Data\User;
 
+use App\Models\Role\Role;
+use App\Models\User\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Throwable;
 
+/**
+ * Si el usuario no existe se devuelve success true y data null (el controller
+ * responde 404). Las reglas de negocio incumplidas devuelven success false
+ * con 'code' (409/422) para que el controller no las confunda con un 500.
+ */
 class UserData
 {
+    private const PER_PAGE = 10;
+
     /**
-     * Listar todos los usuarios.
+     * Listar usuarios paginados.
+     *
+     * $filters: search (nombre completo, DNI o correo), idRol, estado y page.
      */
-    public static function getUsers(): array
+    public static function getUsers(array $filters): array
     {
         try {
-            $users = DB::table('users')
-                ->select(
-                    'id',
-                    'name',
-                    'email',
-                    'created_at',
-                    'updated_at'
-                )
-                ->orderBy('id', 'desc')
-                ->get();
+            $query = self::baseQuery();
+
+            if (($filters['search'] ?? '') !== '') {
+                $search = '%'.addcslashes($filters['search'], '%_\\').'%';
+
+                $query->where(function ($query) use ($search) {
+                    $query->whereRaw(
+                        "concat_ws(' ', p.nombres, p.apellido_paterno, p.apellido_materno) ilike ?",
+                        [$search]
+                    )
+                        ->orWhere('acceso.usuario.correo', 'ilike', $search)
+                        ->orWhereExists(fn ($query) => self::dniQuery($query)
+                            ->where('pd.numero_documento', 'ilike', $search));
+                });
+            }
+
+            if (isset($filters['idRol'])) {
+                $query->whereHas('roles', fn ($query) => $query->where('acceso.rol.id_rol', $filters['idRol']));
+            }
+
+            if (isset($filters['estado'])) {
+                $query->where('acceso.usuario.estado', $filters['estado']);
+            }
+
+            $page = $filters['page'] ?? 1;
+            $total = (clone $query)->count();
+
+            $users = $query->orderBy('acceso.usuario.id_usuario')
+                ->forPage($page, self::PER_PAGE)
+                ->get()
+                ->map(fn (User $user) => self::format($user));
 
             return [
                 'success' => true,
                 'message' => 'Usuarios obtenidos correctamente.',
-                'data' => $users
+                'data' => [
+                    'users' => $users,
+                    'meta' => [
+                        'total' => $total,
+                        'page' => $page,
+                        'perPage' => self::PER_PAGE,
+                    ],
+                ],
             ];
 
         } catch (Throwable $e) {
             return [
                 'success' => false,
-                'message' => 'Error al obtener los usuarios.'
+                'message' => 'Error al obtener los usuarios.',
             ];
         }
     }
-
 
     /**
      * Obtener un usuario por ID.
      */
-    public static function getUserById(int $id): array
+    public static function getUserById(int $idUser): array
     {
         try {
-            $user = DB::table('users')
-                ->select(
-                    'id',
-                    'name',
-                    'email',
-                    'created_at',
-                    'updated_at'
-                )
-                ->where('id', $id)
-                ->first();
-
-            if (!$user) {
-                return [
-                    'success' => false,
-                    'message' => 'Usuario no encontrado.'
-                ];
-            }
+            $user = self::find($idUser);
 
             return [
                 'success' => true,
-                'message' => 'Usuario obtenido correctamente.',
-                'data' => $user
+                'message' => $user ? 'Usuario obtenido correctamente.' : 'Usuario no encontrado.',
+                'data' => $user ? self::format($user) : null,
             ];
 
         } catch (Throwable $e) {
             return [
                 'success' => false,
-                'message' => 'Error al obtener el usuario.'
+                'message' => 'Error al obtener el usuario.',
             ];
         }
     }
 
-
     /**
-     * Crear usuario.
+     * Crear la cuenta de acceso de una persona, identificada por su DNI.
+     *
+     * Si la persona no existe se crea (persona + persona_documento) y entonces
+     * nombres y apellidoPaterno son obligatorios. Si existe no se modifican sus
+     * datos: pertenecen a gestion. La contraseña es aleatoria y nadie la conoce;
+     * el usuario define la suya con el enlace que envía el controller.
      */
     public static function createUser(array $data): array
     {
         DB::beginTransaction();
 
         try {
-            $idUser = DB::table('users')->insertGetId([
-                'name'       => $data['name'],
-                'email'      => $data['email'],
-                'password'   => Hash::make($data['password']),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ], 'id');
+            $personId = DB::table('gestion.persona_documento as pd')
+                ->join('gestion.tipo_documento as td', 'td.id_tipo_documento', '=', 'pd.id_tipo_documento')
+                ->where('td.nombre', 'DNI')
+                ->where('pd.numero_documento', $data['dni'])
+                ->value('pd.id_persona');
 
-            $user = DB::table('users')
-                ->select(
-                    'id',
-                    'name',
-                    'email',
-                    'created_at',
-                    'updated_at'
-                )
-                ->where('id', $idUser)
-                ->first();
+            if ($personId && User::where('id_persona', $personId)->exists()) {
+                DB::rollBack();
+
+                return [
+                    'success' => false,
+                    'code' => 409,
+                    'message' => 'Esta persona ya tiene una cuenta de acceso',
+                ];
+            }
+
+            if (! $personId) {
+                $errors = [];
+
+                foreach (['nombres' => 'nombres', 'apellidoPaterno' => 'apellido paterno'] as $field => $label) {
+                    if (empty($data[$field])) {
+                        $errors[$field] = ["El campo $label es obligatorio cuando la persona no está registrada."];
+                    }
+                }
+
+                if ($errors) {
+                    DB::rollBack();
+
+                    return [
+                        'success' => false,
+                        'code' => 422,
+                        'message' => 'La persona no está registrada: faltan sus datos.',
+                        'data' => $errors,
+                    ];
+                }
+
+                $personId = DB::table('gestion.persona')->insertGetId([
+                    'nombres' => $data['nombres'],
+                    'apellido_paterno' => $data['apellidoPaterno'],
+                    'apellido_materno' => $data['apellidoMaterno'] ?? null,
+                    'fecha_registro' => now()->toDateString(),
+                ], 'id_persona');
+
+                DB::table('gestion.persona_documento')->insert([
+                    'id_persona' => $personId,
+                    'id_tipo_documento' => DB::table('gestion.tipo_documento')->where('nombre', 'DNI')->value('id_tipo_documento'),
+                    'numero_documento' => $data['dni'],
+                    'estado' => 'Activo',
+                ]);
+            }
+
+            $user = User::create([
+                'id_persona' => $personId,
+                'correo' => $data['correo'],
+                'password_hash' => Hash::make(Str::random(40)),
+                'estado' => true,
+            ]);
+
+            $user->roles()->sync([$data['idRol']]);
 
             DB::commit();
 
             return [
                 'success' => true,
                 'message' => 'Usuario registrado correctamente.',
-                'data' => $user
+                'data' => self::format(self::find($user->id_usuario)),
             ];
 
         } catch (Throwable $e) {
@@ -119,68 +188,55 @@ class UserData
 
             return [
                 'success' => false,
-                'message' => 'Error al registrar el usuario.'
+                'message' => 'Error al registrar el usuario.',
             ];
         }
     }
 
-
     /**
-     * Actualizar usuario.
+     * Actualizar el correo y el rol del usuario (un rol por usuario).
+     *
+     * No se permite si el cambio de rol deja al sistema sin ningún
+     * Administrador activo.
      */
-    public static function updateUser(int $id, array $data): array
+    public static function updateUser(int $idUser, array $data): array
     {
         DB::beginTransaction();
 
         try {
-            $user = DB::table('users')
-                ->where('id', $id)
-                ->first();
+            $user = User::with('roles')->lockForUpdate()->find($idUser);
 
-            if (!$user) {
+            if (! $user) {
+                DB::commit();
+
+                return [
+                    'success' => true,
+                    'message' => 'Usuario no encontrado.',
+                    'data' => null,
+                ];
+            }
+
+            $newRole = Role::find($data['idRol']);
+
+            if (! $newRole->isAdministrator() && self::isLastActiveAdmin($user)) {
                 DB::rollBack();
 
                 return [
                     'success' => false,
-                    'message' => 'Usuario no encontrado.'
+                    'code' => 409,
+                    'message' => 'No se puede quitar el rol al último Administrador activo.',
                 ];
             }
 
-            $updateData = [
-                'name'       => $data['name'],
-                'email'      => $data['email'],
-                'updated_at' => now(),
-            ];
-
-            /*
-             * La contraseña solamente se modifica
-             * si se envía una nueva contraseña.
-             */
-            if (!empty($data['password'])) {
-                $updateData['password'] = Hash::make($data['password']);
-            }
-
-            DB::table('users')
-                ->where('id', $id)
-                ->update($updateData);
-
-            $updatedUser = DB::table('users')
-                ->select(
-                    'id',
-                    'name',
-                    'email',
-                    'created_at',
-                    'updated_at'
-                )
-                ->where('id', $id)
-                ->first();
+            $user->update(['correo' => $data['correo']]);
+            $user->roles()->sync([$data['idRol']]);
 
             DB::commit();
 
             return [
                 'success' => true,
                 'message' => 'Usuario actualizado correctamente.',
-                'data' => $updatedUser
+                'data' => self::format(self::find($idUser)),
             ];
 
         } catch (Throwable $e) {
@@ -188,43 +244,50 @@ class UserData
 
             return [
                 'success' => false,
-                'message' => 'Error al actualizar el usuario.'
+                'message' => 'Error al actualizar el usuario.',
             ];
         }
     }
 
-
     /**
-     * Eliminar usuario.
+     * Activar o desactivar el usuario.
+     * No se puede desactivar al último Administrador activo.
      */
-    public static function deleteUser(int $id): array
+    public static function updateUserStatus(int $idUser, bool $status): array
     {
         DB::beginTransaction();
 
         try {
-            $user = DB::table('users')
-                ->where('id', $id)
-                ->first();
+            $user = User::with('roles')->lockForUpdate()->find($idUser);
 
-            if (!$user) {
+            if (! $user) {
+                DB::commit();
+
+                return [
+                    'success' => true,
+                    'message' => 'Usuario no encontrado.',
+                    'data' => null,
+                ];
+            }
+
+            if (! $status && self::isLastActiveAdmin($user)) {
                 DB::rollBack();
 
                 return [
                     'success' => false,
-                    'message' => 'Usuario no encontrado.'
+                    'code' => 409,
+                    'message' => 'No se puede desactivar al último Administrador activo.',
                 ];
             }
 
-            DB::table('users')
-                ->where('id', $id)
-                ->delete();
+            $user->update(['estado' => $status]);
 
             DB::commit();
 
             return [
                 'success' => true,
-                'message' => 'Usuario eliminado correctamente.',
-                'data' => null
+                'message' => $status ? 'Usuario activado correctamente.' : 'Usuario desactivado correctamente.',
+                'data' => self::format(self::find($idUser)),
             ];
 
         } catch (Throwable $e) {
@@ -232,8 +295,100 @@ class UserData
 
             return [
                 'success' => false,
-                'message' => 'Error al eliminar el usuario.'
+                'message' => 'Error al actualizar el estado del usuario.',
             ];
         }
+    }
+
+    /**
+     * Reiniciar los intentos fallidos y quitar el bloqueo.
+     */
+    public static function unlockUser(int $idUser): array
+    {
+        DB::beginTransaction();
+
+        try {
+            $updated = DB::table('acceso.usuario')
+                ->where('id_usuario', $idUser)
+                ->update([
+                    'intentos_fallidos' => 0,
+                    'bloqueado_hasta' => null,
+                ]);
+
+            DB::commit();
+
+            return [
+                'success' => true,
+                'message' => $updated ? 'Usuario desbloqueado correctamente.' : 'Usuario no encontrado.',
+                'data' => $updated ? self::format(self::find($idUser)) : null,
+            ];
+
+        } catch (Throwable $e) {
+            DB::rollBack();
+
+            return [
+                'success' => false,
+                'message' => 'Error al desbloquear el usuario.',
+            ];
+        }
+    }
+
+    /**
+     * true si el usuario es Administrador activo y no hay otro.
+     */
+    private static function isLastActiveAdmin(User $user): bool
+    {
+        if (! $user->estado || ! $user->roles->contains(fn (Role $role) => $role->isAdministrator())) {
+            return false;
+        }
+
+        return ! User::where('id_usuario', '!=', $user->id_usuario)
+            ->where('estado', true)
+            ->whereHas('roles', fn ($query) => $query->where('acceso.rol.nombre', Role::ADMINISTRATOR))
+            ->exists();
+    }
+
+    /**
+     * Usuario con su persona, roles y DNI (columna dni).
+     */
+    private static function baseQuery(): Builder
+    {
+        return User::query()
+            ->join('gestion.persona as p', 'p.id_persona', '=', 'acceso.usuario.id_persona')
+            ->select('usuario.*')
+            ->selectSub(fn ($query) => self::dniQuery($query)->select('pd.numero_documento')->limit(1), 'dni')
+            ->with(['person', 'roles']);
+    }
+
+    /**
+     * Documentos DNI de la persona del usuario (correlacionada con "p").
+     */
+    private static function dniQuery($query)
+    {
+        return $query->from('gestion.persona_documento as pd')
+            ->join('gestion.tipo_documento as td', 'td.id_tipo_documento', '=', 'pd.id_tipo_documento')
+            ->where('td.nombre', 'DNI')
+            ->whereColumn('pd.id_persona', 'p.id_persona');
+    }
+
+    private static function find(int $idUser): ?User
+    {
+        return self::baseQuery()->where('acceso.usuario.id_usuario', $idUser)->first();
+    }
+
+    private static function format(User $user): array
+    {
+        $role = $user->roles->first();
+
+        return [
+            'id' => $user->id_usuario,
+            'nombre' => $user->person->full_name,
+            'dni' => $user->dni,
+            'correo' => $user->correo,
+            'rol' => $role ? ['id' => $role->id_rol, 'nombre' => $role->nombre] : null,
+            'estado' => $user->estado,
+            'bloqueado' => (bool) $user->bloqueado_hasta?->isFuture(),
+            'ultimoAcceso' => $user->ultimo_acceso?->toIso8601String(),
+        ];
     }
 }
