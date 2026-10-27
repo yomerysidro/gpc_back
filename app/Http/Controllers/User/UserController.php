@@ -15,7 +15,7 @@ class UserController extends Controller
     use ApiResponse;
 
     /**
-     * List users.
+     * List users
      */
     public function list()
     {

@@ -5,16 +5,26 @@ use App\Http\Controllers\ActivitySession\ActivitySessionController;
 use App\Http\Controllers\ActivitySignature\ActivitySignatureController;
 use App\Http\Controllers\ActivitySpeaker\ActivitySpeakerController;
 use App\Http\Controllers\ActivityType\ActivityTypeController;
+use App\Http\Controllers\Area\AreaController;
 use App\Http\Controllers\Attendance\AttendanceController;
 use App\Http\Controllers\Certificate\CertificateController;
 use App\Http\Controllers\CertificateDocument\CertificateDocumentController;
 use App\Http\Controllers\CertificateInquiry\CertificateInquiryController;
 use App\Http\Controllers\CertificateSignature\CertificateSignatureController;
 use App\Http\Controllers\CertificateType\CertificateTypeController;
+use App\Http\Controllers\DocumentType\TipoDocumentoController;
+use App\Http\Controllers\Institution\InstitutionController;
 use App\Http\Controllers\Participation\ParticipationController;
 use App\Http\Controllers\ParticipationType\ParticipationTypeController;
+use App\Http\Controllers\Person\PersonaController;
+use App\Http\Controllers\Person_Worker\Person_WorkerController;
+use App\Http\Controllers\PersonDocument\PersonaDocumentoController;
+use App\Http\Controllers\PersonSpeaker\PersonaPonenteController;
+use App\Http\Controllers\Practice\PracticeController;
+use App\Http\Controllers\Practicing_Individual\Practicing_IndividualController;
 use App\Http\Controllers\Recognition\RecognitionController;
 use App\Http\Controllers\Signature\SignatureController;
+use App\Http\Controllers\Supervisory_internship\Supervisory_internshipController;
 use App\Http\Controllers\User\UserController;
 use App\Http\Middleware\AuthorizeModuleOperation;
 use Illuminate\Http\Request;
@@ -186,4 +196,106 @@ Route::prefix('participation-type')->middleware(['auth:sanctum', AuthorizeModule
     Route::put('/{idParticipationType}', [ParticipationTypeController::class, 'update'])->whereNumber('idParticipationType');
     Route::patch('/{idParticipationType}', [ParticipationTypeController::class, 'update'])->whereNumber('idParticipationType');
     Route::delete('/{idParticipationType}', [ParticipationTypeController::class, 'destroy'])->whereNumber('idParticipationType');
+});
+
+// ============================================================
+// AREA
+// ============================================================
+Route::prefix('areas')->group(function () {
+    Route::get('/list', [AreaController::class, 'list']);
+    Route::get('/detail/{id}', [AreaController::class, 'detail']);
+    Route::post('/create', [AreaController::class, 'store']);
+    Route::put('/update/{id}', [AreaController::class, 'update']);
+    Route::delete('/delete/{id}', [AreaController::class, 'destroy']);
+});
+// ============================================================
+// PERSONA
+// ============================================================
+Route::prefix('persons')->group(function () {
+    Route::get('/list', [PersonaController::class, 'list']);
+    Route::get('/detail/{id}', [PersonaController::class, 'detail']);
+    Route::post('/create', [PersonaController::class, 'store']);
+    Route::put('/update/{id}', [PersonaController::class, 'update']);
+    Route::delete('/delete/{id}', [PersonaController::class, 'destroy']);
+});
+// ============================================================
+// TIPO DOCUMENTO
+// ============================================================
+Route::prefix('document-types')->group(function () {
+    Route::get('/list', [TipoDocumentoController::class, 'list']);
+    Route::get('/detail/{id}', [TipoDocumentoController::class, 'detail']);
+    Route::post('/create', [TipoDocumentoController::class, 'store']);
+    Route::put('/update/{id}', [TipoDocumentoController::class, 'update']);
+    Route::delete('/delete/{id}', [TipoDocumentoController::class, 'destroy']);
+});
+// ============================================================
+// PERSONA PONENTE
+// ============================================================
+Route::prefix('person-speakers')->group(function () {
+    Route::get('/list', [PersonaPonenteController::class, 'list']);
+    Route::get('/detail/{id}', [PersonaPonenteController::class, 'detail']);
+    Route::post('/create', [PersonaPonenteController::class, 'store']);
+    Route::put('/update/{id}', [PersonaPonenteController::class, 'update']);
+    Route::delete('/delete/{id}', [PersonaPonenteController::class, 'destroy']);
+});
+// ============================================================
+// PERSONA DOCUMENTO
+// ============================================================
+Route::prefix('person-documents')->group(function () {
+    Route::get('/list', [PersonaDocumentoController::class, 'list']);
+    Route::get('/detail/{id}', [PersonaDocumentoController::class, 'detail']);
+    Route::post('/create', [PersonaDocumentoController::class, 'store']);
+    Route::put('/update/{id}', [PersonaDocumentoController::class, 'update']);
+    Route::delete('/delete/{id}', [PersonaDocumentoController::class, 'destroy']);
+});
+
+// ============================================================
+// Practica
+Route::prefix('practices')->group(function () {
+    Route::get('/list', [PracticeController::class, 'list']);
+    Route::get('/detail/{idPractice}', [PracticeController::class, 'detail']);
+    Route::post('/create', [PracticeController::class, 'store']);
+    Route::put('/update/{idPractice}', [PracticeController::class, 'update']);
+    Route::delete('/delete/{idPractice}', [PracticeController::class, 'destroy']);
+});
+
+// Institucion
+// ============================================================
+Route::prefix('institutions')->group(function () {
+    Route::get('/list', [InstitutionController::class, 'list']);
+    Route::get('/detail/{idInstitution}', [InstitutionController::class, 'detail']);
+    Route::post('/create', [InstitutionController::class, 'store']);
+    Route::put('/update/{idInstitution}', [InstitutionController::class, 'update']);
+    Route::delete('/delete/{idInstitution}', [InstitutionController::class, 'destroy']);
+});
+
+// Practica_Supervisor
+// ============================================================
+Route::prefix('supervisory-internships')->group(function () {
+    Route::get('/list', [Supervisory_internshipController::class, 'list']);
+    Route::get('/detail/{idSupervisoryInternship}', [Supervisory_internshipController::class, 'detail']);
+    Route::post('/create', [Supervisory_internshipController::class, 'store']);
+    Route::put('/update/{idSupervisoryInternship}', [Supervisory_internshipController::class, 'update']);
+    Route::delete('/delete/{idSupervisoryInternship}', [Supervisory_internshipController::class, 'destroy']);
+});
+
+// Persona_Practicante
+// ============================================================
+
+Route::prefix('practicing-individuals')->group(function () {
+    Route::get('/list', [Practicing_IndividualController::class, 'list']);
+    Route::get('/detail/{idPracticingIndividual}', [Practicing_IndividualController::class, 'detail']);
+    Route::post('/create', [Practicing_IndividualController::class, 'store']);
+    Route::put('/update/{idPracticingIndividual}', [Practicing_IndividualController::class, 'update']);
+    Route::delete('/delete/{idPracticingIndividual}', [Practicing_IndividualController::class, 'destroy']);
+});
+
+// Persona_Trabajador
+// ============================================================
+Route::prefix('person-workers')->group(function () {
+    Route::get('/list', [Person_WorkerController::class, 'list']);
+    Route::get('/detail/{idPersonWorker}', [Person_WorkerController::class, 'detail']);
+    Route::post('/create', [Person_WorkerController::class, 'store']);
+    Route::put('/update/{idPersonWorker}', [Person_WorkerController::class, 'update']);
+    Route::delete('/delete/{idPersonWorker}', [Person_WorkerController::class, 'destroy']);
 });

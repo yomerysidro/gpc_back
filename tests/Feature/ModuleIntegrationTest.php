@@ -2,11 +2,16 @@
 
 namespace Tests\Feature;
 
+use App\Http\Data\Person_Worker\Person_WorkerData;
+use App\Http\Data\Practice\PracticeData;
+use App\Http\Data\Practicing_Individual\Practicing_IndividualData;
 use App\Models\Activity\Activity;
 use App\Models\ActivitySignature\ActivitySignature;
 use App\Models\Attendance\Attendance;
 use App\Models\Certificate\Certificate;
 use App\Models\Participation\Participation;
+use App\Models\Person\Persona;
+use App\Models\Practice\Practice;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -285,6 +290,64 @@ class ModuleIntegrationTest extends TestCase
         $this->postJson('/api/attendance/create', $this->attendance())->assertCreated();
         $this->postJson('/api/attendance/create', array_replace($this->attendance(), ['HORA_ENTRADA' => '10:00', 'HORA_SALIDA' => '11:00']))->assertCreated();
         $this->assertDatabaseCount('certificado.asistencia', 2);
+    }
+
+    public function test_merged_gestion_records_can_support_a_practice_certificate(): void
+    {
+        $this->authorize();
+        $this->prepareGestionFixtures();
+        $person = $this->postJson('/api/persons/create', ['nombres' => 'Persona de prueba', 'apellido_paterno' => 'Fixture', 'fecha_registro' => '2026-01-01'])->assertCreated()->json('data.id_persona');
+        $area = $this->postJson('/api/areas/create', ['nombre' => 'Área de prueba'])->assertCreated()->json('data.id_area');
+        $institution = $this->postJson('/api/institutions/create', ['nombre_institucion' => 'Institución de prueba', 'pais' => 'Perú', 'tipo' => 'Pública'])->assertCreated()->json('data.id_institucion');
+        $practitioner = Practicing_IndividualData::createPracticingIndividual(['id_persona' => $person, 'codigo' => 'FIXTURE-001', 'estado' => 'ACTIVO']);
+        $this->assertTrue($practitioner['success']);
+        $practice = PracticeData::createPractice(['id_persona_practicante' => $practitioner['data']->id_persona_practicante, 'id_institucion' => $institution, 'id_area' => $area, 'carrera' => 'Sistemas', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'FINALIZADO']);
+        $this->assertTrue($practice['success']);
+        $payload = array_replace($this->certificate(), ['id_persona' => $person, 'id_participacion' => null, 'id_practica' => $practice['data']->id_practica]);
+        $this->postJson('/api/certificados/create', $payload)->assertCreated()->assertJsonPath('data.id_persona', $person);
+        $this->postJson('/api/certificados/create', array_replace($payload, ['id_persona' => 2]))->assertUnprocessable();
+        $this->assertSame($person, Persona::findOrFail($person)->id_persona);
+        $this->assertSame($practitioner['data']->id_persona_practicante, Practice::findOrFail($practice['data']->id_practica)->id_persona_practicante);
+    }
+
+    public function test_merged_worker_records_can_support_a_recognition_certificate(): void
+    {
+        $this->authorize();
+        $this->prepareGestionFixtures();
+        $person = $this->postJson('/api/persons/create', ['nombres' => 'Trabajador de prueba', 'apellido_paterno' => 'Fixture', 'fecha_registro' => '2026-01-01'])->assertCreated()->json('data.id_persona');
+        $worker = Person_WorkerData::createPersonWorker(['id_persona' => $person, 'id_area' => 1, 'cargo' => 'Cargo de prueba', 'fecha_ingreso' => '2026-01-01', 'estado' => true]);
+        $this->assertTrue($worker['success']);
+        $recognition = $this->postJson('/api/reconocimientos/create', ['id_persona_trabajador' => $worker['data']->id_persona_trabajador, 'titulo' => 'Mérito', 'descripcion' => 'Prueba', 'motivo' => 'Prueba', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO'])->assertCreated()->json('data.id_reconocimiento');
+        $payload = array_replace($this->certificate(), ['id_persona' => $person, 'id_participacion' => null, 'id_reconocimiento' => $recognition]);
+        $this->postJson('/api/certificados/create', $payload)->assertCreated()->assertJsonPath('data.id_persona', $person);
+        $this->postJson('/api/certificados/create', array_replace($payload, ['id_persona' => 2]))->assertUnprocessable();
+    }
+
+    private function prepareGestionFixtures(): void
+    {
+        foreach ([
+            'gestion.persona' => ['nombres', 'apellido_paterno', 'apellido_materno', 'telefono', 'direccion', 'correo', 'fecha_registro'],
+            'gestion.area' => ['nombre'],
+            'gestion.practica' => ['id_institucion', 'id_area', 'carrera', 'fecha_inicio', 'fecha_fin', 'estado'],
+            'gestion.persona_practicante' => ['codigo', 'estado'],
+            'gestion.persona_trabajador' => ['id_area', 'cargo', 'fecha_ingreso', 'fecha_fin', 'estado'],
+        ] as $name => $fields) {
+            Schema::table($name, function (Blueprint $table) use ($fields) {
+                foreach ($fields as $field) {
+                    if (str_starts_with($field, 'id_')) {
+                        $table->integer($field)->nullable();
+                    } else {
+                        $table->string($field)->nullable();
+                    }
+                }
+            });
+        }
+        Schema::create('gestion.institucion', function (Blueprint $table) {
+            $table->increments('id_institucion');
+            $table->string('nombre_institucion');
+            $table->string('pais')->nullable();
+            $table->string('tipo');
+        });
     }
 
     private function updateColumns(callable $operation, string $table): array

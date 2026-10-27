@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
@@ -15,12 +14,18 @@ use Tests\TestCase;
 
 class PatchCrudTest extends TestCase
 {
-    use LazilyRefreshDatabase;
-
     protected function setUp(): void
     {
         parent::setUp();
-        config(['app.key' => 'base64:'.base64_encode(str_repeat('a', 32))]);
+        config(['app.key' => 'base64:'.base64_encode(str_repeat('a', 32)), 'database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:', 'database.connections.sqlite.url' => null]);
+        DB::purge('sqlite');
+        Schema::create('users', function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->timestamps();
+        });
         $this->actingAs(new User(['name' => 'Authorized fixture']));
         Gate::policy(User::class, ModulePolicy::class);
     }
