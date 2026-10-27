@@ -13,7 +13,7 @@ class PracticeData
     public static function getPractices(): array
     {
         try {
-            $practicas = DB::table('practica')
+            $practicas = DB::table('gestion.practica')
                 ->select(
                     'id_practica',
                     'id_persona_practicante',
@@ -49,7 +49,7 @@ class PracticeData
     public static function getPracticeById(int $id): array
     {
         try {
-            $practica = DB::table('practica')
+            $practica = DB::table('gestion.practica')
                 ->where('id_practica', $id)
                 ->first();
 
@@ -83,10 +83,10 @@ class PracticeData
     public static function createPractice(array $data): array
     {
         try {
-            $id = DB::table('practica')
+            $id = DB::table('gestion.practica')
                 ->insertGetId($data, 'id_practica');
 
-            $practica = DB::table('practica')
+            $practica = DB::table('gestion.practica')
                 ->where('id_practica', $id)
                 ->first();
 
@@ -112,7 +112,7 @@ class PracticeData
     public static function updatePractice(int $id, array $data): array
     {
         try {
-            $practica = DB::table('practica')
+            $practica = DB::table('gestion.practica')
                 ->where('id_practica', $id)
                 ->first();
 
@@ -124,11 +124,11 @@ class PracticeData
                 ];
             }
 
-            DB::table('practica')
+            DB::table('gestion.practica')
                 ->where('id_practica', $id)
                 ->update($data);
 
-            $practicaActualizada = DB::table('practica')
+            $practicaActualizada = DB::table('gestion.practica')
                 ->where('id_practica', $id)
                 ->first();
 
@@ -154,7 +154,7 @@ class PracticeData
     public static function deletePractice(int $id): array
     {
         try {
-            $eliminados = DB::table('practica')
+            $eliminados = DB::table('gestion.practica')
                 ->where('id_practica', $id)
                 ->delete();
 

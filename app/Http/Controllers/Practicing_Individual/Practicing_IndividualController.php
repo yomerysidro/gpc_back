@@ -63,7 +63,7 @@ class Practicing_IndividualController extends Controller
             'id_persona' => [
                 'required',
                 'integer',
-                'exists:persona,id_persona',
+                'exists:pgsql.gestion.persona,id_persona',
             ],
             'codigo' => ['required', 'string', 'max:50'],
             'estado' => ['required', 'string', 'max:30'],
@@ -104,7 +104,7 @@ class Practicing_IndividualController extends Controller
             'id_persona' => [
                 'required',
                 'integer',
-                'exists:persona,id_persona',
+                'exists:pgsql.gestion.persona,id_persona',
             ],
             'codigo' => ['required', 'string', 'max:50'],
             'estado' => ['required', 'string', 'max:30'],

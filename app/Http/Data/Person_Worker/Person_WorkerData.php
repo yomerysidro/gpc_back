@@ -13,7 +13,7 @@ class Person_WorkerData
     public static function getPersonWorkers(): array
     {
         try {
-            $trabajadores = DB::table('persona_trabajador')
+            $trabajadores = DB::table('gestion.persona_trabajador')
                 ->select(
                     'id_persona_trabajador',
                     'id_persona',
@@ -48,7 +48,7 @@ class Person_WorkerData
     public static function getPersonWorkerById(int $id): array
     {
         try {
-            $trabajador = DB::table('persona_trabajador')
+            $trabajador = DB::table('gestion.persona_trabajador')
                 ->where('id_persona_trabajador', $id)
                 ->first();
 
@@ -82,10 +82,10 @@ class Person_WorkerData
     public static function createPersonWorker(array $data): array
     {
         try {
-            $id = DB::table('persona_trabajador')
+            $id = DB::table('gestion.persona_trabajador')
                 ->insertGetId($data, 'id_persona_trabajador');
 
-            $trabajador = DB::table('persona_trabajador')
+            $trabajador = DB::table('gestion.persona_trabajador')
                 ->where('id_persona_trabajador', $id)
                 ->first();
 
@@ -111,7 +111,7 @@ class Person_WorkerData
     public static function updatePersonWorker(int $id, array $data): array
     {
         try {
-            $trabajador = DB::table('persona_trabajador')
+            $trabajador = DB::table('gestion.persona_trabajador')
                 ->where('id_persona_trabajador', $id)
                 ->first();
 
@@ -123,11 +123,11 @@ class Person_WorkerData
                 ];
             }
 
-            DB::table('persona_trabajador')
+            DB::table('gestion.persona_trabajador')
                 ->where('id_persona_trabajador', $id)
                 ->update($data);
 
-            $trabajadorActualizado = DB::table('persona_trabajador')
+            $trabajadorActualizado = DB::table('gestion.persona_trabajador')
                 ->where('id_persona_trabajador', $id)
                 ->first();
 
@@ -153,7 +153,7 @@ class Person_WorkerData
     public static function deletePersonWorker(int $id): array
     {
         try {
-            $eliminados = DB::table('persona_trabajador')
+            $eliminados = DB::table('gestion.persona_trabajador')
                 ->where('id_persona_trabajador', $id)
                 ->delete();
 

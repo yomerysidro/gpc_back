@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Practicing_Individual extends Model
 {
-    protected $table = 'persona_practicante';
+    protected $table = 'gestion.persona_practicante';
 
     protected $primaryKey = 'id_persona_practicante';
 

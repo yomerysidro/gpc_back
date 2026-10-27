@@ -63,12 +63,12 @@ class Supervisory_internshipController extends Controller
             'id_practica' => [
                 'required',
                 'integer',
-                'exists:practica,id_practica',
+                'exists:pgsql.gestion.practica,id_practica',
             ],
             'id_persona_trabajador' => [
                 'required',
                 'integer',
-                'exists:persona_trabajador,id_persona_trabajador',
+                'exists:pgsql.gestion.persona_trabajador,id_persona_trabajador',
             ],
             'tipo_supervision' => ['required', 'string', 'max:150'],
             'fecha_inicio' => ['required', 'date'],
@@ -111,12 +111,12 @@ class Supervisory_internshipController extends Controller
             'id_practica' => [
                 'required',
                 'integer',
-                'exists:practica,id_practica',
+                'exists:pgsql.gestion.practica,id_practica',
             ],
             'id_persona_trabajador' => [
                 'required',
                 'integer',
-                'exists:persona_trabajador,id_persona_trabajador',
+                'exists:pgsql.gestion.persona_trabajador,id_persona_trabajador',
             ],
             'tipo_supervision' => ['required', 'string', 'max:150'],
             'fecha_inicio' => ['required', 'date'],

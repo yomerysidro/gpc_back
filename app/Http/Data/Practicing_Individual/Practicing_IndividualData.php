@@ -13,7 +13,7 @@ class Practicing_IndividualData
     public static function getPracticingIndividuals(): array
     {
         try {
-            $practicantes = DB::table('persona_practicante')
+            $practicantes = DB::table('gestion.persona_practicante')
                 ->select(
                     'id_persona_practicante',
                     'id_persona',
@@ -45,7 +45,7 @@ class Practicing_IndividualData
     public static function getPracticingIndividualById(int $id): array
     {
         try {
-            $practicante = DB::table('persona_practicante')
+            $practicante = DB::table('gestion.persona_practicante')
                 ->where('id_persona_practicante', $id)
                 ->first();
 
@@ -79,10 +79,10 @@ class Practicing_IndividualData
     public static function createPracticingIndividual(array $data): array
     {
         try {
-            $id = DB::table('persona_practicante')
+            $id = DB::table('gestion.persona_practicante')
                 ->insertGetId($data, 'id_persona_practicante');
 
-            $practicante = DB::table('persona_practicante')
+            $practicante = DB::table('gestion.persona_practicante')
                 ->where('id_persona_practicante', $id)
                 ->first();
 
@@ -110,7 +110,7 @@ class Practicing_IndividualData
         array $data
     ): array {
         try {
-            $practicante = DB::table('persona_practicante')
+            $practicante = DB::table('gestion.persona_practicante')
                 ->where('id_persona_practicante', $id)
                 ->first();
 
@@ -122,11 +122,11 @@ class Practicing_IndividualData
                 ];
             }
 
-            DB::table('persona_practicante')
+            DB::table('gestion.persona_practicante')
                 ->where('id_persona_practicante', $id)
                 ->update($data);
 
-            $practicanteActualizado = DB::table('persona_practicante')
+            $practicanteActualizado = DB::table('gestion.persona_practicante')
                 ->where('id_persona_practicante', $id)
                 ->first();
 
@@ -152,7 +152,7 @@ class Practicing_IndividualData
     public static function deletePracticingIndividual(int $id): array
     {
         try {
-            $eliminados = DB::table('persona_practicante')
+            $eliminados = DB::table('gestion.persona_practicante')
                 ->where('id_persona_practicante', $id)
                 ->delete();
 

@@ -13,7 +13,7 @@ class InstitutionData
     public static function getInstitutions(): array
     {
         try {
-            $instituciones = DB::table('institucion')
+            $instituciones = DB::table('gestion.institucion')
                 ->select(
                     'id_institucion',
                     'nombre_institucion',
@@ -45,7 +45,7 @@ class InstitutionData
     public static function getInstitutionById(int $id): array
     {
         try {
-            $institucion = DB::table('institucion')
+            $institucion = DB::table('gestion.institucion')
                 ->where('id_institucion', $id)
                 ->first();
 
@@ -79,10 +79,10 @@ class InstitutionData
     public static function createInstitution(array $data): array
     {
         try {
-            $id = DB::table('institucion')
+            $id = DB::table('gestion.institucion')
                 ->insertGetId($data, 'id_institucion');
 
-            $institucion = DB::table('institucion')
+            $institucion = DB::table('gestion.institucion')
                 ->where('id_institucion', $id)
                 ->first();
 
@@ -108,7 +108,7 @@ class InstitutionData
     public static function updateInstitution(int $id, array $data): array
     {
         try {
-            $institucion = DB::table('institucion')
+            $institucion = DB::table('gestion.institucion')
                 ->where('id_institucion', $id)
                 ->first();
 
@@ -120,11 +120,11 @@ class InstitutionData
                 ];
             }
 
-            DB::table('institucion')
+            DB::table('gestion.institucion')
                 ->where('id_institucion', $id)
                 ->update($data);
 
-            $institucionActualizada = DB::table('institucion')
+            $institucionActualizada = DB::table('gestion.institucion')
                 ->where('id_institucion', $id)
                 ->first();
 
@@ -150,7 +150,7 @@ class InstitutionData
     public static function deleteInstitution(int $id): array
     {
         try {
-            $eliminados = DB::table('institucion')
+            $eliminados = DB::table('gestion.institucion')
                 ->where('id_institucion', $id)
                 ->delete();
 

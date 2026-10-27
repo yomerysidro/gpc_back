@@ -63,12 +63,12 @@ class Person_WorkerController extends Controller
             'id_persona' => [
                 'required',
                 'integer',
-                'exists:persona,id_persona',
+                'exists:pgsql.gestion.persona,id_persona',
             ],
             'id_area' => [
                 'required',
                 'integer',
-                'exists:area,id_area',
+                'exists:pgsql.gestion.area,id_area',
             ],
             'cargo' => ['required', 'string', 'max:150'],
             'fecha_ingreso' => ['required', 'date'],
@@ -111,12 +111,12 @@ class Person_WorkerController extends Controller
             'id_persona' => [
                 'required',
                 'integer',
-                'exists:persona,id_persona',
+                'exists:pgsql.gestion.persona,id_persona',
             ],
             'id_area' => [
                 'required',
                 'integer',
-                'exists:area,id_area',
+                'exists:pgsql.gestion.area,id_area',
             ],
             'cargo' => ['required', 'string', 'max:150'],
             'fecha_ingreso' => ['required', 'date'],
