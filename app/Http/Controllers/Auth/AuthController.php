@@ -74,13 +74,18 @@ class AuthController extends Controller
             }
 
             if ($response['data']['attempts'] >= self::MAX_ATTEMPTS) {
-                $response = AuthData::lockAccount($user->id_usuario, now()->addMinutes(self::LOCK_MINUTES));
+                $lockedUntil = now()->addMinutes(self::LOCK_MINUTES);
+
+                $response = AuthData::lockAccount($user->id_usuario, $lockedUntil);
 
                 if (! $response['success']) {
                     return $this->serverError($response);
                 }
 
-                return response()->json(['message' => 'Cuenta bloqueada por intentos fallidos'], 423);
+                return response()->json([
+                    'message' => 'Cuenta bloqueada por intentos fallidos',
+                    'bloqueadoHasta' => $lockedUntil->toIso8601String(),
+                ], 423);
             }
 
             return response()->json(['message' => 'Credenciales inválidas'], 401);
