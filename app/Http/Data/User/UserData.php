@@ -28,17 +28,16 @@ class UserData
             return [
                 'success' => true,
                 'message' => 'Usuarios obtenidos correctamente.',
-                'data' => $users
+                'data' => $users,
             ];
 
         } catch (Throwable $e) {
             return [
                 'success' => false,
-                'message' => 'Error al obtener los usuarios.'
+                'message' => 'Error al obtener los usuarios.',
             ];
         }
     }
-
 
     /**
      * Obtener un usuario por ID.
@@ -57,27 +56,26 @@ class UserData
                 ->where('id', $id)
                 ->first();
 
-            if (!$user) {
+            if (! $user) {
                 return [
                     'success' => false,
-                    'message' => 'Usuario no encontrado.'
+                    'message' => 'Usuario no encontrado.',
                 ];
             }
 
             return [
                 'success' => true,
                 'message' => 'Usuario obtenido correctamente.',
-                'data' => $user
+                'data' => $user,
             ];
 
         } catch (Throwable $e) {
             return [
                 'success' => false,
-                'message' => 'Error al obtener el usuario.'
+                'message' => 'Error al obtener el usuario.',
             ];
         }
     }
-
 
     /**
      * Crear usuario.
@@ -88,9 +86,9 @@ class UserData
 
         try {
             $idUser = DB::table('users')->insertGetId([
-                'name'       => $data['name'],
-                'email'      => $data['email'],
-                'password'   => Hash::make($data['password']),
+                'name' => $data['name'],
+                'email' => $data['email'],
+                'password' => Hash::make($data['password']),
                 'created_at' => now(),
                 'updated_at' => now(),
             ], 'id');
@@ -111,7 +109,7 @@ class UserData
             return [
                 'success' => true,
                 'message' => 'Usuario registrado correctamente.',
-                'data' => $user
+                'data' => $user,
             ];
 
         } catch (Throwable $e) {
@@ -119,11 +117,10 @@ class UserData
 
             return [
                 'success' => false,
-                'message' => 'Error al registrar el usuario.'
+                'message' => 'Error al registrar el usuario.',
             ];
         }
     }
-
 
     /**
      * Actualizar usuario.
@@ -137,26 +134,23 @@ class UserData
                 ->where('id', $id)
                 ->first();
 
-            if (!$user) {
+            if (! $user) {
                 DB::rollBack();
 
                 return [
                     'success' => false,
-                    'message' => 'Usuario no encontrado.'
+                    'message' => 'Usuario no encontrado.',
                 ];
             }
 
-            $updateData = [
-                'name'       => $data['name'],
-                'email'      => $data['email'],
-                'updated_at' => now(),
-            ];
+            $updateData = array_intersect_key($data, array_flip(['name', 'email']));
+            $updateData['updated_at'] = now();
 
             /*
              * La contraseña solamente se modifica
              * si se envía una nueva contraseña.
              */
-            if (!empty($data['password'])) {
+            if (! empty($data['password'])) {
                 $updateData['password'] = Hash::make($data['password']);
             }
 
@@ -180,7 +174,7 @@ class UserData
             return [
                 'success' => true,
                 'message' => 'Usuario actualizado correctamente.',
-                'data' => $updatedUser
+                'data' => $updatedUser,
             ];
 
         } catch (Throwable $e) {
@@ -188,11 +182,10 @@ class UserData
 
             return [
                 'success' => false,
-                'message' => 'Error al actualizar el usuario.'
+                'message' => 'Error al actualizar el usuario.',
             ];
         }
     }
-
 
     /**
      * Eliminar usuario.
@@ -206,12 +199,12 @@ class UserData
                 ->where('id', $id)
                 ->first();
 
-            if (!$user) {
+            if (! $user) {
                 DB::rollBack();
 
                 return [
                     'success' => false,
-                    'message' => 'Usuario no encontrado.'
+                    'message' => 'Usuario no encontrado.',
                 ];
             }
 
@@ -224,7 +217,7 @@ class UserData
             return [
                 'success' => true,
                 'message' => 'Usuario eliminado correctamente.',
-                'data' => null
+                'data' => null,
             ];
 
         } catch (Throwable $e) {
@@ -232,7 +225,7 @@ class UserData
 
             return [
                 'success' => false,
-                'message' => 'Error al eliminar el usuario.'
+                'message' => 'Error al eliminar el usuario.',
             ];
         }
     }
