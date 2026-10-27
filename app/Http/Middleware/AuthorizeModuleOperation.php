@@ -51,6 +51,7 @@ class AuthorizeModuleOperation
                     'ParticipationType' => 'Tipo de participación no encontrado.',
                     'Attendance' => 'Asistencia no encontrada.',
                     'User' => 'Usuario no encontrado.',
+                    default => 'Registro no encontrado.',
                 };
 
                 return $this->error($message, 404);

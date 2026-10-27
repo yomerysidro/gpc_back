@@ -5,6 +5,8 @@ namespace App\Models\Certificate;
 use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\CertificateType\CertificateType;
 use App\Models\Participation\Participation;
+use App\Models\Person\Persona;
+use App\Models\Practice\Practice;
 use App\Models\Recognition\Recognition;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -63,5 +65,15 @@ class Certificate extends Model
     public function participation(): BelongsTo
     {
         return $this->belongsTo(Participation::class, 'id_participacion', 'id_participacion');
+    }
+
+    public function persona(): BelongsTo
+    {
+        return $this->belongsTo(Persona::class, 'id_persona', 'id_persona');
+    }
+
+    public function practice(): BelongsTo
+    {
+        return $this->belongsTo(Practice::class, 'id_practica', 'id_practica');
     }
 }

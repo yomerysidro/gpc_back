@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\Institution;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -92,6 +93,10 @@ class InstitutionData
                 'data' => $institucion,
             ];
         } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
+            }
+
             report($e);
 
             return [
@@ -108,32 +113,41 @@ class InstitutionData
     public static function updateInstitution(int $id, array $data): array
     {
         try {
-            $institucion = DB::table('gestion.institucion')
-                ->where('id_institucion', $id)
-                ->first();
+            return DB::transaction(function () use ($id, $data): array {
+                $institucion = DB::table('gestion.institucion')
+                    ->where('id_institucion', $id)
+                    ->lockForUpdate()->first();
 
-            if (! $institucion) {
+                if (! $institucion) {
+                    return [
+                        'success' => false,
+                        'message' => 'Institución no encontrada.',
+                        'status' => 404,
+                    ];
+                }
+
+                $changes = GestionIntegrity::changes('gestion.institucion', $data, $institucion);
+                if ($changes !== []) {
+                    DB::table('gestion.institucion')
+                        ->where('id_institucion', $id)
+                        ->update($changes);
+                }
+
+                $institucionActualizada = DB::table('gestion.institucion')
+                    ->where('id_institucion', $id)
+                    ->first();
+
                 return [
-                    'success' => false,
-                    'message' => 'Institución no encontrada.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Institución actualizada correctamente.',
+                    'data' => $institucionActualizada,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            DB::table('gestion.institucion')
-                ->where('id_institucion', $id)
-                ->update($data);
-
-            $institucionActualizada = DB::table('gestion.institucion')
-                ->where('id_institucion', $id)
-                ->first();
-
-            return [
-                'success' => true,
-                'message' => 'Institución actualizada correctamente.',
-                'data' => $institucionActualizada,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [
@@ -150,24 +164,31 @@ class InstitutionData
     public static function deleteInstitution(int $id): array
     {
         try {
-            $eliminados = DB::table('gestion.institucion')
-                ->where('id_institucion', $id)
-                ->delete();
+            return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.institucion', $id);
+                $eliminados = DB::table('gestion.institucion')
+                    ->where('id_institucion', $id)
+                    ->delete();
 
-            if ($eliminados === 0) {
+                if ($eliminados === 0) {
+                    return [
+                        'success' => false,
+                        'message' => 'Institución no encontrada.',
+                        'status' => 404,
+                    ];
+                }
+
                 return [
-                    'success' => false,
-                    'message' => 'Institución no encontrada.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Institución eliminada correctamente.',
+                    'data' => null,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            return [
-                'success' => true,
-                'message' => 'Institución eliminada correctamente.',
-                'data' => null,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [

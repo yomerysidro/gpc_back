@@ -6,6 +6,7 @@ use App\Models\ActivitySession\ActivitySession;
 use App\Models\ActivitySignature\ActivitySignature;
 use App\Models\ActivitySpeaker\ActivitySpeaker;
 use App\Models\ActivityType\ActivityType;
+use App\Models\Area\Area;
 use App\Models\Participation\Participation;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -60,5 +61,10 @@ class Activity extends Model
     public function signatures(): HasMany
     {
         return $this->hasMany(ActivitySignature::class, 'id_actividad', 'id_actividad');
+    }
+
+    public function area(): BelongsTo
+    {
+        return $this->belongsTo(Area::class, 'id_area', 'id_area');
     }
 }

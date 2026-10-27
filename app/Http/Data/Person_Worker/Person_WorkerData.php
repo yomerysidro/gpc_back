@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\Person_Worker;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -95,6 +96,10 @@ class Person_WorkerData
                 'data' => $trabajador,
             ];
         } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
+            }
+
             report($e);
 
             return [
@@ -111,32 +116,42 @@ class Person_WorkerData
     public static function updatePersonWorker(int $id, array $data): array
     {
         try {
-            $trabajador = DB::table('gestion.persona_trabajador')
-                ->where('id_persona_trabajador', $id)
-                ->first();
+            return DB::transaction(function () use ($id, $data): array {
+                GestionIntegrity::assertOwnership('gestion.persona_trabajador', $id, $data);
+                $trabajador = DB::table('gestion.persona_trabajador')
+                    ->where('id_persona_trabajador', $id)
+                    ->first();
 
-            if (! $trabajador) {
+                if (! $trabajador) {
+                    return [
+                        'success' => false,
+                        'message' => 'Trabajador no encontrado.',
+                        'status' => 404,
+                    ];
+                }
+
+                $changes = GestionIntegrity::changes('gestion.persona_trabajador', $data, $trabajador);
+                if ($changes !== []) {
+                    DB::table('gestion.persona_trabajador')
+                        ->where('id_persona_trabajador', $id)
+                        ->update($changes);
+                }
+
+                $trabajadorActualizado = DB::table('gestion.persona_trabajador')
+                    ->where('id_persona_trabajador', $id)
+                    ->first();
+
                 return [
-                    'success' => false,
-                    'message' => 'Trabajador no encontrado.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Trabajador actualizado correctamente.',
+                    'data' => $trabajadorActualizado,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            DB::table('gestion.persona_trabajador')
-                ->where('id_persona_trabajador', $id)
-                ->update($data);
-
-            $trabajadorActualizado = DB::table('gestion.persona_trabajador')
-                ->where('id_persona_trabajador', $id)
-                ->first();
-
-            return [
-                'success' => true,
-                'message' => 'Trabajador actualizado correctamente.',
-                'data' => $trabajadorActualizado,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [
@@ -153,24 +168,31 @@ class Person_WorkerData
     public static function deletePersonWorker(int $id): array
     {
         try {
-            $eliminados = DB::table('gestion.persona_trabajador')
-                ->where('id_persona_trabajador', $id)
-                ->delete();
+            return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.persona_trabajador', $id);
+                $eliminados = DB::table('gestion.persona_trabajador')
+                    ->where('id_persona_trabajador', $id)
+                    ->delete();
 
-            if ($eliminados === 0) {
+                if ($eliminados === 0) {
+                    return [
+                        'success' => false,
+                        'message' => 'Trabajador no encontrado.',
+                        'status' => 404,
+                    ];
+                }
+
                 return [
-                    'success' => false,
-                    'message' => 'Trabajador no encontrado.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Trabajador eliminado correctamente.',
+                    'data' => null,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            return [
-                'success' => true,
-                'message' => 'Trabajador eliminado correctamente.',
-                'data' => null,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [

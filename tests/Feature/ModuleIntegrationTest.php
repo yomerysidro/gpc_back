@@ -7,11 +7,19 @@ use App\Http\Data\Practice\PracticeData;
 use App\Http\Data\Practicing_Individual\Practicing_IndividualData;
 use App\Models\Activity\Activity;
 use App\Models\ActivitySignature\ActivitySignature;
+use App\Models\Area\Area;
 use App\Models\Attendance\Attendance;
 use App\Models\Certificate\Certificate;
+use App\Models\DocumentType\TipoDocumento;
+use App\Models\Institution\Institution;
 use App\Models\Participation\Participation;
 use App\Models\Person\Persona;
+use App\Models\Person_Worker\Person_Worker;
+use App\Models\PersonDocument\PersonaDocumento;
+use App\Models\PersonSpeaker\PersonaPonente;
 use App\Models\Practice\Practice;
+use App\Models\Practicing_Individual\Practicing_Individual;
+use App\Models\Supervisory_internship\Supervisory_internship;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +31,8 @@ use Tests\TestCase;
 
 class ModuleIntegrationTest extends TestCase
 {
+    private const GESTION_MODELS = [Persona::class, TipoDocumento::class, PersonaDocumento::class, Area::class, Institution::class, Person_Worker::class, Practicing_Individual::class, Practice::class, Supervisory_internship::class, PersonaPonente::class];
+
     private const ENTITIES = ['Activity', 'ActivityType', 'ActivitySpeaker', 'Participation', 'ParticipationType', 'ActivitySession', 'Attendance', 'CertificateType', 'Certificate', 'Recognition', 'CertificateDocument', 'Signature', 'CertificateSignature', 'CertificateInquiry', 'ActivitySignature'];
 
     protected function setUp(): void
@@ -86,6 +96,9 @@ class ModuleIntegrationTest extends TestCase
     private function authorize(): void
     {
         $this->actingAs(new User(['name' => 'Authorized fixture']));
+        foreach (self::GESTION_MODELS as $model) {
+            Gate::policy($model, ModulePolicy::class);
+        }
         foreach (self::ENTITIES as $entity) {
             Gate::policy("App\\Models\\$entity\\$entity", ModulePolicy::class);
         }
@@ -284,12 +297,27 @@ class ModuleIntegrationTest extends TestCase
         $this->withToken($token)->getJson('/api/activity')->assertOk();
     }
 
-    public function test_existing_multiple_attendance_intervals_are_not_silently_forbidden(): void
+    public function test_duplicate_attendance_is_rejected_even_with_different_hours(): void
     {
         $this->authorize();
         $this->postJson('/api/attendance/create', $this->attendance())->assertCreated();
-        $this->postJson('/api/attendance/create', array_replace($this->attendance(), ['HORA_ENTRADA' => '10:00', 'HORA_SALIDA' => '11:00']))->assertCreated();
+        $this->postJson('/api/attendance/create', array_replace($this->attendance(), ['HORA_ENTRADA' => '10:00', 'HORA_SALIDA' => '11:00']))->assertUnprocessable();
+        $this->assertDatabaseCount('certificado.asistencia', 1);
+    }
+
+    public function test_put_and_patch_reject_duplicate_attendance_and_allow_its_own_pair(): void
+    {
+        $this->authorize();
+        $this->postJson('/api/attendance/create', $this->attendance())->assertCreated();
+        DB::table('certificado.actividad_sesion')->insert(['id_actividad_sesion' => 2, 'id_actividad' => 1, 'fecha' => '2026-01-21']);
+        $this->postJson('/api/attendance/create', array_replace($this->attendance(), ['ID_ACTIVIDAD_SESION' => 2]))->assertCreated();
+        foreach (['PUT', 'PATCH'] as $method) {
+            $this->json($method, '/api/attendance/update/2', ['ID_ACTIVIDAD_SESION' => 1])->assertUnprocessable();
+            $this->json($method, '/api/attendance/update/1', ['HORA_SALIDA' => '09:30'])->assertOk();
+        }
+        $this->assertDatabaseHas('certificado.asistencia', ['id_asistencia' => 2, 'id_actividad_sesion' => 2]);
         $this->assertDatabaseCount('certificado.asistencia', 2);
+        $this->assertSame(0, DB::transactionLevel());
     }
 
     public function test_merged_gestion_records_can_support_a_practice_certificate(): void

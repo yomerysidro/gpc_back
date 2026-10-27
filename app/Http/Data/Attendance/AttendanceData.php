@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\Attendance;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -87,6 +88,8 @@ class AttendanceData
                 return ['success' => false, 'message' => 'La participación ya sustenta certificados; sus asistencias deben conservarse.', 'status' => 409];
             }
 
+            self::validateUnique($data);
+
             $idAttendance = DB::table('certificado.asistencia')
                 ->insertGetId([
                     'id_participacion' => $data['ID_PARTICIPACION'],
@@ -118,6 +121,10 @@ class AttendanceData
                     'status' => 422,
                     'errors' => $e->errors(),
                 ];
+            }
+
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
             report($e);
@@ -177,6 +184,8 @@ class AttendanceData
                 return ['success' => false, 'message' => 'La asistencia sustenta certificados y debe conservarse.', 'status' => 409];
             }
 
+            self::validateUnique($finalData, $id);
+
             $updateData = array_filter($updateData, function ($value, string $field) use ($attendance): bool {
                 $previous = $attendance->{strtolower($field)} ?? null;
                 $currentValue = is_bool($value) ? (int) $value : $value;
@@ -212,6 +221,10 @@ class AttendanceData
                     'status' => 422,
                     'errors' => $e->errors(),
                 ];
+            }
+
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
             report($e);
@@ -267,6 +280,10 @@ class AttendanceData
 
         } catch (Throwable $e) {
             DB::rollBack();
+
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
+            }
 
             report($e);
 
@@ -349,9 +366,17 @@ class AttendanceData
         }
     }
 
-    /**
-     * Consultar el esquema real conservando los nombres de la respuesta API.
-     */
+    private static function validateUnique(array $data, ?int $exceptId = null): void
+    {
+        if (DB::table('certificado.asistencia')
+            ->where('id_participacion', $data['ID_PARTICIPACION'])
+            ->where('id_actividad_sesion', $data['ID_ACTIVIDAD_SESION'])
+            ->when($exceptId !== null, fn (Builder $query) => $query->where('id_asistencia', '<>', $exceptId))
+            ->exists()) {
+            throw ValidationException::withMessages(['ID_ACTIVIDAD_SESION' => 'Ya existe una asistencia para esta participación y sesión.']);
+        }
+    }
+
     private static function attendanceQuery(): Builder
     {
         return DB::table('certificado.asistencia as asistencia')

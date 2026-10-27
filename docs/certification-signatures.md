@@ -250,11 +250,104 @@ de participaciones ya certificadas. Los borrados de actividad también comprueba
 ponentes y firmas asignadas. Los 15 UPDATE filtran columnas autorizadas y valores
 sin cambios; hash y ciphertext siguen bajo control exclusivo del backend.
 
-Está pendiente definir si asistencia admite un registro por participación/sesión
-o varios intervalos. Se conserva el comportamiento anterior, sin agregar UNIQUE,
-deduplicar datos ni prohibir intervalos múltiples sin una decisión institucional.
+La regla posteriormente confirmada es una asistencia por participación y sesión.
+AttendanceData rechaza duplicados en creación y actualización, excluye el propio
+registro en PUT/PATCH y conserva el bloqueo de la participación durante la
+transacción. No se agregó ni ejecutó una restricción en la base institucional.
 
 ModuleIntegrationTest ejecuta ambos bloques con esquemas adjuntos SQLite en
 memoria, prueba CRUD de actividades y su relación con certificados, protección
 de rutas, permisos por operación, históricos y columnas reales de UPDATE.
 SQLite no acredita restricciones PostgreSQL, aislamiento ni concurrencia real.
+
+## Validación PostgreSQL pendiente después de integrar Gestión
+
+La configuración habitual apunta a PostgreSQL remoto. APP_ENV=local no acredita
+que la base sea exclusiva de desarrollo o pruebas. No se conectó a ese servidor,
+no se consultaron registros o metadatos y no se ejecutaron migraciones.
+Las migraciones locales son una referencia declarada; no prueban el DDL aplicado.
+No se ha confirmado que sus decisiones funcionales sean el contrato definitivo.
+
+| Diferencia | Contrato Laravel actual | Migración local | Pendiente |
+|---|---|---|---|
+| tipo_certificado.estado | String | BOOLEAN | Confirmar representación de API |
+| certificado.estado | Boolean | VARCHAR(30), sin catálogo de estados | Definir estados y conversión |
+| Origen de certificado | Cero o uno | CHECK exactamente uno | Confirmar si se permiten borradores sin origen |
+| certificado.fecha_emision | Nullable | DATE NOT NULL | Confirmar momento de creación/emisión |
+| certificado_documento.estado | GENERADO/ANULADO | CHECK Vigente/Anulado | Acordar vocabulario y compatibilidad de clientes |
+| actividad.estado | String libre de hasta 20 caracteres | CHECK Activa/Cerrada | Confirmar catálogo definitivo |
+| Asistencia | Una por participación/sesión | UNIQUE compuesto | Código alineado; comprobar restricción aplicada |
+| Firma | Unicidad trabajador/PFX | UNIQUE por trabajador | Confirmar renovación o múltiples credenciales |
+| Hash documental | Se comprueba por certificado | UNIQUE global | Confirmar alcance de unicidad |
+| Fechas de documentos y firmas aplicadas | API/casts de fecha sin hora | TIMESTAMP | Definir precisión y serialización; DATE puede guardarse a medianoche |
+| firma.fecha_firma | Fecha obligatoria | DATE nullable | No confundir con certificado_firma.fecha_firma, que es TIMESTAMP |
+| practica.fecha_fin | Nullable | DATE NOT NULL | Confirmar prácticas en curso |
+| Institución | País obligatorio; tipo máximo 30 | País nullable; tipo máximo 50 | Confirmar contrato de entrada |
+
+No se modificaron estos contratos funcionales ni el DDL para hacer pasar pruebas.
+Hay además restricciones de Laravel más estrictas que la migración, como
+descripción/motivo de reconocimiento y determinados campos de consulta.
+Los CASCADE internos del DDL local tampoco equivalen a conservación histórica:
+los guardas Data protegen la API, pero no operaciones SQL realizadas por fuera.
+
+### Pruebas disponibles y barreras de seguridad
+
+- La suite ordinaria usa SQLite en memoria y excluye el grupo `postgresql`.
+- `PostgresModuleSafetyTest` comprueba sin conectarse que se rechacen URLs de la
+  base institucional, falta de confirmación y parámetros que cambien el destino.
+- `PostgresModuleContractTest` está preparado, pero no ejecutado contra PostgreSQL.
+  Solo se selecciona con `phpunit.postgresql.xml`, exige MODULES_PG_TEST_URL
+  apuntando exactamente a certificados_morales_test y MODULES_PG_TEST_EXCLUSIVE=1.
+  No hereda host, usuario ni contraseña de la conexión habitual.
+- Incluso con esas opciones rechaza bases con tablas o esquemas funcionales
+  preexistentes. En una ejecución futura autorizada crearía únicamente gestion
+  y certificado mediante las migraciones locales dentro de una transacción,
+  con rollback al terminar; no ejecuta down, migrate:fresh, db:wipe ni acceso.
+- La suite preparada cubre las 25 tablas/PK, siete FK entre esquemas, restricciones,
+  CRUD representativos, históricos y asistencia. No acredita todavía los 25 CRUD
+  completos ni concurrencia, archivos PFX o firma digital en PostgreSQL.
+
+Por la instrucción vigente de no cambiar la BD no se ejecutará esta suite con
+una conexión PostgreSQL configurada. Requiere autorización posterior, una base
+vacía exclusiva y confirmación del contrato funcional antes de utilizarla.
+
+### Integración posterior con Seguridad y Acceso
+
+La lógica Data de Gestión y Certificaciones no consulta User, roles ni JWT.
+Se mantiene Sanctum en las 140 rutas de los dos módulos y Gates por operación.
+Sin una política autorizante las operaciones quedan denegadas.
+Al integrar el módulo institucional habrá que adaptar auth:sanctum en rutas,
+guard/middleware de cookies JWT, usuario autenticable acceso.usuario, resolución
+de Gates/Policies y permisos viewAny/view/create/update/delete. Las políticas de
+fixtures usan User provisional solo en pruebas; no son permisos institucionales.
+No se deben reemplazar los guardas de titularidad, históricos ni validaciones Data.
+
+## Estabilización de Gestión antes de integrar Seguridad
+
+Las diez clases Data de Gestión filtran ahora cada UPDATE por columnas autorizadas
+y valores realmente distintos. Los PUT conservan sus validaciones obligatorias:
+omitir un campo opcional conserva su valor, y enviar NULL explícito lo borra si
+la validación actual lo permite. Una petición sin cambios no emite UPDATE.
+La PK y columnas no registradas no se escriben desde la capa Data.
+Las actualizaciones de institución y supervisión también usan transacción y
+bloqueo de fila; las demás mantienen las transacciones previas.
+
+Se cerraron además estos caminos de modificación histórica:
+
+- Un trabajador con reconocimientos conserva su persona original incluso si
+  todavía no se ha creado un certificado. Se mantiene el bloqueo por firmas.
+- Una supervisión vinculada a una práctica certificada no puede trasladarse ni
+  cambiar sus datos de evidencia. Se comprueban práctica original y destino,
+  bloqueando las filas relacionadas durante la transacción.
+- Un documento de una persona con certificados no puede cambiar de titular,
+  tipo o número. Se permiten solicitudes sin cambios de identidad.
+
+GestionCertificationProtectionTest ejecuta el ciclo crear/listar/detallar/
+actualizar/eliminar de las diez entidades, comprueba las columnas de SQL reales,
+los UPDATE omitidos cuando no hay cambios, campos opcionales, FK, permisos y
+las nuevas restricciones históricas. Son fixtures SQLite, no registros reales.
+
+No se han resuelto mediante suposiciones las discrepancias funcionales de la
+tabla anterior. No se ha validado físicamente PostgreSQL ni su concurrencia.
+Los cambios del merge 835eb43 y el trabajo local anterior se conservan sin
+commits, merges nuevos, modificación de acceso ni adaptación a JWT.

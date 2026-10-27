@@ -4,7 +4,9 @@ namespace App\Models\Signature;
 
 use App\Models\ActivitySignature\ActivitySignature;
 use App\Models\CertificateSignature\CertificateSignature;
+use App\Models\Person_Worker\Person_Worker;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Signature extends Model
@@ -40,5 +42,10 @@ class Signature extends Model
     public function actividadesFirmas(): HasMany
     {
         return $this->hasMany(ActivitySignature::class, 'id_firma', 'id_firma');
+    }
+
+    public function worker(): BelongsTo
+    {
+        return $this->belongsTo(Person_Worker::class, 'id_persona_trabajador', 'id_persona_trabajador');
     }
 }

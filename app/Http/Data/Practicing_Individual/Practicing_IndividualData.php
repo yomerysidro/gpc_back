@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\Practicing_Individual;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -92,6 +93,10 @@ class Practicing_IndividualData
                 'data' => $practicante,
             ];
         } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
+            }
+
             report($e);
 
             return [
@@ -110,32 +115,42 @@ class Practicing_IndividualData
         array $data
     ): array {
         try {
-            $practicante = DB::table('gestion.persona_practicante')
-                ->where('id_persona_practicante', $id)
-                ->first();
+            return DB::transaction(function () use ($id, $data): array {
+                GestionIntegrity::assertOwnership('gestion.persona_practicante', $id, $data);
+                $practicante = DB::table('gestion.persona_practicante')
+                    ->where('id_persona_practicante', $id)
+                    ->first();
 
-            if (! $practicante) {
+                if (! $practicante) {
+                    return [
+                        'success' => false,
+                        'message' => 'Persona practicante no encontrada.',
+                        'status' => 404,
+                    ];
+                }
+
+                $changes = GestionIntegrity::changes('gestion.persona_practicante', $data, $practicante);
+                if ($changes !== []) {
+                    DB::table('gestion.persona_practicante')
+                        ->where('id_persona_practicante', $id)
+                        ->update($changes);
+                }
+
+                $practicanteActualizado = DB::table('gestion.persona_practicante')
+                    ->where('id_persona_practicante', $id)
+                    ->first();
+
                 return [
-                    'success' => false,
-                    'message' => 'Persona practicante no encontrada.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Persona practicante actualizada correctamente.',
+                    'data' => $practicanteActualizado,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            DB::table('gestion.persona_practicante')
-                ->where('id_persona_practicante', $id)
-                ->update($data);
-
-            $practicanteActualizado = DB::table('gestion.persona_practicante')
-                ->where('id_persona_practicante', $id)
-                ->first();
-
-            return [
-                'success' => true,
-                'message' => 'Persona practicante actualizada correctamente.',
-                'data' => $practicanteActualizado,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [
@@ -152,24 +167,31 @@ class Practicing_IndividualData
     public static function deletePracticingIndividual(int $id): array
     {
         try {
-            $eliminados = DB::table('gestion.persona_practicante')
-                ->where('id_persona_practicante', $id)
-                ->delete();
+            return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.persona_practicante', $id);
+                $eliminados = DB::table('gestion.persona_practicante')
+                    ->where('id_persona_practicante', $id)
+                    ->delete();
 
-            if ($eliminados === 0) {
+                if ($eliminados === 0) {
+                    return [
+                        'success' => false,
+                        'message' => 'Persona practicante no encontrada.',
+                        'status' => 404,
+                    ];
+                }
+
                 return [
-                    'success' => false,
-                    'message' => 'Persona practicante no encontrada.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Persona practicante eliminada correctamente.',
+                    'data' => null,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            return [
-                'success' => true,
-                'message' => 'Persona practicante eliminada correctamente.',
-                'data' => null,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [

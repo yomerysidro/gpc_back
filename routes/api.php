@@ -201,7 +201,7 @@ Route::prefix('participation-type')->middleware(['auth:sanctum', AuthorizeModule
 // ============================================================
 // AREA
 // ============================================================
-Route::prefix('areas')->group(function () {
+Route::prefix('areas')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Area\Area'])->group(function () {
     Route::get('/list', [AreaController::class, 'list']);
     Route::get('/detail/{id}', [AreaController::class, 'detail']);
     Route::post('/create', [AreaController::class, 'store']);
@@ -211,7 +211,7 @@ Route::prefix('areas')->group(function () {
 // ============================================================
 // PERSONA
 // ============================================================
-Route::prefix('persons')->group(function () {
+Route::prefix('persons')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Person\Persona'])->group(function () {
     Route::get('/list', [PersonaController::class, 'list']);
     Route::get('/detail/{id}', [PersonaController::class, 'detail']);
     Route::post('/create', [PersonaController::class, 'store']);
@@ -221,7 +221,7 @@ Route::prefix('persons')->group(function () {
 // ============================================================
 // TIPO DOCUMENTO
 // ============================================================
-Route::prefix('document-types')->group(function () {
+Route::prefix('document-types')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\DocumentType\TipoDocumento'])->group(function () {
     Route::get('/list', [TipoDocumentoController::class, 'list']);
     Route::get('/detail/{id}', [TipoDocumentoController::class, 'detail']);
     Route::post('/create', [TipoDocumentoController::class, 'store']);
@@ -231,7 +231,7 @@ Route::prefix('document-types')->group(function () {
 // ============================================================
 // PERSONA PONENTE
 // ============================================================
-Route::prefix('person-speakers')->group(function () {
+Route::prefix('person-speakers')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\PersonSpeaker\PersonaPonente'])->group(function () {
     Route::get('/list', [PersonaPonenteController::class, 'list']);
     Route::get('/detail/{id}', [PersonaPonenteController::class, 'detail']);
     Route::post('/create', [PersonaPonenteController::class, 'store']);
@@ -241,7 +241,7 @@ Route::prefix('person-speakers')->group(function () {
 // ============================================================
 // PERSONA DOCUMENTO
 // ============================================================
-Route::prefix('person-documents')->group(function () {
+Route::prefix('person-documents')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\PersonDocument\PersonaDocumento'])->group(function () {
     Route::get('/list', [PersonaDocumentoController::class, 'list']);
     Route::get('/detail/{id}', [PersonaDocumentoController::class, 'detail']);
     Route::post('/create', [PersonaDocumentoController::class, 'store']);
@@ -251,7 +251,7 @@ Route::prefix('person-documents')->group(function () {
 
 // ============================================================
 // Practica
-Route::prefix('practices')->group(function () {
+Route::prefix('practices')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Practice\Practice'])->group(function () {
     Route::get('/list', [PracticeController::class, 'list']);
     Route::get('/detail/{idPractice}', [PracticeController::class, 'detail']);
     Route::post('/create', [PracticeController::class, 'store']);
@@ -261,7 +261,7 @@ Route::prefix('practices')->group(function () {
 
 // Institucion
 // ============================================================
-Route::prefix('institutions')->group(function () {
+Route::prefix('institutions')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Institution\Institution'])->group(function () {
     Route::get('/list', [InstitutionController::class, 'list']);
     Route::get('/detail/{idInstitution}', [InstitutionController::class, 'detail']);
     Route::post('/create', [InstitutionController::class, 'store']);
@@ -271,7 +271,7 @@ Route::prefix('institutions')->group(function () {
 
 // Practica_Supervisor
 // ============================================================
-Route::prefix('supervisory-internships')->group(function () {
+Route::prefix('supervisory-internships')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Supervisory_internship\Supervisory_internship'])->group(function () {
     Route::get('/list', [Supervisory_internshipController::class, 'list']);
     Route::get('/detail/{idSupervisoryInternship}', [Supervisory_internshipController::class, 'detail']);
     Route::post('/create', [Supervisory_internshipController::class, 'store']);
@@ -282,7 +282,7 @@ Route::prefix('supervisory-internships')->group(function () {
 // Persona_Practicante
 // ============================================================
 
-Route::prefix('practicing-individuals')->group(function () {
+Route::prefix('practicing-individuals')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Practicing_Individual\Practicing_Individual'])->group(function () {
     Route::get('/list', [Practicing_IndividualController::class, 'list']);
     Route::get('/detail/{idPracticingIndividual}', [Practicing_IndividualController::class, 'detail']);
     Route::post('/create', [Practicing_IndividualController::class, 'store']);
@@ -292,7 +292,7 @@ Route::prefix('practicing-individuals')->group(function () {
 
 // Persona_Trabajador
 // ============================================================
-Route::prefix('person-workers')->group(function () {
+Route::prefix('person-workers')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Person_Worker\Person_Worker'])->group(function () {
     Route::get('/list', [Person_WorkerController::class, 'list']);
     Route::get('/detail/{idPersonWorker}', [Person_WorkerController::class, 'detail']);
     Route::post('/create', [Person_WorkerController::class, 'store']);

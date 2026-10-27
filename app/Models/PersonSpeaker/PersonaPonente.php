@@ -2,9 +2,12 @@
 
 namespace App\Models\PersonSpeaker;
 
+use App\Models\ActivitySpeaker\ActivitySpeaker;
+use App\Models\Institution\Institution;
 use App\Models\Person\Persona;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PersonaPonente extends Model
 {
@@ -32,5 +35,15 @@ class PersonaPonente extends Model
     public function persona(): BelongsTo
     {
         return $this->belongsTo(Persona::class, 'id_persona', 'id_persona');
+    }
+
+    public function institution(): BelongsTo
+    {
+        return $this->belongsTo(Institution::class, 'id_institucion', 'id_institucion');
+    }
+
+    public function activitySpeakers(): HasMany
+    {
+        return $this->hasMany(ActivitySpeaker::class, 'id_persona_ponente', 'id_persona_ponente');
     }
 }

@@ -61,17 +61,17 @@ class PracticeController extends Controller
             'id_persona_practicante' => [
                 'required',
                 'integer',
-                'exists:pgsql.gestion.persona_practicante,id_persona_practicante',
+                'exists:'.config('database.default').'.gestion.persona_practicante,id_persona_practicante',
             ],
             'id_institucion' => [
                 'required',
                 'integer',
-                'exists:pgsql.gestion.institucion,id_institucion',
+                'exists:'.config('database.default').'.gestion.institucion,id_institucion',
             ],
             'id_area' => [
                 'required',
                 'integer',
-                'exists:pgsql.gestion.area,id_area',
+                'exists:'.config('database.default').'.gestion.area,id_area',
             ],
             'carrera' => ['required', 'string', 'max:55'],
             'fecha_inicio' => ['required', 'date'],
@@ -114,17 +114,17 @@ class PracticeController extends Controller
             'id_persona_practicante' => [
                 'required',
                 'integer',
-                'exists:pgsql.gestion.persona_practicante,id_persona_practicante',
+                'exists:'.config('database.default').'.gestion.persona_practicante,id_persona_practicante',
             ],
             'id_institucion' => [
                 'required',
                 'integer',
-                'exists:pgsql.gestion.institucion,id_institucion',
+                'exists:'.config('database.default').'.gestion.institucion,id_institucion',
             ],
             'id_area' => [
                 'required',
                 'integer',
-                'exists:pgsql.gestion.area,id_area',
+                'exists:'.config('database.default').'.gestion.area,id_area',
             ],
             'carrera' => ['required', 'string', 'max:55'],
             'fecha_inicio' => ['required', 'date'],

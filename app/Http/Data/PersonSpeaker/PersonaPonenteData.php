@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\PersonSpeaker;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -83,6 +84,10 @@ class PersonaPonenteData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al crear el registro.',
@@ -111,7 +116,10 @@ class PersonaPonenteData
                     ];
                 }
 
-                DB::table('gestion.persona_ponente')->where('id_persona_ponente', $id)->update($data);
+                $changes = GestionIntegrity::changes('gestion.persona_ponente', $data, $record);
+                if ($changes !== []) {
+                    DB::table('gestion.persona_ponente')->where('id_persona_ponente', $id)->update($changes);
+                }
                 $updatedRecord = DB::table('gestion.persona_ponente')->where('id_persona_ponente', $id)->first();
 
                 return [
@@ -122,6 +130,10 @@ class PersonaPonenteData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al actualizar el registro.',
@@ -138,6 +150,8 @@ class PersonaPonenteData
     {
         try {
             return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.persona_ponente', $id);
+
                 $record = DB::table('gestion.persona_ponente')->where('id_persona_ponente', $id)->lockForUpdate()->first();
 
                 if (! $record) {
@@ -159,6 +173,10 @@ class PersonaPonenteData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al eliminar el registro.',

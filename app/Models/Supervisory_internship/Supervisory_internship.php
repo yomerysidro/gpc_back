@@ -2,7 +2,10 @@
 
 namespace App\Models\Supervisory_internship;
 
+use App\Models\Person_Worker\Person_Worker;
+use App\Models\Practice\Practice;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Supervisory_internship extends Model
 {
@@ -20,4 +23,14 @@ class Supervisory_internship extends Model
         'fecha_fin',
         'estado',
     ];
+
+    public function practice(): BelongsTo
+    {
+        return $this->belongsTo(Practice::class, 'id_practica', 'id_practica');
+    }
+
+    public function worker(): BelongsTo
+    {
+        return $this->belongsTo(Person_Worker::class, 'id_persona_trabajador', 'id_persona_trabajador');
+    }
 }

@@ -3,7 +3,9 @@
 namespace App\Models\Recognition;
 
 use App\Models\Certificate\Certificate;
+use App\Models\Person_Worker\Person_Worker;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Recognition extends Model
@@ -34,5 +36,10 @@ class Recognition extends Model
     public function certificados(): HasMany
     {
         return $this->hasMany(Certificate::class, 'id_reconocimiento', 'id_reconocimiento');
+    }
+
+    public function worker(): BelongsTo
+    {
+        return $this->belongsTo(Person_Worker::class, 'id_persona_trabajador', 'id_persona_trabajador');
     }
 }

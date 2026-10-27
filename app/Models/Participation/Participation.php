@@ -5,6 +5,7 @@ namespace App\Models\Participation;
 use App\Models\Activity\Activity;
 use App\Models\Attendance\Attendance;
 use App\Models\ParticipationType\ParticipationType;
+use App\Models\Person\Persona;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -44,5 +45,10 @@ class Participation extends Model
     public function attendances(): HasMany
     {
         return $this->hasMany(Attendance::class, 'id_participacion', 'id_participacion');
+    }
+
+    public function persona(): BelongsTo
+    {
+        return $this->belongsTo(Persona::class, 'id_persona', 'id_persona');
     }
 }
