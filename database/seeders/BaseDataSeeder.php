@@ -33,19 +33,19 @@ class BaseDataSeeder extends Seeder
     ];
 
     /**
-     * Módulos del menú de Angular (nombre => url).
+     * Módulos del menú de Angular: nombre => [url, ícono de Angular Material].
      */
     private const MODULES = [
-        'Gestión de Usuarios' => '/usuarios',
-        'Roles y Permisos' => '/roles',
-        'Dashboard' => '/dashboard',
-        'Actividades' => '/actividades',
-        'Participantes' => '/participantes',
-        'Practicantes' => '/practicantes',
-        'Reconocimientos' => '/reconocimientos',
-        'Ponentes y Firmantes' => '/ponentes-firmantes',
-        'Emisión de Certificados' => '/emision',
-        'Reportes' => '/reportes',
+        'Gestión de Usuarios' => ['/usuarios', 'people'],
+        'Roles y Permisos' => ['/roles', 'admin_panel_settings'],
+        'Dashboard' => ['/dashboard', 'dashboard'],
+        'Actividades' => ['/actividades', 'event'],
+        'Participantes' => ['/participantes', 'group'],
+        'Practicantes' => ['/practicantes', 'school'],
+        'Reconocimientos' => ['/reconocimientos', 'military_tech'],
+        'Ponentes y Firmantes' => ['/ponentes-firmantes', 'campaign'],
+        'Emisión de Certificados' => ['/emision', 'workspace_premium'],
+        'Reportes' => ['/reportes', 'bar_chart'],
     ];
 
     /**
@@ -149,8 +149,8 @@ class BaseDataSeeder extends Seeder
         $moduleIds = [];
         $permissionIds = [];
 
-        foreach (self::MODULES as $name => $url) {
-            $moduleId = $this->firstOrInsert('acceso.modulo', 'id_modulo', ['nombre' => $name], ['url' => $url], ['estado' => true]);
+        foreach (self::MODULES as $name => [$url, $icon]) {
+            $moduleId = $this->firstOrInsert('acceso.modulo', 'id_modulo', ['nombre' => $name], ['url' => $url, 'imagen' => $icon], ['estado' => true]);
             $moduleIds[$name] = $moduleId;
             $slug = ltrim($url, '/');
 
