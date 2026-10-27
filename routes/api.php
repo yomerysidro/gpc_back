@@ -22,15 +22,16 @@ Route::prefix('auth')->group(function () {
 });
 
 // ============================================================
-// USUARIOS
+// USUARIOS (acceso.usuario)
 // ============================================================
-// Pendiente: reescribir UserController/UserData sobre acceso.usuario.
-Route::prefix('users')->middleware(['auth.cookie', 'role:Administrador'])->group(function () {
-    Route::get('/list',              [UserController::class, 'list']);
-    Route::get('/detail/{idUser}',    [UserController::class, 'detail']);
-    Route::post('/create',              [UserController::class, 'store']);
-    Route::put('/update/{idUser}', [UserController::class, 'update']);
-    Route::delete('/delete/{idUser}', [UserController::class, 'destroy']);
+Route::prefix('usuarios')->middleware('auth.cookie')->group(function () {
+    Route::get('/',                          [UserController::class, 'list'])->middleware('permission:usuarios.ver');
+    Route::get('/{id}',                      [UserController::class, 'detail'])->middleware('permission:usuarios.ver');
+    Route::post('/',                         [UserController::class, 'store'])->middleware('permission:usuarios.crear');
+    Route::put('/{id}',                      [UserController::class, 'update'])->middleware('permission:usuarios.editar');
+    Route::patch('/{id}/estado',             [UserController::class, 'updateStatus'])->middleware('permission:usuarios.editar');
+    Route::patch('/{id}/desbloquear',        [UserController::class, 'unlock'])->middleware('permission:usuarios.editar');
+    Route::post('/{id}/restablecer-password', [UserController::class, 'resetPassword'])->middleware('permission:usuarios.editar');
 });
 
 // ============================================================
