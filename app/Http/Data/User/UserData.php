@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\User;
 
+use App\Models\Role\Role;
 use App\Models\User\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -17,8 +18,6 @@ use Throwable;
 class UserData
 {
     private const PER_PAGE = 10;
-
-    private const ADMIN_ROLE = 'Administrador';
 
     /**
      * Listar usuarios paginados.
@@ -220,9 +219,9 @@ class UserData
                 ];
             }
 
-            $newRole = DB::table('acceso.rol')->where('id_rol', $data['idRol'])->value('nombre');
+            $newRole = Role::find($data['idRol']);
 
-            if ($newRole !== self::ADMIN_ROLE && self::isLastActiveAdmin($user)) {
+            if (! $newRole->isAdministrator() && self::isLastActiveAdmin($user)) {
                 DB::rollBack();
 
                 return [
@@ -345,13 +344,13 @@ class UserData
      */
     private static function isLastActiveAdmin(User $user): bool
     {
-        if (! $user->estado || $user->roleName() !== self::ADMIN_ROLE) {
+        if (! $user->estado || ! $user->roles->contains(fn (Role $role) => $role->isAdministrator())) {
             return false;
         }
 
         return ! User::where('id_usuario', '!=', $user->id_usuario)
             ->where('estado', true)
-            ->whereHas('roles', fn ($query) => $query->where('acceso.rol.nombre', self::ADMIN_ROLE))
+            ->whereHas('roles', fn ($query) => $query->where('acceso.rol.nombre', Role::ADMINISTRATOR))
             ->exists();
     }
 

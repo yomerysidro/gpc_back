@@ -15,7 +15,7 @@ class ModuleRequest extends FormRequest
     {
         return [
             'nombre' => ['required', 'string', 'max:255'],
-            'url' => ['required', 'string', 'max:255'],
+            'url' => ['required', 'string', 'max:255', 'regex:/^\/[a-z0-9]+(-[a-z0-9]+)*(\/[a-z0-9]+(-[a-z0-9]+)*)*$/'],
             'imagen' => ['nullable', 'string', 'max:255'],
         ];
     }

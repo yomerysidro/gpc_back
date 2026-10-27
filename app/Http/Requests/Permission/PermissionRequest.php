@@ -27,7 +27,7 @@ class PermissionRequest extends FormRequest
 
         return [
             'nombre' => ['required', 'string', 'max:50'],
-            'clave' => ['required', 'string', 'max:50', $unique],
+            'clave' => ['required', 'string', 'max:50', 'regex:/^[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9]+(-[a-z0-9]+)*$/', $unique],
             'valor' => ['nullable', 'string', 'max:50'],
             'comentario' => ['nullable', 'string', 'max:50'],
         ];

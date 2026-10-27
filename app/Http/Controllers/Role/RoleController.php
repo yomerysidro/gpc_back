@@ -10,6 +10,7 @@ use App\Http\Requests\Role\RoleRequest;
 use App\Http\Requests\Role\RoleStatusRequest;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\ValidationException;
 
 class RoleController extends Controller
 {
@@ -81,12 +82,16 @@ class RoleController extends Controller
 
     /**
      * data null means the role does not exist; a failure without
-     * 'code' is a database error.
+     * 'code' is a database error. 422 keeps Laravel's validation format.
      */
     private function respond(array $response, int $code = 200): JsonResponse
     {
         if (! $response['success']) {
-            return $this->information($response['message'], $response['code'] ?? 500, $response['data'] ?? []);
+            if (($response['code'] ?? null) === 422) {
+                throw ValidationException::withMessages($response['data']);
+            }
+
+            return $this->error($response['message'], $response['code'] ?? 500);
         }
 
         if ($response['data'] === null) {

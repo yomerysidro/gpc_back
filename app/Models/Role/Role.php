@@ -10,6 +10,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Role extends Model
 {
+    /**
+     * El esquema no tiene una marca para el rol de sistema: se identifica por
+     * su nombre, que es único y no se puede cambiar (RoleData::updateRole).
+     * role:Administrador y las protecciones de acceso dependen de él.
+     */
+    public const ADMINISTRATOR = 'Administrador';
+
     protected $table = 'acceso.rol';
     protected $primaryKey = 'id_rol';
 
@@ -23,6 +30,14 @@ class Role extends Model
     protected $casts = [
         'estado' => 'boolean',
     ];
+
+    /**
+     * Compara el nombre guardado, no el que se esté asignando en memoria.
+     */
+    public function isAdministrator(): bool
+    {
+        return $this->getOriginal('nombre') === self::ADMINISTRATOR;
+    }
 
     public function users(): BelongsToMany
     {

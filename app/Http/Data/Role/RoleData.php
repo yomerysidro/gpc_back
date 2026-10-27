@@ -9,12 +9,11 @@ use Throwable;
 /**
  * Si el rol no existe se devuelve success true y data null (el controller
  * responde 404). Las reglas de negocio incumplidas devuelven success false
- * con 'code' (409/422) para que el controller no las confunda con un 500.
+ * con 'code' (409/422) para que el controller no las confunda con un 500;
+ * en el 422, data trae los errores por campo ({campo: [mensajes]}).
  */
 class RoleData
 {
-    private const ADMIN_ROLE = 'Administrador';
-
     /**
      * Módulos (por url) y permisos (por clave) que el rol Administrador no
      * puede perder: sin ellos nadie podría volver a asignar roles ni usuarios.
@@ -84,7 +83,7 @@ class RoleData
 
 
     /**
-     * Actualizar el nombre del rol.
+     * Actualizar el nombre del rol. El rol Administrador no se puede renombrar.
      */
     public static function updateRole(int $idRole, array $data): array
     {
@@ -92,6 +91,16 @@ class RoleData
 
         try {
             $role = Role::find($idRole);
+
+            if ($role?->isAdministrator() && $data['nombre'] !== $role->nombre) {
+                DB::rollBack();
+
+                return [
+                    'success' => false,
+                    'code' => 409,
+                    'message' => 'El rol Administrador no se puede renombrar'
+                ];
+            }
 
             if ($role) {
                 $role->update(['nombre' => $data['nombre']]);
@@ -120,8 +129,7 @@ class RoleData
     /**
      * Activar o desactivar el rol.
      *
-     * El rol Administrador no se puede desactivar si ningún otro rol activo
-     * tiene usuarios activos: el sistema quedaría sin nadie con acceso.
+     * El rol Administrador no se puede desactivar.
      */
     public static function updateRoleStatus(int $idRole, bool $status): array
     {
@@ -140,21 +148,14 @@ class RoleData
                 ];
             }
 
-            if (! $status && $role->estado && $role->nombre === self::ADMIN_ROLE) {
-                $otherActiveRoles = Role::where('id_rol', '!=', $role->id_rol)
-                    ->where('estado', true)
-                    ->whereHas('users', fn ($query) => $query->where('acceso.usuario.estado', true))
-                    ->count();
+            if (! $status && $role->isAdministrator()) {
+                DB::rollBack();
 
-                if ($otherActiveRoles === 0) {
-                    DB::rollBack();
-
-                    return [
-                        'success' => false,
-                        'code' => 409,
-                        'message' => 'No se puede desactivar el rol Administrador: es el único rol activo con usuarios activos.'
-                    ];
-                }
+                return [
+                    'success' => false,
+                    'code' => 409,
+                    'message' => 'El rol Administrador no se puede desactivar'
+                ];
             }
 
             $role->update(['estado' => $status]);
@@ -223,7 +224,7 @@ class RoleData
                 ];
             }
 
-            if ($role->nombre === self::ADMIN_ROLE) {
+            if ($role->isAdministrator()) {
                 $removesProtected = DB::table('acceso.rol_modulo as rm')
                     ->join('acceso.modulo as m', 'm.id_modulo', '=', 'rm.id_modulo')
                     ->where('rm.id_rol', $idRole)
@@ -332,9 +333,9 @@ class RoleData
 
             foreach ($pairs as $index => $pair) {
                 if (($permissionModules[$pair['idPermiso']] ?? null) !== $pair['idModulo']) {
-                    $errors["permisos.$index"] = "El permiso {$pair['idPermiso']} no pertenece al módulo {$pair['idModulo']}.";
+                    $errors["permisos.$index"] = ["El permiso {$pair['idPermiso']} no pertenece al módulo {$pair['idModulo']}."];
                 } elseif (! in_array($pair['idModulo'], $assignedModules, true)) {
-                    $errors["permisos.$index"] = "El módulo {$pair['idModulo']} no está asignado al rol.";
+                    $errors["permisos.$index"] = ["El módulo {$pair['idModulo']} no está asignado al rol."];
                 }
             }
 
@@ -349,7 +350,7 @@ class RoleData
                 ];
             }
 
-            if ($role->nombre === self::ADMIN_ROLE) {
+            if ($role->isAdministrator()) {
                 $removesProtected = DB::table('acceso.rol_modulo_permiso as rmp')
                     ->join('acceso.permiso as p', 'p.id_permiso', '=', 'rmp.id_permiso')
                     ->where('rmp.id_rol', $idRole)

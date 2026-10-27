@@ -182,6 +182,10 @@ return [
     'custom' => [
         'clave' => [
             'unique' => 'La clave ya ha sido registrada.',
+            'regex' => 'La clave debe tener el formato modulo.accion en minúsculas',
+        ],
+        'url' => [
+            'regex' => 'La URL debe empezar con / y usar minúsculas',
         ],
     ],
 
