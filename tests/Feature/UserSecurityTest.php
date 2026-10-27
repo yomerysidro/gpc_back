@@ -143,6 +143,64 @@ class UserSecurityTest extends TestCase
         $this->withCredentials()->withUnencryptedCookie('access_token', $cookie->getValue())->getJson('/api/auth/me')->assertOk()->assertJsonPath('user.id', 1)->assertJsonPath('permisos.0', 'actividades.ver');
     }
 
+    public function test_angular_login_preflight_allows_credentials_without_duplicate_cors_headers(): void
+    {
+        $response = $this->options('/api/auth/login', [], [
+            'Origin' => 'http://localhost:4200',
+            'Access-Control-Request-Method' => 'POST',
+            'Access-Control-Request-Headers' => 'content-type',
+        ]);
+
+        $response->assertNoContent()
+            ->assertHeader('Access-Control-Allow-Origin', 'http://localhost:4200')
+            ->assertHeader('Access-Control-Allow-Credentials', 'true')
+            ->assertHeader('Access-Control-Allow-Methods', 'POST')
+            ->assertHeader('Access-Control-Allow-Headers', 'content-type');
+        $this->assertSame(['http://localhost:4200'], $response->baseResponse->headers->all('access-control-allow-origin'));
+        $this->assertSame(['true'], $response->baseResponse->headers->all('access-control-allow-credentials'));
+    }
+
+    public function test_preflight_does_not_reflect_an_unconfigured_origin_or_a_wildcard(): void
+    {
+        $this->options('/api/auth/login', [], [
+            'Origin' => 'http://untrusted.example',
+            'Access-Control-Request-Method' => 'POST',
+        ])->assertNoContent()->assertHeader('Access-Control-Allow-Origin', 'http://localhost:4200');
+    }
+
+    public function test_me_without_a_cookie_returns_401_with_angular_cors_headers(): void
+    {
+        $this->withHeader('Origin', 'http://localhost:4200')->getJson('/api/auth/me')
+            ->assertUnauthorized()->assertHeaderMissing('Location')
+            ->assertHeader('Access-Control-Allow-Origin', 'http://localhost:4200')
+            ->assertHeader('Access-Control-Allow-Credentials', 'true');
+    }
+
+    public function test_angular_can_login_over_local_http_and_send_the_httponly_cookie_to_me(): void
+    {
+        $this->app->detectEnvironment(fn () => 'local');
+        $this->actor();
+        $response = $this->withHeader('Origin', 'http://localhost:4200')
+            ->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'fixture-password'])
+            ->assertOk()
+            ->assertHeader('Access-Control-Allow-Origin', 'http://localhost:4200')
+            ->assertHeader('Access-Control-Allow-Credentials', 'true');
+        $cookie = $response->baseResponse->headers->getCookies()[0];
+        $this->assertSame('access_token', $cookie->getName());
+        $this->assertTrue($cookie->isHttpOnly());
+        $this->assertFalse($cookie->isSecure());
+        $this->assertSame('strict', $cookie->getSameSite());
+        $this->assertSame('/', $cookie->getPath());
+        $this->assertNull($cookie->getDomain());
+
+        Auth::forgetGuards();
+        $me = $this->withCredentials()->withUnencryptedCookie('access_token', $cookie->getValue())
+            ->getJson('/api/auth/me')->assertOk()->assertJsonPath('user.id', 1)
+            ->assertHeader('Access-Control-Allow-Origin', 'http://localhost:4200')
+            ->assertHeader('Access-Control-Allow-Credentials', 'true');
+        $this->assertSame(['http://localhost:4200'], $me->baseResponse->headers->all('access-control-allow-origin'));
+    }
+
     public function test_jwt_user_is_shared_by_request_auth_and_module_gates(): void
     {
         $user = $this->actor();
