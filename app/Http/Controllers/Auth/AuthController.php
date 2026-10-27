@@ -103,9 +103,24 @@ class AuthController extends Controller
             ->withCookie($this->jwt->makeCookie($this->jwt->createToken($user)));
     }
 
+    /**
+     * Además del usuario devuelve el menú (módulos) y las claves de permiso
+     * de sus roles activos; el login no los incluye.
+     */
     public function me(Request $request): JsonResponse
     {
-        return response()->json(['user' => $this->formatUser($request->user())]);
+        $user = $request->user();
+
+        return response()->json([
+            'user' => $this->formatUser($user),
+            'modulos' => $user->modulesForMenu()->map(fn ($module) => [
+                'id' => $module->id_modulo,
+                'nombre' => $module->nombre,
+                'url' => $module->url,
+                'imagen' => $module->imagen,
+            ]),
+            'permisos' => $user->permissionKeys(),
+        ]);
     }
 
     public function logout(): JsonResponse

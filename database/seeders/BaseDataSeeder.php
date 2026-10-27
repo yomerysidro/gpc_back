@@ -7,7 +7,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 /**
- * Datos base: roles, áreas del organigrama, catálogos y usuarios de prueba.
+ * Datos base: roles, módulos y permisos, áreas del organigrama, catálogos
+ * y usuarios de prueba.
  *
  * Idempotente: cada fila se busca por su clave natural antes de insertarse,
  * así que correr db:seed varias veces no duplica nada.
@@ -29,6 +30,50 @@ class BaseDataSeeder extends Seeder
         'Gerencia de Desarrollo Territorial y Económico',
         'Gerencia de Servicios Municipales y Gestión Ambiental',
         'Gerencia de Desarrollo Social',
+    ];
+
+    /**
+     * Módulos del menú de Angular (nombre => url).
+     */
+    private const MODULES = [
+        'Gestión de Usuarios' => '/usuarios',
+        'Roles y Permisos' => '/roles',
+        'Dashboard' => '/dashboard',
+        'Actividades' => '/actividades',
+        'Participantes' => '/participantes',
+        'Practicantes' => '/practicantes',
+        'Reconocimientos' => '/reconocimientos',
+        'Ponentes y Firmantes' => '/ponentes-firmantes',
+        'Emisión de Certificados' => '/emision',
+        'Reportes' => '/reportes',
+    ];
+
+    /**
+     * Cada módulo tiene un permiso por acción, con clave "<slug>.<acción>".
+     */
+    private const ACTIONS = [
+        'ver' => 'Ver',
+        'crear' => 'Crear',
+        'editar' => 'Editar',
+        'eliminar' => 'Eliminar',
+    ];
+
+    /**
+     * Módulos de cada rol y las acciones que tiene sobre ellos.
+     */
+    private const ROLE_MODULES = [
+        'Administrador' => [
+            'modules' => ['Gestión de Usuarios', 'Roles y Permisos', 'Actividades', 'Ponentes y Firmantes', 'Reportes'],
+            'actions' => ['ver', 'crear', 'editar', 'eliminar'],
+        ],
+        'Digitador' => [
+            'modules' => ['Actividades', 'Participantes', 'Practicantes', 'Reconocimientos', 'Ponentes y Firmantes', 'Emisión de Certificados'],
+            'actions' => ['ver', 'crear', 'editar', 'eliminar'],
+        ],
+        'Gerencial' => [
+            'modules' => ['Dashboard', 'Reportes'],
+            'actions' => ['ver'],
+        ],
     ];
 
     private const USERS = [
@@ -68,6 +113,8 @@ class BaseDataSeeder extends Seeder
                 $this->firstOrInsert('acceso.rol', 'id_rol', ['nombre' => $role], ['estado' => true]);
             }
 
+            $this->createModules();
+
             foreach (self::AREAS as $area) {
                 $this->firstOrInsert('gestion.area', 'id_area', ['nombre' => $area]);
             }
@@ -90,6 +137,52 @@ class BaseDataSeeder extends Seeder
                 $this->createUser($user);
             }
         });
+    }
+
+    /**
+     * modulo → permiso → rol_modulo → rol_modulo_permiso.
+     * El módulo se identifica por su nombre y el permiso por su clave.
+     * Las asignaciones solo se agregan: no se quita lo que se asignó desde la API.
+     */
+    private function createModules(): void
+    {
+        $moduleIds = [];
+        $permissionIds = [];
+
+        foreach (self::MODULES as $name => $url) {
+            $moduleId = $this->firstOrInsert('acceso.modulo', 'id_modulo', ['nombre' => $name], ['url' => $url], ['estado' => true]);
+            $moduleIds[$name] = $moduleId;
+            $slug = ltrim($url, '/');
+
+            foreach (self::ACTIONS as $action => $label) {
+                $permissionIds[$name][$action] = $this->firstOrInsert(
+                    'acceso.permiso',
+                    'id_permiso',
+                    ['clave' => "$slug.$action"],
+                    ['id_modulo' => $moduleId, 'nombre' => "$label $name"],
+                    ['estado' => true]
+                );
+            }
+        }
+
+        foreach (self::ROLE_MODULES as $role => $assignment) {
+            $roleId = DB::table('acceso.rol')->where('nombre', $role)->value('id_rol');
+
+            foreach ($assignment['modules'] as $module) {
+                DB::table('acceso.rol_modulo')->insertOrIgnore([
+                    'id_rol' => $roleId,
+                    'id_modulo' => $moduleIds[$module],
+                ]);
+
+                foreach ($assignment['actions'] as $action) {
+                    DB::table('acceso.rol_modulo_permiso')->insertOrIgnore([
+                        'id_rol' => $roleId,
+                        'id_modulo' => $moduleIds[$module],
+                        'id_permiso' => $permissionIds[$module][$action],
+                    ]);
+                }
+            }
+        }
     }
 
     /**

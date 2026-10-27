@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\Auth\AuthenticateCookie;
+use App\Http\Middleware\Auth\EnsurePermission;
 use App\Http\Middleware\Auth\EnsureRole;
 use App\Services\Auth\JwtService;
 use Illuminate\Foundation\Application;
@@ -22,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'auth.cookie' => AuthenticateCookie::class,
             'role' => EnsureRole::class,
+            'permission' => EnsurePermission::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
