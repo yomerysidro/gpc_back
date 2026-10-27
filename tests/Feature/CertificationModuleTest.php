@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Data\Certificate\CertificateData;
 use App\Models\Certificate\Certificate;
-use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Schema\Blueprint;
@@ -15,6 +14,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Fixtures\ModulePolicy;
+use Tests\Fixtures\ModuleUser as User;
 use Tests\TestCase;
 
 class CertificationModuleTest extends TestCase
@@ -441,21 +441,10 @@ class CertificationModuleTest extends TestCase
         }
     }
 
-    public function test_user_crud_contract_remains_available(): void
+    public function test_institutional_users_require_permissions_and_legacy_users_are_not_exposed(): void
     {
         $this->actingAs(new User(['name' => 'Authorized fixture']));
-        Gate::policy(User::class, ModulePolicy::class);
-        Schema::create('users', function (Blueprint $table) {
-            $table->increments('id');
-            $table->string('name');
-            $table->string('email')->unique();
-            $table->string('password');
-            $table->timestamps();
-        });
-        $this->postJson('/api/users/create', ['name' => 'Regression', 'email' => 'regression@example.test', 'password' => 'test-password', 'password_confirmation' => 'test-password'])->assertCreated()->assertJsonMissingPath('data.password');
-        $this->getJson('/api/users/list')->assertOk();
-        $this->getJson('/api/users/detail/1')->assertOk();
-        $this->putJson('/api/users/update/1', ['name' => 'Updated', 'email' => 'regression@example.test'])->assertOk();
-        $this->deleteJson('/api/users/delete/1')->assertOk();
+        $this->postJson('/api/users/create', ['name' => 'Legacy'])->assertNotFound();
+        $this->getJson('/api/usuarios')->assertForbidden();
     }
 }

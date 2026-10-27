@@ -7,6 +7,7 @@ use App\Http\Controllers\ActivitySpeaker\ActivitySpeakerController;
 use App\Http\Controllers\ActivityType\ActivityTypeController;
 use App\Http\Controllers\Area\AreaController;
 use App\Http\Controllers\Attendance\AttendanceController;
+use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Certificate\CertificateController;
 use App\Http\Controllers\CertificateDocument\CertificateDocumentController;
 use App\Http\Controllers\CertificateInquiry\CertificateInquiryController;
@@ -14,8 +15,10 @@ use App\Http\Controllers\CertificateSignature\CertificateSignatureController;
 use App\Http\Controllers\CertificateType\CertificateTypeController;
 use App\Http\Controllers\DocumentType\TipoDocumentoController;
 use App\Http\Controllers\Institution\InstitutionController;
+use App\Http\Controllers\Module\ModuleController;
 use App\Http\Controllers\Participation\ParticipationController;
 use App\Http\Controllers\ParticipationType\ParticipationTypeController;
+use App\Http\Controllers\Permission\PermissionController;
 use App\Http\Controllers\Person\PersonaController;
 use App\Http\Controllers\Person_Worker\Person_WorkerController;
 use App\Http\Controllers\PersonDocument\PersonaDocumentoController;
@@ -23,31 +26,18 @@ use App\Http\Controllers\PersonSpeaker\PersonaPonenteController;
 use App\Http\Controllers\Practice\PracticeController;
 use App\Http\Controllers\Practicing_Individual\Practicing_IndividualController;
 use App\Http\Controllers\Recognition\RecognitionController;
+use App\Http\Controllers\Role\RoleController;
 use App\Http\Controllers\Signature\SignatureController;
 use App\Http\Controllers\Supervisory_internship\Supervisory_internshipController;
 use App\Http\Controllers\User\UserController;
 use App\Http\Middleware\AuthorizeModuleOperation;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:sanctum');
 
 // ============================================================
 // USUARIOS
 // ============================================================
-Route::prefix('users')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\User'])->group(function () {
-    Route::get('/list', [UserController::class, 'list']);
-    Route::get('/detail/{idUser}', [UserController::class, 'detail']);
-    Route::post('/create', [UserController::class, 'store']);
-    Route::put('/update/{idUser}', [UserController::class, 'update']);
-    Route::patch('/update/{idUser}', [UserController::class, 'update']);
-    Route::delete('/delete/{idUser}', [UserController::class, 'destroy']);
-});
-
 // Certificaciones y firmas: solo usuarios autenticados y autorizados por polÃ­ticas.
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.cookie')->group(function () {
     Route::prefix('tipos-certificado')->group(function () {
         Route::get('/list', [CertificateTypeController::class, 'list']);
         Route::get('/detail/{idTipoCertificado}', [CertificateTypeController::class, 'detail']);
@@ -117,7 +107,7 @@ Route::middleware('auth:sanctum')->group(function () {
 // ============================================================
 // ASISTENCIAS
 // ============================================================
-Route::prefix('attendance')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Attendance\Attendance'])->group(function () {
+Route::prefix('attendance')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Attendance\Attendance'])->group(function () {
     Route::get('/list', [AttendanceController::class, 'list']);
     Route::get('/{idAttendance}', [AttendanceController::class, 'detail'])->whereNumber('idAttendance');
     Route::post('/create', [AttendanceController::class, 'store']);
@@ -129,7 +119,7 @@ Route::prefix('attendance')->middleware(['auth:sanctum', AuthorizeModuleOperatio
 // ============================================================
 // ACTIVIDADES
 // ============================================================
-Route::prefix('activity')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Activity\Activity'])->group(function () {
+Route::prefix('activity')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Activity\Activity'])->group(function () {
     Route::get('/', [ActivityController::class, 'list']);
     Route::get('/{idActivity}', [ActivityController::class, 'detail'])->whereNumber('idActivity');
     Route::post('/', [ActivityController::class, 'store']);
@@ -141,7 +131,7 @@ Route::prefix('activity')->middleware(['auth:sanctum', AuthorizeModuleOperation:
 // ============================================================
 // SESIONES DE ACTIVIDAD
 // ============================================================
-Route::prefix('activity-session')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\ActivitySession\ActivitySession'])->group(function () {
+Route::prefix('activity-session')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\ActivitySession\ActivitySession'])->group(function () {
     Route::get('/', [ActivitySessionController::class, 'list']);
     Route::get('/{idActivitySession}', [ActivitySessionController::class, 'detail'])->whereNumber('idActivitySession');
     Route::post('/', [ActivitySessionController::class, 'store']);
@@ -153,7 +143,7 @@ Route::prefix('activity-session')->middleware(['auth:sanctum', AuthorizeModuleOp
 // ============================================================
 // TIPOS DE ACTIVIDAD
 // ============================================================
-Route::prefix('ativicty-type')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\ActivityType\ActivityType'])->group(function () {
+Route::prefix('ativicty-type')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\ActivityType\ActivityType'])->group(function () {
     Route::get('/', [ActivityTypeController::class, 'list']);
     Route::get('/{idActivityType}', [ActivityTypeController::class, 'detail'])->whereNumber('idActivityType');
     Route::post('/', [ActivityTypeController::class, 'store']);
@@ -165,7 +155,7 @@ Route::prefix('ativicty-type')->middleware(['auth:sanctum', AuthorizeModuleOpera
 // ============================================================
 // PONENTES DE ACTIVIDADES
 // ============================================================
-Route::prefix('activity-speaker')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\ActivitySpeaker\ActivitySpeaker'])->group(function () {
+Route::prefix('activity-speaker')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\ActivitySpeaker\ActivitySpeaker'])->group(function () {
     Route::get('/', [ActivitySpeakerController::class, 'list']);
     Route::get('/{idActivitySpeaker}', [ActivitySpeakerController::class, 'detail'])->whereNumber('idActivitySpeaker');
     Route::post('/', [ActivitySpeakerController::class, 'store']);
@@ -177,7 +167,7 @@ Route::prefix('activity-speaker')->middleware(['auth:sanctum', AuthorizeModuleOp
 // ============================================================
 // PARTICIPACIONES
 // ============================================================
-Route::prefix('participation')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Participation\Participation'])->group(function () {
+Route::prefix('participation')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Participation\Participation'])->group(function () {
     Route::get('/', [ParticipationController::class, 'list']);
     Route::get('/{idParticipation}', [ParticipationController::class, 'detail'])->whereNumber('idParticipation');
     Route::post('/', [ParticipationController::class, 'store']);
@@ -189,7 +179,7 @@ Route::prefix('participation')->middleware(['auth:sanctum', AuthorizeModuleOpera
 // ============================================================
 // TIPOS DE PARTICIPACIÓN
 // ============================================================
-Route::prefix('participation-type')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\ParticipationType\ParticipationType'])->group(function () {
+Route::prefix('participation-type')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\ParticipationType\ParticipationType'])->group(function () {
     Route::get('/', [ParticipationTypeController::class, 'list']);
     Route::get('/{idParticipationType}', [ParticipationTypeController::class, 'detail'])->whereNumber('idParticipationType');
     Route::post('/', [ParticipationTypeController::class, 'store']);
@@ -201,7 +191,7 @@ Route::prefix('participation-type')->middleware(['auth:sanctum', AuthorizeModule
 // ============================================================
 // AREA
 // ============================================================
-Route::prefix('areas')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Area\Area'])->group(function () {
+Route::prefix('areas')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Area\Area'])->group(function () {
     Route::get('/list', [AreaController::class, 'list']);
     Route::get('/detail/{id}', [AreaController::class, 'detail']);
     Route::post('/create', [AreaController::class, 'store']);
@@ -211,7 +201,7 @@ Route::prefix('areas')->middleware(['auth:sanctum', AuthorizeModuleOperation::cl
 // ============================================================
 // PERSONA
 // ============================================================
-Route::prefix('persons')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Person\Persona'])->group(function () {
+Route::prefix('persons')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Person\Persona'])->group(function () {
     Route::get('/list', [PersonaController::class, 'list']);
     Route::get('/detail/{id}', [PersonaController::class, 'detail']);
     Route::post('/create', [PersonaController::class, 'store']);
@@ -221,7 +211,7 @@ Route::prefix('persons')->middleware(['auth:sanctum', AuthorizeModuleOperation::
 // ============================================================
 // TIPO DOCUMENTO
 // ============================================================
-Route::prefix('document-types')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\DocumentType\TipoDocumento'])->group(function () {
+Route::prefix('document-types')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\DocumentType\TipoDocumento'])->group(function () {
     Route::get('/list', [TipoDocumentoController::class, 'list']);
     Route::get('/detail/{id}', [TipoDocumentoController::class, 'detail']);
     Route::post('/create', [TipoDocumentoController::class, 'store']);
@@ -231,7 +221,7 @@ Route::prefix('document-types')->middleware(['auth:sanctum', AuthorizeModuleOper
 // ============================================================
 // PERSONA PONENTE
 // ============================================================
-Route::prefix('person-speakers')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\PersonSpeaker\PersonaPonente'])->group(function () {
+Route::prefix('person-speakers')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\PersonSpeaker\PersonaPonente'])->group(function () {
     Route::get('/list', [PersonaPonenteController::class, 'list']);
     Route::get('/detail/{id}', [PersonaPonenteController::class, 'detail']);
     Route::post('/create', [PersonaPonenteController::class, 'store']);
@@ -241,7 +231,7 @@ Route::prefix('person-speakers')->middleware(['auth:sanctum', AuthorizeModuleOpe
 // ============================================================
 // PERSONA DOCUMENTO
 // ============================================================
-Route::prefix('person-documents')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\PersonDocument\PersonaDocumento'])->group(function () {
+Route::prefix('person-documents')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\PersonDocument\PersonaDocumento'])->group(function () {
     Route::get('/list', [PersonaDocumentoController::class, 'list']);
     Route::get('/detail/{id}', [PersonaDocumentoController::class, 'detail']);
     Route::post('/create', [PersonaDocumentoController::class, 'store']);
@@ -251,7 +241,7 @@ Route::prefix('person-documents')->middleware(['auth:sanctum', AuthorizeModuleOp
 
 // ============================================================
 // Practica
-Route::prefix('practices')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Practice\Practice'])->group(function () {
+Route::prefix('practices')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Practice\Practice'])->group(function () {
     Route::get('/list', [PracticeController::class, 'list']);
     Route::get('/detail/{idPractice}', [PracticeController::class, 'detail']);
     Route::post('/create', [PracticeController::class, 'store']);
@@ -261,7 +251,7 @@ Route::prefix('practices')->middleware(['auth:sanctum', AuthorizeModuleOperation
 
 // Institucion
 // ============================================================
-Route::prefix('institutions')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Institution\Institution'])->group(function () {
+Route::prefix('institutions')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Institution\Institution'])->group(function () {
     Route::get('/list', [InstitutionController::class, 'list']);
     Route::get('/detail/{idInstitution}', [InstitutionController::class, 'detail']);
     Route::post('/create', [InstitutionController::class, 'store']);
@@ -271,7 +261,7 @@ Route::prefix('institutions')->middleware(['auth:sanctum', AuthorizeModuleOperat
 
 // Practica_Supervisor
 // ============================================================
-Route::prefix('supervisory-internships')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Supervisory_internship\Supervisory_internship'])->group(function () {
+Route::prefix('supervisory-internships')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Supervisory_internship\Supervisory_internship'])->group(function () {
     Route::get('/list', [Supervisory_internshipController::class, 'list']);
     Route::get('/detail/{idSupervisoryInternship}', [Supervisory_internshipController::class, 'detail']);
     Route::post('/create', [Supervisory_internshipController::class, 'store']);
@@ -282,7 +272,7 @@ Route::prefix('supervisory-internships')->middleware(['auth:sanctum', AuthorizeM
 // Persona_Practicante
 // ============================================================
 
-Route::prefix('practicing-individuals')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Practicing_Individual\Practicing_Individual'])->group(function () {
+Route::prefix('practicing-individuals')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Practicing_Individual\Practicing_Individual'])->group(function () {
     Route::get('/list', [Practicing_IndividualController::class, 'list']);
     Route::get('/detail/{idPracticingIndividual}', [Practicing_IndividualController::class, 'detail']);
     Route::post('/create', [Practicing_IndividualController::class, 'store']);
@@ -292,10 +282,66 @@ Route::prefix('practicing-individuals')->middleware(['auth:sanctum', AuthorizeMo
 
 // Persona_Trabajador
 // ============================================================
-Route::prefix('person-workers')->middleware(['auth:sanctum', AuthorizeModuleOperation::class.':App\Models\Person_Worker\Person_Worker'])->group(function () {
+Route::prefix('person-workers')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Person_Worker\Person_Worker'])->group(function () {
     Route::get('/list', [Person_WorkerController::class, 'list']);
     Route::get('/detail/{idPersonWorker}', [Person_WorkerController::class, 'detail']);
     Route::post('/create', [Person_WorkerController::class, 'store']);
     Route::put('/update/{idPersonWorker}', [Person_WorkerController::class, 'update']);
     Route::delete('/delete/{idPersonWorker}', [Person_WorkerController::class, 'destroy']);
+});
+
+// ============================================================
+// AUTENTICACIÓN (JWT en cookie httpOnly)
+// ============================================================
+Route::prefix('auth')->group(function () {
+    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
+    Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+
+    Route::middleware('auth.cookie')->group(function () {
+        Route::get('/me', [AuthController::class, 'me']);
+        Route::post('/logout', [AuthController::class, 'logout']);
+    });
+});
+
+// ============================================================
+// USUARIOS (acceso.usuario)
+// ============================================================
+Route::prefix('usuarios')->middleware('auth.cookie')->group(function () {
+    Route::get('/', [UserController::class, 'list'])->middleware('permission:usuarios.ver');
+    Route::get('/{id}', [UserController::class, 'detail'])->middleware('permission:usuarios.ver');
+    Route::post('/', [UserController::class, 'store'])->middleware('permission:usuarios.crear');
+    Route::put('/{id}', [UserController::class, 'update'])->middleware('permission:usuarios.editar');
+    Route::patch('/{id}/estado', [UserController::class, 'updateStatus'])->middleware('permission:usuarios.editar');
+    Route::patch('/{id}/desbloquear', [UserController::class, 'unlock'])->middleware('permission:usuarios.editar');
+    Route::post('/{id}/restablecer-password', [UserController::class, 'resetPassword'])->middleware('permission:usuarios.editar');
+});
+
+// ============================================================
+// ACCESO: roles, módulos, permisos y sus asignaciones
+// ============================================================
+Route::middleware(['auth.cookie', 'role:Administrador'])->group(function () {
+    Route::prefix('roles')->group(function () {
+        Route::get('/', [RoleController::class, 'list']);
+        Route::post('/', [RoleController::class, 'store']);
+        Route::put('/{id}', [RoleController::class, 'update']);
+        Route::patch('/{id}/estado', [RoleController::class, 'updateStatus']);
+        Route::get('/{id}/modulos', [RoleController::class, 'modules']);
+        Route::put('/{id}/modulos', [RoleController::class, 'syncModules']);
+        Route::get('/{id}/permisos', [RoleController::class, 'permissions']);
+        Route::put('/{id}/permisos', [RoleController::class, 'syncPermissions']);
+    });
+
+    Route::prefix('modulos')->group(function () {
+        Route::get('/', [ModuleController::class, 'list']);
+        Route::post('/', [ModuleController::class, 'store']);
+        Route::put('/{id}', [ModuleController::class, 'update']);
+        Route::patch('/{id}/estado', [ModuleController::class, 'updateStatus']);
+        Route::post('/{id}/permisos', [PermissionController::class, 'store']);
+    });
+
+    Route::prefix('permisos')->group(function () {
+        Route::put('/{id}', [PermissionController::class, 'update']);
+        Route::patch('/{id}/estado', [PermissionController::class, 'updateStatus']);
+    });
 });

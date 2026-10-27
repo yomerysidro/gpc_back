@@ -1,7 +1,7 @@
 <?php
 
-namespace App\Models\user_rol;
+namespace App\Models\User_rol;
 
 use Illuminate\Database\Eloquent\Model;
 
-class user_rol extends Model {}
+class User_rol extends Model {}

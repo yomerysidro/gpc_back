@@ -20,12 +20,12 @@ use App\Models\PersonSpeaker\PersonaPonente;
 use App\Models\Practice\Practice;
 use App\Models\Practicing_Individual\Practicing_Individual;
 use App\Models\Supervisory_internship\Supervisory_internship;
-use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Tests\Fixtures\ModulePolicy;
+use Tests\Fixtures\ModuleUser as User;
 use Tests\Fixtures\ReadOnlyModulePolicy;
 use Tests\TestCase;
 
@@ -269,32 +269,10 @@ class ModuleIntegrationTest extends TestCase
         $this->assertDatabaseHas('certificado.actividad', ['id_actividad' => 1, 'nombre' => 'Actividad 1']);
     }
 
-    public function test_sanctum_bearer_tokens_still_require_a_policy(): void
+    public function test_bearer_tokens_cannot_replace_the_institutional_cookie(): void
     {
-        Schema::create('users', function (Blueprint $table) {
-            $table->increments('id');
-            $table->string('name');
-            $table->string('email');
-            $table->string('password')->nullable();
-            $table->timestamps();
-        });
-        Schema::create('personal_access_tokens', function (Blueprint $table) {
-            $table->increments('id');
-            $table->morphs('tokenable');
-            $table->string('name');
-            $table->string('token', 64)->unique();
-            $table->text('abilities')->nullable();
-            $table->timestamp('last_used_at')->nullable();
-            $table->timestamp('expires_at')->nullable();
-            $table->timestamps();
-        });
-        DB::table('users')->insert(['id' => 1, 'name' => 'Authorized fixture', 'email' => 'fixture@example.test']);
-        $user = User::findOrFail(1);
-        $token = $user->createToken('fixture')->plainTextToken;
         $this->withToken('invalid')->getJson('/api/activity')->assertUnauthorized();
-        $this->withToken($token)->getJson('/api/activity')->assertForbidden();
-        Gate::policy(Activity::class, ModulePolicy::class);
-        $this->withToken($token)->getJson('/api/activity')->assertOk();
+        $this->withToken(str_repeat('a', 64))->getJson('/api/activity')->assertUnauthorized();
     }
 
     public function test_duplicate_attendance_is_rejected_even_with_different_hours(): void

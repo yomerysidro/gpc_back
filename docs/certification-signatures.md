@@ -351,3 +351,74 @@ No se han resuelto mediante suposiciones las discrepancias funcionales de la
 tabla anterior. No se ha validado físicamente PostgreSQL ni su concurrencia.
 Los cambios del merge 835eb43 y el trabajo local anterior se conservan sin
 commits, merges nuevos, modificación de acceso ni adaptación a JWT.
+
+## Integración local con dev-juan
+
+La integración posterior de origin/dev-juan mantiene las 140 rutas de Gestión y
+Certificaciones y agrega las 27 rutas institucionales de autenticación y acceso.
+Se retiran las siete rutas provisionales de users/api-user: las cuentas se
+administran con el contrato de Juan en /api/usuarios y acceso.usuario. No se
+habilita borrado de cuentas; se conserva la desactivación institucional.
+
+El guard jwt-cookie usa access_token y el modelo App\Models\User\User. El
+middleware auth.cookie selecciona ese guard para que Request, Auth y Gates
+resuelvan la misma identidad. Los Gates viewAny/view/create/update/delete
+consultan claves institucionales ver/crear/editar/eliminar; no existe un permiso
+global por autenticarse ni una excepción global por llamarse Administrador.
+EnsureRole también exige que el rol esté activo.
+
+config/module_permissions.php vincula los recursos al ámbito de los módulos
+existentes de Juan. Persona, documentos, tipos de documento, áreas e instituciones
+permanecen con ámbito NULL y devuelven 403 hasta confirmar sus permisos. No se
+crean usuarios, roles o permisos en la base. Las políticas de fixtures viven solo
+en tests y no representan una autorización institucional.
+
+El usuario institucional utiliza el modelo Persona existente y su atributo
+full_name; se eliminan el modelo Person redundante y el User provisional. Los
+tests de negocio usan ModuleUser, un fixture derivado del usuario institucional.
+Los contratos antiguos de User/Sanctum se sustituyen en pruebas por los contratos
+institucionales de usuarios, cookies y permisos. La cobertura CRUD de los Módulos
+2 y 3 y las restricciones históricas se conservan.
+
+Composer incorpora firebase/php-jwt 7.2.1 conservando Boost y las versiones previas
+de los otros paquetes. No se ejecutaron scripts Composer, seeders ni migraciones.
+Se configura un secreto JWT local si falta, sin imprimirlo ni versionar .env.
+La revisión posterior actualiza únicamente league/commonmark de 2.10.0 a 2.10.4
+y symfony/http-foundation de 7.4.18 a 7.4.21. Composer comprueba la compatibilidad
+con PHP 8.3 y las dependencias bloqueadas; no se actualizan otros paquetes.
+La auditoría posterior no reporta avisos conocidos ni paquetes abandonados.
+
+La migración de acceso de Juan añade estado, intentos_fallidos, bloqueado_hasta
+y ultimo_acceso. Incorporar ese archivo no actualiza una base ya migrada. Debe
+verificarse el DDL aplicado y acordarse un despliegue incremental; nunca utilizar
+migrate:fresh, db:wipe o el seeder de usuarios de prueba sobre la base compartida.
+Las discrepancias previas de gestion/certificado y la validación física
+PostgreSQL continúan pendientes. La integración local se deja sin commit ni push.
+
+### Comprobaciones adicionales de los tres módulos
+
+JwtService ahora exige sub entero positivo e iat/exp enteros, coherentes y con
+emisión no futura, además de verificar firma HS256 y expiración. Los tokens con
+claims incompletos, manipulados o con un objeto en sub se rechazan con 401 sin
+provocar un 500. El rol declarado en el token no sustituye los roles de la base.
+
+permissionKeys comprueba que cada permiso pertenezca al mismo módulo indicado
+en rol_modulo_permiso, además de las asignaciones y estados activos. Se probó
+que una asignación incoherente ya no concede acceso. No se amplían privilegios
+ni se resuelven por suposición los cinco ámbitos NULL de module_permissions.
+Las claves declaradas por BaseDataSeeder son referencia de código; no se afirma
+que esas filas existan en la base institucional, a la que no se accedió.
+
+UserSecurityTest recorre las 167 rutas registradas: las 164 protegidas rechazan
+invitados y las 162 operaciones administrativas rechazan un JWT sin permisos.
+Las otras cinco son login, forgot/reset-password, me y logout, con sus reglas
+propias. Se ejercitan cookies, identidad común Request/Auth/Gates, administración
+de usuarios, roles/módulos/permisos, rollback de asignaciones inválidas y el ciclo
+de recuperación de contraseña con token de un solo uso y notificaciones falsas.
+El logout expira la cookie del navegador; no se implementa una lista de revocación
+de JWT ya emitidos, que conservan su validez criptográfica hasta expirar.
+
+Las pruebas de negocio de Gestión y Certificaciones se conservan. Ninguna de
+estas comprobaciones SQLite acredita ejecución física PostgreSQL, concurrencia
+ni compatibilidad definitiva de los estados, fechas y restricciones pendientes.
+No se ejecutaron ni modificaron migraciones durante esta revisión posterior.

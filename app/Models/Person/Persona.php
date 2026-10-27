@@ -8,6 +8,7 @@ use App\Models\Person_Worker\Person_Worker;
 use App\Models\PersonDocument\PersonaDocumento;
 use App\Models\PersonSpeaker\PersonaPonente;
 use App\Models\Practicing_Individual\Practicing_Individual;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -68,5 +69,12 @@ class Persona extends Model
     public function participations(): HasMany
     {
         return $this->hasMany(Participation::class, 'id_persona', 'id_persona');
+    }
+
+    protected function fullName(): Attribute
+    {
+        return Attribute::get(fn () => trim(implode(' ', array_filter([
+            $this->nombres, $this->apellido_paterno, $this->apellido_materno,
+        ]))));
     }
 }

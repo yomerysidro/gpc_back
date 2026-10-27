@@ -10,13 +10,13 @@ use App\Models\Certificate\Certificate;
 use App\Models\Participation\Participation;
 use App\Models\Recognition\Recognition;
 use App\Models\Signature\Signature;
-use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Fixtures\ModulePolicy;
+use Tests\Fixtures\ModuleUser as User;
 use Tests\Fixtures\ReadOnlyModulePolicy;
 use Tests\TestCase;
 

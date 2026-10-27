@@ -4,13 +4,13 @@ namespace Tests\Feature;
 
 use App\Http\Data\Attendance\AttendanceData;
 use App\Models\Attendance\Attendance;
-use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Fixtures\ModulePolicy;
+use Tests\Fixtures\ModuleUser as User;
 use Tests\TestCase;
 
 class AttendanceTest extends TestCase

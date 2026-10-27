@@ -2,8 +2,8 @@
 
 namespace Tests\Fixtures;
 
-use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
+use Tests\Fixtures\ModuleUser as User;
 
 class ModulePolicy
 {
