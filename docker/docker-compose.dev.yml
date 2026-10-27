@@ -1,4 +1,26 @@
 services:
+  db:
+    image: postgres:15-alpine
+
+    container_name: ${DB_CONTAINER_NAME:-gpc_db}
+
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-certificados_morales}
+      POSTGRES_USER: ${DB_USERNAME:-gpc_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-gpc_pass}
+
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-gpc_user} -d ${DB_DATABASE:-certificados_morales}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   app:
     build:
       context: ..
@@ -17,8 +39,13 @@ services:
       - ..:/var/www/httpdocs
       - composer-cache:/tmp/composer
 
+    depends_on:
+      db:
+        condition: service_healthy
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
   composer-cache:
+  db-data:

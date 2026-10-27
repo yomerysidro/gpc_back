@@ -14,13 +14,13 @@ class UserController extends Controller
     use ApiResponse;
 
     /**
-     * List users.
+     * List users
      */
     public function list()
     {
         $response = UserData::getUsers();
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 500
@@ -40,7 +40,7 @@ class UserController extends Controller
     {
         $response = UserData::getUserById($idUser);
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 404
@@ -92,7 +92,7 @@ class UserController extends Controller
             $validator->validated()
         );
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 400
@@ -147,7 +147,7 @@ class UserController extends Controller
             $validator->validated()
         );
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 404
@@ -167,7 +167,7 @@ class UserController extends Controller
     {
         $response = UserData::deleteUser($idUser);
 
-        if (!$response['success']) {
+        if (! $response['success']) {
             return $this->error(
                 $response['message'],
                 404
