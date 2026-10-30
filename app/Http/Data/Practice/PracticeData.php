@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\Practice;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -96,6 +97,10 @@ class PracticeData
                 'data' => $practica,
             ];
         } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
+            }
+
             report($e);
 
             return [
@@ -112,32 +117,42 @@ class PracticeData
     public static function updatePractice(int $id, array $data): array
     {
         try {
-            $practica = DB::table('gestion.practica')
-                ->where('id_practica', $id)
-                ->first();
+            return DB::transaction(function () use ($id, $data): array {
+                GestionIntegrity::assertOwnership('gestion.practica', $id, $data);
+                $practica = DB::table('gestion.practica')
+                    ->where('id_practica', $id)
+                    ->first();
 
-            if (! $practica) {
+                if (! $practica) {
+                    return [
+                        'success' => false,
+                        'message' => 'Práctica no encontrada.',
+                        'status' => 404,
+                    ];
+                }
+
+                $changes = GestionIntegrity::changes('gestion.practica', $data, $practica);
+                if ($changes !== []) {
+                    DB::table('gestion.practica')
+                        ->where('id_practica', $id)
+                        ->update($changes);
+                }
+
+                $practicaActualizada = DB::table('gestion.practica')
+                    ->where('id_practica', $id)
+                    ->first();
+
                 return [
-                    'success' => false,
-                    'message' => 'Práctica no encontrada.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Práctica actualizada correctamente.',
+                    'data' => $practicaActualizada,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            DB::table('gestion.practica')
-                ->where('id_practica', $id)
-                ->update($data);
-
-            $practicaActualizada = DB::table('gestion.practica')
-                ->where('id_practica', $id)
-                ->first();
-
-            return [
-                'success' => true,
-                'message' => 'Práctica actualizada correctamente.',
-                'data' => $practicaActualizada,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [
@@ -154,24 +169,31 @@ class PracticeData
     public static function deletePractice(int $id): array
     {
         try {
-            $eliminados = DB::table('gestion.practica')
-                ->where('id_practica', $id)
-                ->delete();
+            return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.practica', $id);
+                $eliminados = DB::table('gestion.practica')
+                    ->where('id_practica', $id)
+                    ->delete();
 
-            if ($eliminados === 0) {
+                if ($eliminados === 0) {
+                    return [
+                        'success' => false,
+                        'message' => 'Práctica no encontrada.',
+                        'status' => 404,
+                    ];
+                }
+
                 return [
-                    'success' => false,
-                    'message' => 'Práctica no encontrada.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Práctica eliminada correctamente.',
+                    'data' => null,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            return [
-                'success' => true,
-                'message' => 'Práctica eliminada correctamente.',
-                'data' => null,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [

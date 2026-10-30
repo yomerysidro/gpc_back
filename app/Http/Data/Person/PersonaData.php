@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\Person;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -83,6 +84,10 @@ class PersonaData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al crear el registro.',
@@ -111,7 +116,10 @@ class PersonaData
                     ];
                 }
 
-                DB::table('gestion.persona')->where('id_persona', $id)->update($data);
+                $changes = GestionIntegrity::changes('gestion.persona', $data, $record);
+                if ($changes !== []) {
+                    DB::table('gestion.persona')->where('id_persona', $id)->update($changes);
+                }
                 $updatedRecord = DB::table('gestion.persona')->where('id_persona', $id)->first();
 
                 return [
@@ -122,6 +130,10 @@ class PersonaData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al actualizar el registro.',
@@ -138,6 +150,8 @@ class PersonaData
     {
         try {
             return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.persona', $id);
+
                 $record = DB::table('gestion.persona')->where('id_persona', $id)->lockForUpdate()->first();
 
                 if (! $record) {
@@ -159,6 +173,10 @@ class PersonaData
                 ];
             });
         } catch (Throwable $exception) {
+            if ($failure = GestionIntegrity::failure($exception)) {
+                return $failure;
+            }
+
             return [
                 'success' => false,
                 'message' => 'Error al eliminar el registro.',

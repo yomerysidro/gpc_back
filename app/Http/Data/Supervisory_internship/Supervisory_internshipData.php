@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\Supervisory_internship;
 
+use App\Http\Data\GestionIntegrity;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -95,6 +96,10 @@ class Supervisory_internshipData
                 'data' => $registro,
             ];
         } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
+            }
+
             report($e);
 
             return [
@@ -113,32 +118,42 @@ class Supervisory_internshipData
         array $data
     ): array {
         try {
-            $registro = DB::table('gestion.practica_supervisor')
-                ->where('id_practica_supervisor', $id)
-                ->first();
+            return DB::transaction(function () use ($id, $data): array {
+                $registro = DB::table('gestion.practica_supervisor')
+                    ->where('id_practica_supervisor', $id)
+                    ->lockForUpdate()->first();
 
-            if (! $registro) {
+                if (! $registro) {
+                    return [
+                        'success' => false,
+                        'message' => 'Registro no encontrado.',
+                        'status' => 404,
+                    ];
+                }
+
+                $changes = GestionIntegrity::changes('gestion.practica_supervisor', $data, $registro);
+                GestionIntegrity::assertHistoricalUpdate('gestion.practica_supervisor', $registro, $changes);
+                if ($changes !== []) {
+                    DB::table('gestion.practica_supervisor')
+                        ->where('id_practica_supervisor', $id)
+                        ->update($changes);
+                }
+
+                $registroActualizado = DB::table('gestion.practica_supervisor')
+                    ->where('id_practica_supervisor', $id)
+                    ->first();
+
                 return [
-                    'success' => false,
-                    'message' => 'Registro no encontrado.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Registro actualizado correctamente.',
+                    'data' => $registroActualizado,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            DB::table('gestion.practica_supervisor')
-                ->where('id_practica_supervisor', $id)
-                ->update($data);
-
-            $registroActualizado = DB::table('gestion.practica_supervisor')
-                ->where('id_practica_supervisor', $id)
-                ->first();
-
-            return [
-                'success' => true,
-                'message' => 'Registro actualizado correctamente.',
-                'data' => $registroActualizado,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [
@@ -155,24 +170,31 @@ class Supervisory_internshipData
     public static function deleteSupervisoryInternship(int $id): array
     {
         try {
-            $eliminados = DB::table('gestion.practica_supervisor')
-                ->where('id_practica_supervisor', $id)
-                ->delete();
+            return DB::transaction(function () use ($id): array {
+                GestionIntegrity::assertCanDelete('gestion.practica_supervisor', $id);
+                $eliminados = DB::table('gestion.practica_supervisor')
+                    ->where('id_practica_supervisor', $id)
+                    ->delete();
 
-            if ($eliminados === 0) {
+                if ($eliminados === 0) {
+                    return [
+                        'success' => false,
+                        'message' => 'Registro no encontrado.',
+                        'status' => 404,
+                    ];
+                }
+
                 return [
-                    'success' => false,
-                    'message' => 'Registro no encontrado.',
-                    'status' => 404,
+                    'success' => true,
+                    'message' => 'Registro eliminado correctamente.',
+                    'data' => null,
                 ];
+            });
+        } catch (Throwable $e) {
+            if ($failure = GestionIntegrity::failure($e)) {
+                return $failure;
             }
 
-            return [
-                'success' => true,
-                'message' => 'Registro eliminado correctamente.',
-                'data' => null,
-            ];
-        } catch (Throwable $e) {
             report($e);
 
             return [
