@@ -27,7 +27,6 @@ use App\Models\Signature\Signature;
 use App\Models\Supervisory_internship\Supervisory_internship;
 
 return [
-    // Null keeps access denied until the institutional permission scope is confirmed.
     'models' => [
         Activity::class => 'actividades',
         ActivityType::class => 'actividades',
@@ -49,10 +48,20 @@ return [
         Practicing_Individual::class => 'practicantes',
         Practice::class => 'practicantes',
         Supervisory_internship::class => 'practicantes',
-        Persona::class => null,
-        PersonaDocumento::class => null,
-        TipoDocumento::class => null,
-        Area::class => null,
-        Institution::class => null,
+        Persona::class => [
+            'ver' => 'personas.verpersonas',
+            'crear' => 'personas.crear',
+            'editar' => 'personas.editar',
+            'eliminar' => 'personas.eliminar',
+        ],
+        PersonaDocumento::class => [
+            'ver' => 'personas.verpersonas',
+            'crear' => 'personas.crear',
+            'editar' => 'personas.editar',
+            'eliminar' => 'personas.eliminar',
+        ],
+        TipoDocumento::class => 'tipos-documento',
+        Area::class => 'areas',
+        Institution::class => 'instituciones',
     ],
 ];

@@ -11,10 +11,15 @@ class ModulePermissions
     {
         $class = is_string($target) ? $target : $target::class;
         $module = config('module_permissions.models.'.$class);
-        if (! $user->estado || ! is_string($module) || $module === '') {
+        if (! $user->estado) {
             return false;
         }
 
-        return in_array($module.'.'.$action, $user->permissionKeys(), true);
+        $permission = is_array($module)
+            ? ($module[$action] ?? null)
+            : (is_string($module) && $module !== '' ? $module.'.'.$action : null);
+
+        return is_string($permission) && $permission !== ''
+            && in_array($permission, $user->permissionKeys(), true);
     }
 }
