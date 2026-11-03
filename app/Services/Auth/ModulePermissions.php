@@ -10,11 +10,18 @@ class ModulePermissions
     public static function allows(User $user, Model|string $target, string $action): bool
     {
         $class = is_string($target) ? $target : $target::class;
-        $module = config('module_permissions.models.'.$class);
-        if (! $user->estado || ! is_string($module) || $module === '') {
+        $modules = config('module_permissions.models.'.$class);
+        if (! $user->estado || empty($modules)) {
             return false;
         }
 
-        return in_array($module.'.'.$action, $user->permissionKeys(), true);
+        $permissions = $user->permissionKeys();
+        foreach ((array) $modules as $module) {
+            if (is_string($module) && $module !== '' && in_array($module.'.'.$action, $permissions, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

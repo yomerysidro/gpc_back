@@ -26,12 +26,23 @@ use App\Http\Controllers\PersonSpeaker\PersonaPonenteController;
 use App\Http\Controllers\Practice\PracticeController;
 use App\Http\Controllers\Practicing_Individual\Practicing_IndividualController;
 use App\Http\Controllers\Recognition\RecognitionController;
+use App\Http\Controllers\Report\ActivityReportController;
+use App\Http\Controllers\Report\ReportIndicatorsController;
 use App\Http\Controllers\Role\RoleController;
 use App\Http\Controllers\Signature\SignatureController;
 use App\Http\Controllers\Supervisory_internship\Supervisory_internshipController;
 use App\Http\Controllers\User\UserController;
+use App\Http\Data\Report\ReportIndicatorsData;
 use App\Http\Middleware\AuthorizeModuleOperation;
 use Illuminate\Support\Facades\Route;
+
+Route::get('reportes/actividades', [ActivityReportController::class, 'list'])
+    ->middleware(['auth.cookie', 'permission:reportes.ver']);
+
+// Conteos generales de registros: permisos de Reportes y autorizaciÃ³n del mÃ³dulo de origen.
+Route::get('reportes/indicadores/{indicador}', [ReportIndicatorsController::class, 'count'])
+    ->middleware(['auth.cookie', 'permission:reportes.ver'])
+    ->whereIn('indicador', array_keys(ReportIndicatorsData::MODELS));
 
 // ============================================================
 // USUARIOS

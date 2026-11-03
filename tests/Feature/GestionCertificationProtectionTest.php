@@ -81,6 +81,45 @@ class GestionCertificationProtectionTest extends TestCase
         }
     }
 
+    public function test_shared_person_catalogs_allow_reading_from_either_module_without_granting_write_access(): void
+    {
+        foreach (['ponentes-firmantes.ver', 'practicantes.ver'] as $permission) {
+            $user = \Mockery::mock(User::class)->makePartial();
+            $user->estado = true;
+            $user->shouldReceive('permissionKeys')->andReturn([$permission]);
+            $this->actingAs($user);
+
+            foreach (['persons', 'person-documents', 'document-types'] as $catalog) {
+                $this->getJson('/api/'.$catalog.'/list')->assertOk();
+                $this->postJson('/api/'.$catalog.'/create', [])->assertForbidden();
+            }
+
+            foreach (['App\\Models\\Person\\Persona', 'App\\Models\\PersonDocument\\PersonaDocumento', 'App\\Models\\DocumentType\\TipoDocumento'] as $model) {
+                $this->assertTrue(Gate::forUser($user)->allows('view', $model));
+                $this->assertFalse(Gate::forUser($user)->allows('update', $model));
+                $this->assertFalse(Gate::forUser($user)->allows('delete', $model));
+            }
+        }
+    }
+
+    public function test_shared_person_catalogs_require_the_permission_for_each_write_operation(): void
+    {
+        foreach (['ponentes-firmantes', 'practicantes'] as $module) {
+            foreach (['create' => 'crear', 'update' => 'editar', 'delete' => 'eliminar'] as $ability => $action) {
+                $user = \Mockery::mock(User::class)->makePartial();
+                $user->estado = true;
+                $user->shouldReceive('permissionKeys')->andReturn([$module.'.ver', $module.'.'.$action]);
+
+                foreach (['App\\Models\\Person\\Persona', 'App\\Models\\PersonDocument\\PersonaDocumento', 'App\\Models\\DocumentType\\TipoDocumento'] as $model) {
+                    $this->assertTrue(Gate::forUser($user)->allows($ability, $model));
+                    $user->estado = false;
+                    $this->assertFalse(Gate::forUser($user)->allows($ability, $model));
+                    $user->estado = true;
+                }
+            }
+        }
+    }
+
     private function seedOrigins(): void
     {
         DB::table('gestion.persona')->insert([['id_persona' => 1], ['id_persona' => 2]]);
