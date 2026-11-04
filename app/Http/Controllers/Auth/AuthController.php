@@ -9,6 +9,7 @@ use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Models\User\User;
 use App\Services\Auth\JwtService;
+use App\Services\Auth\ModulePermissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -113,6 +114,7 @@ class AuthController extends Controller
     public function me(Request $request): JsonResponse
     {
         $user = $request->user();
+        $permissions = $user->permissionKeys();
 
         return response()->json([
             'user' => $this->formatUser($user),
@@ -122,7 +124,8 @@ class AuthController extends Controller
                 'url' => $module->url,
                 'imagen' => $module->imagen,
             ]),
-            'permisos' => $user->permissionKeys(),
+            'permisos' => $permissions,
+            'capacidades_solicitudes' => ModulePermissions::activityRequestCapabilities($user, $permissions),
         ]);
     }
 

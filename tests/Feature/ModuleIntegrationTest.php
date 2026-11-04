@@ -44,14 +44,15 @@ class ModuleIntegrationTest extends TestCase
         DB::statement("ATTACH DATABASE ':memory:' AS gestion");
         $definitions = [
             'gestion.persona' => ['id_persona', []],
-            'gestion.persona_trabajador' => ['id_persona_trabajador', ['id_persona']],
+            'gestion.persona_trabajador' => ['id_persona_trabajador', ['id_persona', 'id_area', 'estado', 'fecha_ingreso', 'fecha_fin']],
             'gestion.persona_practicante' => ['id_persona_practicante', ['id_persona']],
             'gestion.practica' => ['id_practica', ['id_persona_practicante']],
-            'gestion.area' => ['id_area', []],
+            'gestion.area' => ['id_area', ['nombre']],
             'gestion.persona_ponente' => ['id_persona_ponente', ['id_persona']],
             'certificado.tipo_actividad' => ['id_tipo_actividad', ['nombre', 'descripcion', 'estado']],
             'certificado.tipo_participacion' => ['id_tipo_participacion', ['nombre', 'estado']],
             'certificado.actividad' => ['id_actividad', ['id_area', 'id_tipo_actividad', 'nombre', 'descripcion', 'fecha_inicio', 'fecha_fin', 'sede', 'estado']],
+            'certificado.solicitud_actividad' => ['id_solicitud_actividad', ['id_actividad']],
             'certificado.participacion' => ['id_participacion', ['id_persona', 'id_actividad', 'id_tipo_participacion', 'fecha_inscripcion', 'estado']],
             'certificado.actividad_sesion' => ['id_actividad_sesion', ['id_actividad', 'nombre', 'fecha', 'hora_inicio', 'hora_fin', 'lugar', 'estado']],
             'certificado.actividad_ponente' => ['id_actividad_ponente', ['id_actividad', 'id_persona_ponente']],
@@ -78,16 +79,16 @@ class ModuleIntegrationTest extends TestCase
             });
         }
         DB::table('gestion.persona')->insert([['id_persona' => 1], ['id_persona' => 2]]);
-        DB::table('gestion.area')->insert(['id_area' => 1]);
+        DB::table('gestion.area')->insert(['id_area' => 1, 'nombre' => 'Área de prueba']);
         DB::table('gestion.persona_ponente')->insert(['id_persona_ponente' => 1, 'id_persona' => 1]);
-        DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 1, 'id_persona' => 1]);
+        DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 1, 'id_persona' => 1, 'id_area' => 1, 'estado' => '1', 'fecha_ingreso' => today()->toDateString()]);
         DB::table('gestion.persona_practicante')->insert(['id_persona_practicante' => 1, 'id_persona' => 1]);
         DB::table('gestion.practica')->insert(['id_practica' => 1, 'id_persona_practicante' => 1]);
         DB::table('certificado.tipo_actividad')->insert(['id_tipo_actividad' => 1, 'nombre' => 'Curso', 'estado' => '1']);
         DB::table('certificado.tipo_participacion')->insert(['id_tipo_participacion' => 1, 'nombre' => 'Asistente', 'estado' => '1']);
         DB::table('certificado.tipo_certificado')->insert(['id_tipo_certificado' => 1, 'nombre_tipo' => 'Participación', 'estado' => 'ACTIVO']);
         foreach ([1, 2] as $id) {
-            DB::table('certificado.actividad')->insert(['id_actividad' => $id, 'id_area' => 1, 'id_tipo_actividad' => 1, 'nombre' => 'Actividad '.$id, 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'ACTIVO']);
+            DB::table('certificado.actividad')->insert(['id_actividad' => $id, 'id_area' => 1, 'id_tipo_actividad' => 1, 'nombre' => 'Actividad '.$id, 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'Activa']);
         }
         DB::table('certificado.participacion')->insert(['id_participacion' => 1, 'id_persona' => 1, 'id_actividad' => 1, 'id_tipo_participacion' => 1, 'fecha_inscripcion' => '2026-01-01', 'estado' => 'ACTIVO']);
         DB::table('certificado.actividad_sesion')->insert(['id_actividad_sesion' => 1, 'id_actividad' => 1, 'nombre' => 'Sesión', 'fecha' => '2026-01-20', 'hora_inicio' => '08:00', 'hora_fin' => '09:00', 'estado' => 'ACTIVO']);
@@ -134,7 +135,7 @@ class ModuleIntegrationTest extends TestCase
     {
         $this->authorize();
         $cases = [
-            ['activity', ['id_area' => 1, 'id_tipo_actividad' => 1, 'nombre' => 'Nueva', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'ACTIVO'], 'id_actividad', 'nombre', 'Actualizada'],
+            ['activity', ['id_area' => 1, 'id_tipo_actividad' => 1, 'nombre' => 'Nueva', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'Activa'], 'id_actividad', 'nombre', 'Actualizada'],
             ['ativicty-type', ['nombre' => 'Taller', 'estado' => true], 'id_tipo_actividad', 'nombre', 'Taller actualizado'],
             ['activity-speaker', ['id_actividad' => 1, 'id_persona_ponente' => 1], 'id_actividad_ponente', 'id_actividad', 2],
             ['participation', ['id_persona' => 2, 'id_actividad' => 1, 'id_tipo_participacion' => 1, 'fecha_inscripcion' => '2026-01-01', 'estado' => 'ACTIVO'], 'id_participacion', 'estado', 'RETIRADO'],
@@ -145,7 +146,12 @@ class ModuleIntegrationTest extends TestCase
         foreach ($cases as [$prefix, $payload, $key, $field, $value]) {
             $attendance = $prefix === 'attendance';
             $root = '/api/'.$prefix;
-            $id = $this->postJson($root.($attendance ? '/create' : ''), $payload)->assertCreated()->json('data.'.$key);
+            if ($prefix === 'activity') {
+                $this->postJson($root, $payload)->assertForbidden();
+                $id = DB::table('certificado.actividad')->insertGetId($payload, 'id_actividad');
+            } else {
+                $id = $this->postJson($root.($attendance ? '/create' : ''), $payload)->assertCreated()->json('data.'.$key);
+            }
             $detail = $root.'/'.$id;
             $update = $root.($attendance ? '/update' : '').'/'.$id;
             $delete = $root.($attendance ? '/delete' : '').'/'.$id;
@@ -227,7 +233,7 @@ class ModuleIntegrationTest extends TestCase
     public function test_cross_schema_foreign_keys_and_beneficiaries_are_checked(): void
     {
         $this->authorize();
-        $this->postJson('/api/activity', ['id_area' => 99, 'id_tipo_actividad' => 1, 'nombre' => 'Inválida', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'ACTIVO'])->assertUnprocessable();
+        $this->postJson('/api/activity', ['id_area' => 99, 'id_tipo_actividad' => 1, 'nombre' => 'Inválida', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'ACTIVO'])->assertForbidden();
         $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2]))->assertUnprocessable();
         $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => null, 'id_practica' => 1]))->assertCreated();
         $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2, 'id_participacion' => null, 'id_practica' => 1]))->assertUnprocessable();
@@ -338,6 +344,7 @@ class ModuleIntegrationTest extends TestCase
             'gestion.persona_practicante' => ['codigo', 'estado'],
             'gestion.persona_trabajador' => ['id_area', 'cargo', 'fecha_ingreso', 'fecha_fin', 'estado'],
         ] as $name => $fields) {
+            $fields = array_values(array_filter($fields, fn (string $field): bool => ! Schema::hasColumn($name, $field)));
             Schema::table($name, function (Blueprint $table) use ($fields) {
                 foreach ($fields as $field) {
                     if (str_starts_with($field, 'id_')) {

@@ -63,7 +63,7 @@ class BaseDataSeeder extends Seeder
      */
     private const ROLE_MODULES = [
         'Administrador' => [
-            'modules' => ['Gestión de Usuarios', 'Roles y Permisos', 'Actividades', 'Ponentes y Firmantes', 'Reportes'],
+            'modules' => ['Gestión de Usuarios', 'Roles y Permisos', 'Dashboard', 'Actividades', 'Participantes', 'Practicantes', 'Reconocimientos', 'Ponentes y Firmantes', 'Emisión de Certificados', 'Reportes'],
             'actions' => ['ver', 'crear', 'editar', 'eliminar'],
         ],
         'Digitador' => [

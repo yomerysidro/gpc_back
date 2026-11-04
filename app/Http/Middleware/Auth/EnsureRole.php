@@ -20,7 +20,9 @@ class EnsureRole
             return response()->json(['message' => 'No autenticado'], 401);
         }
 
-        if ($user->roles->where('estado', true)->pluck('nombre')->intersect($roles)->isEmpty()) {
+        $administratorAccess = in_array('Administrador', $roles, true) && $user->isSystemAdministrator();
+        $ordinaryRoles = array_diff($roles, ['Administrador', 'Administrador de Sistemas']);
+        if (! $administratorAccess && $user->roles->where('estado', true)->pluck('nombre')->intersect($ordinaryRoles)->isEmpty()) {
             return response()->json(['message' => 'No tiene permisos para acceder a este recurso'], 403);
         }
 

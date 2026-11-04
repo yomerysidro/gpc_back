@@ -67,6 +67,10 @@ class User extends Model implements AuthenticatableContract, CanResetPasswordCon
      */
     public function modulesForMenu(): Collection
     {
+        if ($this->isSystemAdministrator()) {
+            return Module::where('estado', true)->orderBy('id_modulo')->get(['id_modulo', 'nombre', 'url', 'imagen']);
+        }
+
         return Module::query()
             ->where('estado', true)
             ->whereHas('roles', fn ($query) => $query
@@ -82,7 +86,10 @@ class User extends Model implements AuthenticatableContract, CanResetPasswordCon
      */
     public function permissionKeys(): array
     {
-        return DB::table('acceso.rol_modulo_permiso as rmp')
+        if (! $this->estado) {
+            return [];
+        }
+        $assigned = DB::table('acceso.rol_modulo_permiso as rmp')
             ->join('acceso.rol_modulo as rm', function ($join) {
                 $join->on('rm.id_rol', '=', 'rmp.id_rol')
                     ->on('rm.id_modulo', '=', 'rmp.id_modulo');
@@ -102,6 +109,43 @@ class User extends Model implements AuthenticatableContract, CanResetPasswordCon
             ->orderBy('p.id_permiso')
             ->pluck('p.clave')
             ->all();
+
+        if (! $this->isSystemAdministrator()) {
+            return $assigned;
+        }
+        $administrative = DB::table('acceso.permiso as p')->join('acceso.modulo as m', 'm.id_modulo', '=', 'p.id_modulo')
+            ->where('p.estado', true)->where('m.estado', true)
+            ->whereNotIn('p.clave', array_diff(config('module_permissions.formal_permissions', []),
+                config('module_permissions.administrator_formal_permissions', [])))
+            ->orderBy('p.id_permiso')->pluck('p.clave')->all();
+
+        return array_values(array_unique([...$administrative, ...$assigned]));
+    }
+
+    public function isSystemAdministrator(): bool
+    {
+        if (! $this->exists || ! $this->estado) {
+            return false;
+        }
+
+        return DB::table('acceso.usuario as u')->join('acceso.usuario_rol as ur', 'ur.id_usuario', '=', 'u.id_usuario')
+            ->join('acceso.rol as r', 'r.id_rol', '=', 'ur.id_rol')
+            ->where('u.id_usuario', $this->getAuthIdentifier())->where('u.estado', true)->where('r.estado', true)
+            ->whereIn('r.id_rol', config('module_permissions.administrator_role_ids', []))
+            ->whereIn('r.nombre', config('module_permissions.administrator_role_names', []))->exists();
+    }
+
+    public function hasInstitutionalRequestAuthority(): bool
+    {
+        return config('module_permissions.administrator_request_institutional_scope', false)
+            && $this->isSystemAdministrator();
+    }
+
+    public function canRepresentAllRequestAreas(): bool
+    {
+        return config('module_permissions.administrator_request_represent_all_areas', false)
+            && $this->isSystemAdministrator()
+            && in_array('solicitudes.crear', $this->permissionKeys(), true);
     }
 
     public function getAuthPasswordName()

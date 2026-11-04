@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Area;
 
 use App\Http\Controllers\Controller;
+use App\Http\Data\Activity\ActivityData;
 use App\Http\Data\Area\AreaData;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -13,8 +14,11 @@ class AreaController extends Controller
 {
     use ApiResponse;
 
-    public function list(): JsonResponse
+    public function list(Request $request): JsonResponse
     {
+        if ($request->query('uso') === 'actividades') {
+            return $this->error(ActivityData::DIRECT_CREATION_DISABLED, 403);
+        }
         $response = AreaData::getAll();
 
         if (! $response['success']) {

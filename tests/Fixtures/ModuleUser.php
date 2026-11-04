@@ -8,7 +8,7 @@ class ModuleUser extends User
 {
     protected $fillable = ['name'];
 
-    protected $attributes = ['estado' => true];
+    protected $attributes = ['estado' => true, 'id_persona' => 1];
 
     public function permissionKeys(): array
     {

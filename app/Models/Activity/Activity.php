@@ -2,6 +2,7 @@
 
 namespace App\Models\Activity;
 
+use App\Models\ActivityRequest;
 use App\Models\ActivitySession\ActivitySession;
 use App\Models\ActivitySignature\ActivitySignature;
 use App\Models\ActivitySpeaker\ActivitySpeaker;
@@ -11,6 +12,7 @@ use App\Models\Participation\Participation;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Activity extends Model
 {
@@ -66,5 +68,10 @@ class Activity extends Model
     public function area(): BelongsTo
     {
         return $this->belongsTo(Area::class, 'id_area', 'id_area');
+    }
+
+    public function sourceRequest(): HasOne
+    {
+        return $this->hasOne(ActivityRequest::class, 'id_actividad', 'id_actividad');
     }
 }

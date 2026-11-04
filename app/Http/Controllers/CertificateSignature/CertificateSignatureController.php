@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CertificateSignature\CertificateSignature;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class CertificateSignatureController extends Controller
@@ -66,6 +67,19 @@ class CertificateSignatureController extends Controller
                 return $this->error('No autorizado.', 403);
             }
         }
+        if (in_array($ability, ['create', 'update', 'delete'], true)) {
+            $ownerKeys = array_unique(array_filter([request()->input('id_firma'), $record['data']->id_firma ?? null], fn (mixed $value): bool => $value !== null));
+            if ($ownerKeys === []) {
+                return $this->information('Datos de identidad de firma requeridos.', 422, ['id_firma' => ['Campo requerido.']]);
+            }
+            foreach ($ownerKeys as $ownerKey) {
+                $ownsKey = DB::table('certificado.firma as f')->join('gestion.persona_trabajador as t', 't.id_persona_trabajador', '=', 'f.id_persona_trabajador')->where('f.id_firma', $ownerKey)->where('t.id_persona', request()->user()->id_persona)->exists();
+                if (! $ownsKey) {
+                    return $this->error('No puede utilizar ni modificar la firma de otro funcionario.', 403);
+                }
+            }
+        }
+
         $response = $operation();
         if (! $response['success']) {
             return $this->information($response['message'], $response['status'], $response['data'] ?? []);

@@ -8,18 +8,21 @@ use Throwable;
 
 class ActivityTypeData
 {
-    public static function getActivityTypes(): array
+    public static function getActivityTypes(?bool $active = null): array
     {
         try {
-            $activityTypes = DB::table('certificado.tipo_actividad')
+            $query = DB::table('certificado.tipo_actividad')
                 ->select(
                     'id_tipo_actividad',
                     'nombre',
                     'descripcion',
                     'estado',
                 )
-                ->orderBy('id_tipo_actividad', 'desc')
-                ->get();
+                ->orderBy('id_tipo_actividad', 'desc');
+            if ($active !== null) {
+                $query->where('estado', $active);
+            }
+            $activityTypes = $query->get();
 
             return [
                 'success' => true,

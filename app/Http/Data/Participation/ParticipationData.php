@@ -9,11 +9,12 @@ use Throwable;
 
 class ParticipationData
 {
-    public static function getParticipations(): array
+    public static function getParticipations(?array $areaIds = null): array
     {
         try {
             $participations = DB::table('certificado.participacion')
                 ->select('id_participacion', 'id_persona', 'id_actividad', 'id_tipo_participacion', 'fecha_inscripcion', 'estado')
+                ->when($areaIds !== null, fn ($query) => $query->whereIn('id_actividad', DB::table('certificado.actividad')->select('id_actividad')->whereIn('id_area', $areaIds)))
                 ->orderBy('id_participacion', 'desc')
                 ->get();
 

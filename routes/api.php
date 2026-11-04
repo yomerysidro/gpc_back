@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\Activity\ActivityController;
+use App\Http\Controllers\ActivityRequests\ActivityRequestController;
+use App\Http\Controllers\ActivityRequests\ActivityRequestDecisionController;
 use App\Http\Controllers\ActivitySession\ActivitySessionController;
 use App\Http\Controllers\ActivitySignature\ActivitySignatureController;
 use App\Http\Controllers\ActivitySpeaker\ActivitySpeakerController;
@@ -30,13 +32,14 @@ use App\Http\Controllers\Role\RoleController;
 use App\Http\Controllers\Signature\SignatureController;
 use App\Http\Controllers\Supervisory_internship\Supervisory_internshipController;
 use App\Http\Controllers\User\UserController;
+use App\Http\Middleware\ActivityRequests\AuthorizeActivityRequest;
 use App\Http\Middleware\AuthorizeModuleOperation;
 use Illuminate\Support\Facades\Route;
 
 // ============================================================
 // USUARIOS
 // ============================================================
-// Certificaciones y firmas: solo usuarios autenticados y autorizados por polÃ­ticas.
+// Certificaciones y firmas: solo usuarios autenticados y autorizados por polÃƒÂ­ticas.
 Route::middleware('auth.cookie')->group(function () {
     Route::prefix('tipos-certificado')->group(function () {
         Route::get('/list', [CertificateTypeController::class, 'list']);
@@ -122,12 +125,33 @@ Route::prefix('attendance')->middleware(['auth.cookie', AuthorizeModuleOperation
 Route::prefix('activity')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Activity\Activity'])->group(function () {
     Route::get('/', [ActivityController::class, 'list']);
     Route::get('/{idActivity}', [ActivityController::class, 'detail'])->whereNumber('idActivity');
+    // Retained for compatibility: direct creation always returns 403; approval creates the activity.
     Route::post('/', [ActivityController::class, 'store']);
     Route::put('/{idActivity}', [ActivityController::class, 'update'])->whereNumber('idActivity');
     Route::patch('/{idActivity}', [ActivityController::class, 'update'])->whereNumber('idActivity');
     Route::delete('/{idActivity}', [ActivityController::class, 'destroy'])->whereNumber('idActivity');
 });
 
+// ============================================================
+// SOLICITUDES DE ACTIVIDADES — JWT Y ATRIBUCIONES
+// ============================================================
+Route::prefix('activity-requests')->middleware(['auth.cookie', AuthorizeActivityRequest::class])->group(function () {
+    Route::get('/authorized-areas', [ActivityRequestController::class, 'authorizedAreas']);
+    Route::post('/', [ActivityRequestController::class, 'store']);
+    Route::get('/mine', [ActivityRequestController::class, 'mine']);
+    Route::get('/', [ActivityRequestController::class, 'index']);
+    Route::get('/decisions/history', [ActivityRequestController::class, 'decisionHistory']);
+    Route::get('/{requestId}', [ActivityRequestController::class, 'show'])->whereNumber('requestId');
+    Route::put('/{requestId}', [ActivityRequestController::class, 'update'])->whereNumber('requestId');
+    Route::post('/{requestId}/submit', [ActivityRequestController::class, 'submit'])->whereNumber('requestId');
+    Route::get('/{requestId}/history', [ActivityRequestController::class, 'history'])->whereNumber('requestId');
+    Route::get('/{requestId}/review-detail', [ActivityRequestController::class, 'reviewDetail'])->whereNumber('requestId');
+    Route::post('/{requestId}/review', [ActivityRequestDecisionController::class, 'review'])->whereNumber('requestId');
+    Route::post('/{requestId}/observe', [ActivityRequestDecisionController::class, 'observe'])->whereNumber('requestId');
+    Route::post('/{requestId}/derive', [ActivityRequestDecisionController::class, 'derive'])->whereNumber('requestId');
+    Route::post('/{requestId}/approve', [ActivityRequestDecisionController::class, 'approve'])->whereNumber('requestId');
+    Route::post('/{requestId}/reject', [ActivityRequestDecisionController::class, 'reject'])->whereNumber('requestId');
+});
 // ============================================================
 // SESIONES DE ACTIVIDAD
 // ============================================================
@@ -177,7 +201,7 @@ Route::prefix('participation')->middleware(['auth.cookie', AuthorizeModuleOperat
 });
 
 // ============================================================
-// TIPOS DE PARTICIPACIÓN
+// TIPOS DE PARTICIPACIÃ“N
 // ============================================================
 Route::prefix('participation-type')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\ParticipationType\ParticipationType'])->group(function () {
     Route::get('/', [ParticipationTypeController::class, 'list']);
@@ -291,7 +315,7 @@ Route::prefix('person-workers')->middleware(['auth.cookie', AuthorizeModuleOpera
 });
 
 // ============================================================
-// AUTENTICACIÓN (JWT en cookie httpOnly)
+// AUTENTICACIÃ“N (JWT en cookie httpOnly)
 // ============================================================
 Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
@@ -318,7 +342,7 @@ Route::prefix('usuarios')->middleware('auth.cookie')->group(function () {
 });
 
 // ============================================================
-// ACCESO: roles, módulos, permisos y sus asignaciones
+// ACCESO: roles, mÃ³dulos, permisos y sus asignaciones
 // ============================================================
 Route::middleware(['auth.cookie', 'role:Administrador'])->group(function () {
     Route::prefix('roles')->group(function () {

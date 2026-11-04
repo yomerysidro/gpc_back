@@ -11,10 +11,11 @@ class AreaData
     /**
      * @return array{success: bool, message: string, data: mixed, status: int}
      */
-    public static function getAll(): array
+    public static function getAll(?array $areaIds = null): array
     {
         try {
-            $records = DB::table('gestion.area')->orderBy('id_area', 'desc')->get();
+            $records = DB::table('gestion.area')->when($areaIds !== null, fn ($query) => $query->whereIn('id_area', $areaIds))
+                ->orderBy('id_area', 'desc')->get();
 
             return [
                 'success' => true,

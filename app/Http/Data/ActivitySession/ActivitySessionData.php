@@ -9,7 +9,7 @@ use Throwable;
 
 class ActivitySessionData
 {
-    public static function getActivitySessions(): array
+    public static function getActivitySessions(?array $areaIds = null): array
     {
         try {
             $activitySessions = DB::table('certificado.actividad_sesion')
@@ -23,6 +23,7 @@ class ActivitySessionData
                     'lugar',
                     'estado',
                 )
+                ->when($areaIds !== null, fn ($query) => $query->whereIn('id_actividad', DB::table('certificado.actividad')->select('id_actividad')->whereIn('id_area', $areaIds)))
                 ->orderBy('id_actividad_sesion', 'desc')
                 ->get();
 

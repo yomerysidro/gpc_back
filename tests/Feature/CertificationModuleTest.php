@@ -214,8 +214,8 @@ class CertificationModuleTest extends TestCase
     public function test_activity_order_duplicates_update_and_delete(): void
     {
         $this->administrator();
-        DB::table('certificado.firma')->insert(['id_firma' => 1]);
-        DB::table('certificado.firma')->insert(['id_firma' => 2]);
+        DB::table('certificado.firma')->insert(['id_firma' => 1, 'id_persona_trabajador' => 1]);
+        DB::table('certificado.firma')->insert(['id_firma' => 2, 'id_persona_trabajador' => 1]);
         $payload = ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1];
         $this->postJson('/api/actividades-firmas/create', $payload)->assertCreated();
         $this->postJson('/api/actividades-firmas/create', $payload)->assertConflict();
@@ -391,7 +391,7 @@ class CertificationModuleTest extends TestCase
         $this->administrator();
         CertificateData::store($this->certificate());
         DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']);
-        DB::table('certificado.firma')->insert(['id_firma' => 1]);
+        DB::table('certificado.firma')->insert(['id_firma' => 1, 'id_persona_trabajador' => 1]);
         DB::table('certificado.actividad_firma')->insert(['id_actividad_firma' => 1, 'id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]);
         $this->seedDocument();
         Storage::disk('local')->put('certificados/private.pdf', '%PDF-1.4 fixture');
@@ -418,7 +418,7 @@ class CertificationModuleTest extends TestCase
         $this->administrator();
         CertificateData::store($this->certificate());
         $this->seedDocument();
-        DB::table('certificado.firma')->insert(['id_firma' => 1]);
+        DB::table('certificado.firma')->insert(['id_firma' => 1, 'id_persona_trabajador' => 1]);
         DB::table('certificado.actividad_firma')->insert(['id_actividad_firma' => 1, 'id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]);
         DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']);
         DB::table('certificado.certificado')->update(['id_reconocimiento' => 1]);

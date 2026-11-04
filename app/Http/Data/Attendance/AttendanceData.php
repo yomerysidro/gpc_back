@@ -13,10 +13,11 @@ class AttendanceData
     /**
      * Listar todas las asistencias.
      */
-    public static function getAttendances(): array
+    public static function getAttendances(?array $areaIds = null): array
     {
         try {
             $attendances = self::attendanceQuery()
+                ->when($areaIds !== null, fn (Builder $query) => $query->whereIn('participacion.id_actividad', DB::table('certificado.actividad')->select('id_actividad')->whereIn('id_area', $areaIds)))
                 ->orderBy('asistencia.id_asistencia', 'desc')
                 ->get();
 

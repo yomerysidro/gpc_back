@@ -20,9 +20,9 @@ class AttendanceController extends Controller
     /**
      * List attendances.
      */
-    public function list(): JsonResponse
+    public function list(Request $request): JsonResponse
     {
-        $response = AttendanceData::getAttendances();
+        $response = AttendanceData::getAttendances($request->attributes->get('activity_module_areas'));
 
         if (! $response['success']) {
             return $this->error($response['message'], $response['status']);

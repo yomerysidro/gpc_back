@@ -14,9 +14,17 @@ class ActivityTypeController extends Controller
 {
     use ApiResponse;
 
-    public function list(): JsonResponse
+    public function list(Request $request): JsonResponse
     {
-        $response = ActivityTypeData::getActivityTypes();
+        $validator = Validator::make($request->query(), [
+            'estado' => ['sometimes', 'required', 'boolean'],
+        ]);
+        if ($validator->fails()) {
+            return $this->information('Datos de validación inválidos.', 422, $validator->errors());
+        }
+
+        $filters = $validator->validated();
+        $response = ActivityTypeData::getActivityTypes(isset($filters['estado']) ? (bool) $filters['estado'] : null);
 
         if (! $response['success']) {
             return $this->error($response['message'], $response['status']);

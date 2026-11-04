@@ -36,6 +36,7 @@ class UserSecurityTest extends TestCase
             'gestion.tipo_documento' => ['id_tipo_documento', 'nombre estado'],
             'gestion.persona_documento' => ['id_persona_documento', 'id_persona id_tipo_documento numero_documento estado'],
             'gestion.area' => ['id_area', 'nombre'],
+            'gestion.persona_trabajador' => ['id_persona_trabajador', 'id_persona id_area estado fecha_ingreso fecha_fin'],
             'acceso.usuario' => ['id_usuario', 'id_persona correo password_hash estado intentos_fallidos bloqueado_hasta ultimo_acceso'],
             'acceso.rol' => ['id_rol', 'nombre estado'],
             'acceso.modulo' => ['id_modulo', 'nombre url imagen estado'],
@@ -204,6 +205,8 @@ class UserSecurityTest extends TestCase
     public function test_jwt_user_is_shared_by_request_auth_and_module_gates(): void
     {
         $user = $this->actor();
+        DB::table('gestion.area')->insert(['id_area' => 1, 'nombre' => 'Área de prueba']);
+        DB::table('gestion.persona_trabajador')->insert(['id_persona' => 1, 'id_area' => 1, 'estado' => true, 'fecha_ingreso' => today()->toDateString()]);
         $this->grant(['actividades.ver']);
         $this->cookieFor($user);
         $this->getJson('/api/activity')->assertOk();
@@ -211,7 +214,7 @@ class UserSecurityTest extends TestCase
         $this->postJson('/api/activity', [])->assertForbidden();
         $this->getJson('/api/areas/list')->assertForbidden();
         $this->grant(['actividades.crear']);
-        $this->postJson('/api/activity', [])->assertUnprocessable();
+        $this->postJson('/api/activity', [])->assertForbidden();
     }
 
     public function test_inactive_roles_permissions_modules_and_removed_assignments_deny_access(): void
@@ -368,9 +371,9 @@ class UserSecurityTest extends TestCase
     {
         $public = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password'];
         $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/')));
-        $this->assertCount(167, $routes);
+        $this->assertCount(182, $routes);
         $protected = array_values(array_filter($routes, fn ($route) => ! in_array($route->uri(), $public, true)));
-        $this->assertCount(164, $protected);
+        $this->assertCount(179, $protected);
         foreach ($protected as $route) {
             $uri = '/'.preg_replace('/\{[^}]+\}/', '1', $route->uri());
             $this->json($route->methods()[0], $uri)->assertUnauthorized()->assertHeaderMissing('Location');
@@ -382,7 +385,7 @@ class UserSecurityTest extends TestCase
         $this->cookieFor($this->actor());
         $allowed = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/auth/me', 'api/auth/logout'];
         $routes = array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/') && ! in_array($route->uri(), $allowed, true));
-        $this->assertCount(162, $routes);
+        $this->assertCount(177, $routes);
         foreach ($routes as $route) {
             $uri = '/'.preg_replace('/\{[^}]+\}/', '1', $route->uri());
             $this->json($route->methods()[0], $uri)->assertForbidden();

@@ -15,9 +15,9 @@ class ParticipationController extends Controller
 {
     use ApiResponse;
 
-    public function list(): JsonResponse
+    public function list(Request $request): JsonResponse
     {
-        $response = ParticipationData::getParticipations();
+        $response = ParticipationData::getParticipations($request->attributes->get('activity_module_areas'));
 
         if (! $response['success']) {
             return $this->error($response['message'], $response['status']);

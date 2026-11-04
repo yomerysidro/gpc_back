@@ -170,7 +170,8 @@ class PostgresModuleContractTest extends TestCase
         $ids = $this->origins();
         $type = DB::table('certificado.tipo_actividad')->insertGetId(['nombre' => 'Fixture', 'estado' => true], 'id_tipo_actividad');
         $payload = ['id_area' => $ids['area'], 'id_tipo_actividad' => $type, 'nombre' => 'Fixture', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'Activa'];
-        $id = $this->postJson('/api/activity', $payload)->assertCreated()->json('data.id_actividad');
+        $this->postJson('/api/activity', $payload)->assertForbidden();
+        $id = DB::table('certificado.actividad')->insertGetId($payload, 'id_actividad');
         $this->assertNotNull($id);
         $this->assertSame($ids['area'], Activity::findOrFail($id)->area->id_area);
         $this->assertSqlState('23514', fn () => DB::table('certificado.actividad')->where('id_actividad', $id)->update(['fecha_fin' => '2025-12-31']));

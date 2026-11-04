@@ -27,6 +27,18 @@ use App\Models\Signature\Signature;
 use App\Models\Supervisory_internship\Supervisory_internship;
 
 return [
+    'administrator_role_ids' => [1],
+    'administrator_role_names' => ['Administrador', 'Administrador de Sistemas'],
+    'formal_permissions' => ['solicitudes.aprobar', 'solicitudes.rechazar', 'solicitudes.decidir', 'firmas.firmar'],
+    'administrator_formal_permissions' => ['solicitudes.aprobar', 'solicitudes.rechazar'],
+    'administrator_request_institutional_scope' => true,
+    'administrator_request_represent_all_areas' => true,
+    'request_role_permissions' => [
+        1 => ['crear', 'editar', 'enviar', 'propias', 'consultar', 'revisar', 'observar', 'derivar', 'historial'],
+        2 => ['crear', 'editar', 'enviar', 'propias', 'consultar', 'revisar', 'observar', 'derivar', 'historial'],
+        3 => ['crear', 'editar', 'enviar', 'propias', 'consultar', 'observar', 'aprobar', 'rechazar', 'historial'],
+    ],
+    'action_aliases' => [Persona::class => ['ver' => 'verpersonas']],
     // Null keeps access denied until the institutional permission scope is confirmed.
     'models' => [
         Activity::class => 'actividades',
@@ -44,15 +56,15 @@ return [
         Recognition::class => 'reconocimientos',
         Signature::class => 'ponentes-firmantes',
         ActivitySignature::class => 'ponentes-firmantes',
-        Person_Worker::class => 'ponentes-firmantes',
+        Person_Worker::class => 'trabajadores',
         PersonaPonente::class => 'ponentes-firmantes',
         Practicing_Individual::class => 'practicantes',
         Practice::class => 'practicantes',
         Supervisory_internship::class => 'practicantes',
-        Persona::class => null,
-        PersonaDocumento::class => null,
-        TipoDocumento::class => null,
-        Area::class => null,
-        Institution::class => null,
+        Persona::class => 'personas',
+        PersonaDocumento::class => 'personas',
+        TipoDocumento::class => 'tipos-documento',
+        Area::class => 'areas',
+        Institution::class => 'instituciones',
     ],
 ];

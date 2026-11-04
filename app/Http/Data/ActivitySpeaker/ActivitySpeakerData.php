@@ -9,11 +9,12 @@ use Throwable;
 
 class ActivitySpeakerData
 {
-    public static function getActivitySpeakers(): array
+    public static function getActivitySpeakers(?array $areaIds = null): array
     {
         try {
             $activitySpeakers = DB::table('certificado.actividad_ponente')
                 ->select('id_actividad_ponente', 'id_actividad', 'id_persona_ponente')
+                ->when($areaIds !== null, fn ($query) => $query->whereIn('id_actividad', DB::table('certificado.actividad')->select('id_actividad')->whereIn('id_area', $areaIds)))
                 ->orderBy('id_actividad_ponente', 'desc')
                 ->get();
 

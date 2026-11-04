@@ -44,7 +44,7 @@ class AppServiceProvider extends ServiceProvider
             }
             $user = User::with(['person', 'roles'])->find($payload->sub);
 
-            return $user && $user->estado ? $user : null;
+            return $user && $user->estado && ! $user->bloqueado_hasta?->isFuture() ? $user : null;
         });
 
         foreach (['viewAny' => 'ver', 'view' => 'ver', 'create' => 'crear', 'update' => 'editar', 'delete' => 'eliminar'] as $ability => $action) {

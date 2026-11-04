@@ -32,6 +32,19 @@ return [
 
     'connections' => [
 
+        'activity_requests_test' => [
+            'driver' => 'pgsql',
+            'host' => env('ACTIVITY_REQUESTS_TEST_HOST', '127.0.0.1'),
+            'port' => env('ACTIVITY_REQUESTS_TEST_PORT', '5432'),
+            'database' => 'certificados_morales_test',
+            'username' => env('ACTIVITY_REQUESTS_TEST_USERNAME'),
+            'password' => env('ACTIVITY_REQUESTS_TEST_PASSWORD'),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'search_path' => 'public,acceso,gestion,certificado',
+            'sslmode' => env('ACTIVITY_REQUESTS_TEST_SSLMODE', 'prefer'),
+        ],
+
         'sqlite' => [
             'driver' => 'sqlite',
             'url' => env('DB_URL'),

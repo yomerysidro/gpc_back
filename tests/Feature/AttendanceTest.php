@@ -26,6 +26,13 @@ class AttendanceTest extends TestCase
         ]);
         DB::purge('sqlite');
         DB::statement("ATTACH DATABASE ':memory:' AS certificado");
+        DB::statement("ATTACH DATABASE ':memory:' AS gestion");
+        DB::statement('CREATE TABLE gestion.area (id_area INTEGER PRIMARY KEY, nombre TEXT)');
+        DB::statement('CREATE TABLE gestion.persona_trabajador (id_persona INTEGER, id_area INTEGER, estado BOOLEAN, fecha_ingreso TEXT, fecha_fin TEXT)');
+        DB::table('gestion.area')->insert(['id_area' => 1, 'nombre' => 'Área de prueba']);
+        DB::table('gestion.persona_trabajador')->insert(['id_persona' => 1, 'id_area' => 1, 'estado' => true, 'fecha_ingreso' => today()->toDateString()]);
+        DB::statement('CREATE TABLE certificado.actividad (id_actividad INTEGER PRIMARY KEY, id_area INTEGER)');
+        DB::table('certificado.actividad')->insert([['id_actividad' => 10, 'id_area' => 1], ['id_actividad' => 11, 'id_area' => 1]]);
         $this->actingAs(new User(['name' => 'Authorized fixture']));
         Gate::policy(Attendance::class, ModulePolicy::class);
         Schema::create('certificado.certificado', function (Blueprint $table) {
@@ -322,10 +329,10 @@ class AttendanceTest extends TestCase
 
         $this->postJson('/api/attendance/create', $data)
             ->assertInternalServerError()
-            ->assertExactJson(['success' => false, 'message' => 'Error al registrar la asistencia.', 'data' => []]);
+            ->assertExactJson(['success' => false, 'message' => 'No se pudo completar la operación.', 'data' => []]);
         $this->putJson('/api/attendance/update/1', ['ID_PARTICIPACION' => 1])
             ->assertInternalServerError()
-            ->assertExactJson(['success' => false, 'message' => 'Error al actualizar la asistencia.', 'data' => []]);
+            ->assertExactJson(['success' => false, 'message' => 'No se pudo completar la operación.', 'data' => []]);
 
         $this->assertDatabaseCount('certificado.asistencia', 1);
     }
