@@ -83,6 +83,8 @@ class ActivityRequestDevelopmentTest extends TestCase
     #[TestWith(['database.connections.activity_requests_test.username', 'postgres'])]
     #[TestWith(['database.connections.activity_requests_test.password', null])]
     #[TestWith(['database.connections.activity_requests_test.url', 'pgsql://unexpected.invalid/database'])]
+    #[TestWith(['database.connections.activity_requests_test.read', ['host' => 'institutional.invalid']])]
+    #[TestWith(['database.connections.activity_requests_test.write', ['host' => 'institutional.invalid']])]
     public function test_unsafe_configuration_is_rejected_before_connecting(string $key, mixed $value): void
     {
         $this->validDevelopmentConfiguration();

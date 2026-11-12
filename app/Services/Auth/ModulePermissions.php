@@ -53,7 +53,15 @@ class ModulePermissions
             return false;
         }
 
-        $permissions = $user->permissionKeys();
+        $request = request();
+        $permissionKey = self::class.'.permissions.'.spl_object_id($user);
+        $permissions = $request->route() !== null ? $request->attributes->get($permissionKey) : null;
+        if ($permissions === null) {
+            $permissions = $user->permissionKeys();
+            if ($request->route() !== null) {
+                $request->attributes->set($permissionKey, $permissions);
+            }
+        }
         if ($action === 'ver' && in_array($class, [Area::class, ActivityType::class], true)
             && array_intersect(['solicitudes.crear', 'solicitudes.propias', 'solicitudes.consultar'], $permissions) !== []) {
             return true;

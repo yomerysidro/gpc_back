@@ -1,0 +1,1005 @@
+{
+    "audited_at": "2026-11-10T16:40:21+00:00",
+    "identity": {
+        "database": "certificados_morales",
+        "read_only": "on"
+    },
+    "columns": [
+        {
+            "table_name": "actividad",
+            "column_name": "id_actividad",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('actividad_id_actividad_seq'::regclass)"
+        },
+        {
+            "table_name": "actividad",
+            "column_name": "id_area",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad",
+            "column_name": "id_tipo_actividad",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad",
+            "column_name": "nombre",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad",
+            "column_name": "descripcion",
+            "data_type": "character varying",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad",
+            "column_name": "fecha_inicio",
+            "data_type": "date",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad",
+            "column_name": "fecha_fin",
+            "data_type": "date",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad",
+            "column_name": "sede",
+            "data_type": "character varying",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad",
+            "column_name": "estado",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": "'Activa'::character varying"
+        },
+        {
+            "table_name": "actividad_firma",
+            "column_name": "id_actividad_firma",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('actividad_firma_id_actividad_firma_seq'::regclass)"
+        },
+        {
+            "table_name": "actividad_firma",
+            "column_name": "id_actividad",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad_firma",
+            "column_name": "id_firma",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad_firma",
+            "column_name": "orden_firma",
+            "data_type": "integer",
+            "is_nullable": "NO",
+            "column_default": "1"
+        },
+        {
+            "table_name": "actividad_sesion",
+            "column_name": "id_actividad_sesion",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('actividad_sesion_id_actividad_sesion_seq'::regclass)"
+        },
+        {
+            "table_name": "actividad_sesion",
+            "column_name": "id_actividad",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad_sesion",
+            "column_name": "nombre",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad_sesion",
+            "column_name": "fecha",
+            "data_type": "date",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad_sesion",
+            "column_name": "hora_inicio",
+            "data_type": "time without time zone",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad_sesion",
+            "column_name": "hora_fin",
+            "data_type": "time without time zone",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad_sesion",
+            "column_name": "lugar",
+            "data_type": "character varying",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "actividad_sesion",
+            "column_name": "estado",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "asistencia",
+            "column_name": "id_asistencia",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('asistencia_id_asistencia_seq'::regclass)"
+        },
+        {
+            "table_name": "asistencia",
+            "column_name": "id_participacion",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "asistencia",
+            "column_name": "id_actividad_sesion",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "asistencia",
+            "column_name": "hora_entrada",
+            "data_type": "time without time zone",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "asistencia",
+            "column_name": "hora_salida",
+            "data_type": "time without time zone",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "asistencia",
+            "column_name": "estado",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "id_certificado",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('certificado_id_certificado_seq'::regclass)"
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "id_persona",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "id_tipo_certificado",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "id_reconocimiento",
+            "data_type": "bigint",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "id_participacion",
+            "data_type": "bigint",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "id_practica",
+            "data_type": "bigint",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "fecha_emision",
+            "data_type": "date",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "estado",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "notificado",
+            "data_type": "boolean",
+            "is_nullable": "NO",
+            "column_default": "false"
+        },
+        {
+            "table_name": "certificado",
+            "column_name": "fecha_notificacion",
+            "data_type": "timestamp without time zone",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_documento",
+            "column_name": "id_certificado_documento",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('certificado_documento_id_certificado_documento_seq'::regclass)"
+        },
+        {
+            "table_name": "certificado_documento",
+            "column_name": "id_certificado",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_documento",
+            "column_name": "codigo_verificacion",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_documento",
+            "column_name": "hash_certificado",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_documento",
+            "column_name": "ruta_archivo",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_documento",
+            "column_name": "motivo_reemision",
+            "data_type": "character varying",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_documento",
+            "column_name": "fecha_generacion",
+            "data_type": "timestamp without time zone",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_documento",
+            "column_name": "estado",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": "'Vigente'::character varying"
+        },
+        {
+            "table_name": "certificado_firma",
+            "column_name": "id_certificado_firma",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('certificado_firma_id_certificado_firma_seq'::regclass)"
+        },
+        {
+            "table_name": "certificado_firma",
+            "column_name": "id_certificado_documento",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_firma",
+            "column_name": "id_firma",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_firma",
+            "column_name": "orden_firma",
+            "data_type": "integer",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "certificado_firma",
+            "column_name": "fecha_firma",
+            "data_type": "timestamp without time zone",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "firma",
+            "column_name": "id_firma",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('firma_id_firma_seq'::regclass)"
+        },
+        {
+            "table_name": "firma",
+            "column_name": "id_persona_trabajador",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "firma",
+            "column_name": "ruta_archivo_pfx",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "firma",
+            "column_name": "passphrase_cifrada",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "firma",
+            "column_name": "fecha_firma",
+            "data_type": "date",
+            "is_nullable": "YES",
+            "column_default": null
+        },
+        {
+            "table_name": "participacion",
+            "column_name": "id_participacion",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('participacion_id_participacion_seq'::regclass)"
+        },
+        {
+            "table_name": "participacion",
+            "column_name": "id_persona",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "participacion",
+            "column_name": "id_actividad",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "participacion",
+            "column_name": "id_tipo_participacion",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "participacion",
+            "column_name": "fecha_inscripcion",
+            "data_type": "date",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "participacion",
+            "column_name": "estado",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "tipo_certificado",
+            "column_name": "id_tipo_certificado",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "column_default": "nextval('tipo_certificado_id_tipo_certificado_seq'::regclass)"
+        },
+        {
+            "table_name": "tipo_certificado",
+            "column_name": "nombre_tipo",
+            "data_type": "character varying",
+            "is_nullable": "NO",
+            "column_default": null
+        },
+        {
+            "table_name": "tipo_certificado",
+            "column_name": "estado",
+            "data_type": "boolean",
+            "is_nullable": "NO",
+            "column_default": "true"
+        }
+    ],
+    "constraints": [
+        {
+            "tabla": "actividad",
+            "conname": "actividad_estado_check",
+            "definicion": "CHECK (((estado)::text = ANY ((ARRAY['Activa'::character varying, 'Cerrada'::character varying])::text[])))"
+        },
+        {
+            "tabla": "actividad",
+            "conname": "actividad_fechas_check",
+            "definicion": "CHECK ((fecha_fin >= fecha_inicio))"
+        },
+        {
+            "tabla": "actividad",
+            "conname": "actividad_pkey",
+            "definicion": "PRIMARY KEY (id_actividad)"
+        },
+        {
+            "tabla": "actividad",
+            "conname": "certificado_actividad_id_area_foreign",
+            "definicion": "FOREIGN KEY (id_area) REFERENCES area(id_area)"
+        },
+        {
+            "tabla": "actividad",
+            "conname": "certificado_actividad_id_tipo_actividad_foreign",
+            "definicion": "FOREIGN KEY (id_tipo_actividad) REFERENCES tipo_actividad(id_tipo_actividad)"
+        },
+        {
+            "tabla": "actividad_firma",
+            "conname": "actividad_firma_orden_check",
+            "definicion": "CHECK ((orden_firma > 0))"
+        },
+        {
+            "tabla": "actividad_firma",
+            "conname": "actividad_firma_pkey",
+            "definicion": "PRIMARY KEY (id_actividad_firma)"
+        },
+        {
+            "tabla": "actividad_firma",
+            "conname": "certificado_actividad_firma_id_actividad_foreign",
+            "definicion": "FOREIGN KEY (id_actividad) REFERENCES actividad(id_actividad) ON DELETE CASCADE"
+        },
+        {
+            "tabla": "actividad_firma",
+            "conname": "certificado_actividad_firma_id_actividad_id_firma_unique",
+            "definicion": "UNIQUE (id_actividad, id_firma)"
+        },
+        {
+            "tabla": "actividad_firma",
+            "conname": "certificado_actividad_firma_id_firma_foreign",
+            "definicion": "FOREIGN KEY (id_firma) REFERENCES firma(id_firma) ON DELETE CASCADE"
+        },
+        {
+            "tabla": "actividad_sesion",
+            "conname": "actividad_sesion_pkey",
+            "definicion": "PRIMARY KEY (id_actividad_sesion)"
+        },
+        {
+            "tabla": "actividad_sesion",
+            "conname": "certificado_actividad_sesion_id_actividad_foreign",
+            "definicion": "FOREIGN KEY (id_actividad) REFERENCES actividad(id_actividad) ON DELETE CASCADE"
+        },
+        {
+            "tabla": "asistencia",
+            "conname": "asistencia_id_participacion_id_actividad_sesion_unique",
+            "definicion": "UNIQUE (id_participacion, id_actividad_sesion)"
+        },
+        {
+            "tabla": "asistencia",
+            "conname": "asistencia_pkey",
+            "definicion": "PRIMARY KEY (id_asistencia)"
+        },
+        {
+            "tabla": "asistencia",
+            "conname": "certificado_asistencia_id_actividad_sesion_foreign",
+            "definicion": "FOREIGN KEY (id_actividad_sesion) REFERENCES actividad_sesion(id_actividad_sesion) ON DELETE CASCADE"
+        },
+        {
+            "tabla": "asistencia",
+            "conname": "certificado_asistencia_id_participacion_foreign",
+            "definicion": "FOREIGN KEY (id_participacion) REFERENCES participacion(id_participacion) ON DELETE CASCADE"
+        },
+        {
+            "tabla": "certificado",
+            "conname": "certificado_certificado_id_participacion_foreign",
+            "definicion": "FOREIGN KEY (id_participacion) REFERENCES participacion(id_participacion)"
+        },
+        {
+            "tabla": "certificado",
+            "conname": "certificado_certificado_id_persona_foreign",
+            "definicion": "FOREIGN KEY (id_persona) REFERENCES persona(id_persona)"
+        },
+        {
+            "tabla": "certificado",
+            "conname": "certificado_certificado_id_practica_foreign",
+            "definicion": "FOREIGN KEY (id_practica) REFERENCES practica(id_practica)"
+        },
+        {
+            "tabla": "certificado",
+            "conname": "certificado_certificado_id_reconocimiento_foreign",
+            "definicion": "FOREIGN KEY (id_reconocimiento) REFERENCES reconocimiento(id_reconocimiento)"
+        },
+        {
+            "tabla": "certificado",
+            "conname": "certificado_certificado_id_tipo_certificado_foreign",
+            "definicion": "FOREIGN KEY (id_tipo_certificado) REFERENCES tipo_certificado(id_tipo_certificado)"
+        },
+        {
+            "tabla": "certificado",
+            "conname": "certificado_origen_check",
+            "definicion": "CHECK ((((\nCASE\n    WHEN (id_reconocimiento IS NOT NULL) THEN 1\n    ELSE 0\nEND +\nCASE\n    WHEN (id_participacion IS NOT NULL) THEN 1\n    ELSE 0\nEND) +\nCASE\n    WHEN (id_practica IS NOT NULL) THEN 1\n    ELSE 0\nEND) = 1))"
+        },
+        {
+            "tabla": "certificado",
+            "conname": "certificado_pkey",
+            "definicion": "PRIMARY KEY (id_certificado)"
+        },
+        {
+            "tabla": "certificado_documento",
+            "conname": "certificado_certificado_documento_codigo_verificacion_unique",
+            "definicion": "UNIQUE (codigo_verificacion)"
+        },
+        {
+            "tabla": "certificado_documento",
+            "conname": "certificado_certificado_documento_hash_certificado_unique",
+            "definicion": "UNIQUE (hash_certificado)"
+        },
+        {
+            "tabla": "certificado_documento",
+            "conname": "certificado_certificado_documento_id_certificado_foreign",
+            "definicion": "FOREIGN KEY (id_certificado) REFERENCES certificado(id_certificado) ON DELETE CASCADE"
+        },
+        {
+            "tabla": "certificado_documento",
+            "conname": "certificado_documento_estado_check",
+            "definicion": "CHECK (((estado)::text = ANY ((ARRAY['Vigente'::character varying, 'Anulado'::character varying])::text[])))"
+        },
+        {
+            "tabla": "certificado_documento",
+            "conname": "certificado_documento_pkey",
+            "definicion": "PRIMARY KEY (id_certificado_documento)"
+        },
+        {
+            "tabla": "certificado_firma",
+            "conname": "certificado_certificado_firma_id_certificado_documento_foreign",
+            "definicion": "FOREIGN KEY (id_certificado_documento) REFERENCES certificado_documento(id_certificado_documento) ON DELETE CASCADE"
+        },
+        {
+            "tabla": "certificado_firma",
+            "conname": "certificado_certificado_firma_id_firma_foreign",
+            "definicion": "FOREIGN KEY (id_firma) REFERENCES firma(id_firma)"
+        },
+        {
+            "tabla": "certificado_firma",
+            "conname": "certificado_firma_id_certificado_documento_id_firma_unique",
+            "definicion": "UNIQUE (id_certificado_documento, id_firma)"
+        },
+        {
+            "tabla": "certificado_firma",
+            "conname": "certificado_firma_orden_check",
+            "definicion": "CHECK ((orden_firma > 0))"
+        },
+        {
+            "tabla": "certificado_firma",
+            "conname": "certificado_firma_pkey",
+            "definicion": "PRIMARY KEY (id_certificado_firma)"
+        },
+        {
+            "tabla": "firma",
+            "conname": "certificado_firma_id_persona_trabajador_foreign",
+            "definicion": "FOREIGN KEY (id_persona_trabajador) REFERENCES persona_trabajador(id_persona_trabajador)"
+        },
+        {
+            "tabla": "firma",
+            "conname": "certificado_firma_id_persona_trabajador_unique",
+            "definicion": "UNIQUE (id_persona_trabajador)"
+        },
+        {
+            "tabla": "firma",
+            "conname": "firma_pkey",
+            "definicion": "PRIMARY KEY (id_firma)"
+        },
+        {
+            "tabla": "participacion",
+            "conname": "certificado_participacion_id_actividad_foreign",
+            "definicion": "FOREIGN KEY (id_actividad) REFERENCES actividad(id_actividad) ON DELETE CASCADE"
+        },
+        {
+            "tabla": "participacion",
+            "conname": "certificado_participacion_id_persona_foreign",
+            "definicion": "FOREIGN KEY (id_persona) REFERENCES persona(id_persona)"
+        },
+        {
+            "tabla": "participacion",
+            "conname": "certificado_participacion_id_persona_id_actividad_unique",
+            "definicion": "UNIQUE (id_persona, id_actividad)"
+        },
+        {
+            "tabla": "participacion",
+            "conname": "certificado_participacion_id_tipo_participacion_foreign",
+            "definicion": "FOREIGN KEY (id_tipo_participacion) REFERENCES tipo_participacion(id_tipo_participacion)"
+        },
+        {
+            "tabla": "participacion",
+            "conname": "participacion_pkey",
+            "definicion": "PRIMARY KEY (id_participacion)"
+        },
+        {
+            "tabla": "tipo_certificado",
+            "conname": "tipo_certificado_pkey",
+            "definicion": "PRIMARY KEY (id_tipo_certificado)"
+        }
+    ],
+    "indexes": [
+        {
+            "tablename": "actividad_sesion",
+            "indexname": "actividad_sesion_pkey",
+            "indexdef": "CREATE UNIQUE INDEX actividad_sesion_pkey ON certificado.actividad_sesion USING btree (id_actividad_sesion)"
+        },
+        {
+            "tablename": "participacion",
+            "indexname": "participacion_pkey",
+            "indexdef": "CREATE UNIQUE INDEX participacion_pkey ON certificado.participacion USING btree (id_participacion)"
+        },
+        {
+            "tablename": "participacion",
+            "indexname": "certificado_participacion_id_persona_id_actividad_unique",
+            "indexdef": "CREATE UNIQUE INDEX certificado_participacion_id_persona_id_actividad_unique ON certificado.participacion USING btree (id_persona, id_actividad)"
+        },
+        {
+            "tablename": "asistencia",
+            "indexname": "asistencia_pkey",
+            "indexdef": "CREATE UNIQUE INDEX asistencia_pkey ON certificado.asistencia USING btree (id_asistencia)"
+        },
+        {
+            "tablename": "asistencia",
+            "indexname": "asistencia_id_participacion_id_actividad_sesion_unique",
+            "indexdef": "CREATE UNIQUE INDEX asistencia_id_participacion_id_actividad_sesion_unique ON certificado.asistencia USING btree (id_participacion, id_actividad_sesion)"
+        },
+        {
+            "tablename": "firma",
+            "indexname": "firma_pkey",
+            "indexdef": "CREATE UNIQUE INDEX firma_pkey ON certificado.firma USING btree (id_firma)"
+        },
+        {
+            "tablename": "firma",
+            "indexname": "certificado_firma_id_persona_trabajador_unique",
+            "indexdef": "CREATE UNIQUE INDEX certificado_firma_id_persona_trabajador_unique ON certificado.firma USING btree (id_persona_trabajador)"
+        },
+        {
+            "tablename": "actividad_firma",
+            "indexname": "actividad_firma_pkey",
+            "indexdef": "CREATE UNIQUE INDEX actividad_firma_pkey ON certificado.actividad_firma USING btree (id_actividad_firma)"
+        },
+        {
+            "tablename": "actividad_firma",
+            "indexname": "certificado_actividad_firma_id_actividad_id_firma_unique",
+            "indexdef": "CREATE UNIQUE INDEX certificado_actividad_firma_id_actividad_id_firma_unique ON certificado.actividad_firma USING btree (id_actividad, id_firma)"
+        },
+        {
+            "tablename": "tipo_certificado",
+            "indexname": "tipo_certificado_pkey",
+            "indexdef": "CREATE UNIQUE INDEX tipo_certificado_pkey ON certificado.tipo_certificado USING btree (id_tipo_certificado)"
+        },
+        {
+            "tablename": "certificado",
+            "indexname": "certificado_pkey",
+            "indexdef": "CREATE UNIQUE INDEX certificado_pkey ON certificado.certificado USING btree (id_certificado)"
+        },
+        {
+            "tablename": "certificado_documento",
+            "indexname": "certificado_documento_pkey",
+            "indexdef": "CREATE UNIQUE INDEX certificado_documento_pkey ON certificado.certificado_documento USING btree (id_certificado_documento)"
+        },
+        {
+            "tablename": "certificado_documento",
+            "indexname": "certificado_certificado_documento_codigo_verificacion_unique",
+            "indexdef": "CREATE UNIQUE INDEX certificado_certificado_documento_codigo_verificacion_unique ON certificado.certificado_documento USING btree (codigo_verificacion)"
+        },
+        {
+            "tablename": "certificado_documento",
+            "indexname": "certificado_certificado_documento_hash_certificado_unique",
+            "indexdef": "CREATE UNIQUE INDEX certificado_certificado_documento_hash_certificado_unique ON certificado.certificado_documento USING btree (hash_certificado)"
+        },
+        {
+            "tablename": "certificado_firma",
+            "indexname": "certificado_firma_pkey",
+            "indexdef": "CREATE UNIQUE INDEX certificado_firma_pkey ON certificado.certificado_firma USING btree (id_certificado_firma)"
+        },
+        {
+            "tablename": "certificado_firma",
+            "indexname": "certificado_firma_id_certificado_documento_id_firma_unique",
+            "indexdef": "CREATE UNIQUE INDEX certificado_firma_id_certificado_documento_id_firma_unique ON certificado.certificado_firma USING btree (id_certificado_documento, id_firma)"
+        },
+        {
+            "tablename": "actividad",
+            "indexname": "actividad_pkey",
+            "indexdef": "CREATE UNIQUE INDEX actividad_pkey ON certificado.actividad USING btree (id_actividad)"
+        }
+    ],
+    "person_columns": [
+        {
+            "table_name": "area",
+            "column_name": "id_area",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "area",
+            "column_name": "nombre",
+            "data_type": "character varying",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona",
+            "column_name": "id_persona",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona",
+            "column_name": "nombres",
+            "data_type": "character varying",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona",
+            "column_name": "apellido_paterno",
+            "data_type": "character varying",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona",
+            "column_name": "apellido_materno",
+            "data_type": "character varying",
+            "is_nullable": "YES"
+        },
+        {
+            "table_name": "persona",
+            "column_name": "telefono",
+            "data_type": "character varying",
+            "is_nullable": "YES"
+        },
+        {
+            "table_name": "persona",
+            "column_name": "direccion",
+            "data_type": "character varying",
+            "is_nullable": "YES"
+        },
+        {
+            "table_name": "persona",
+            "column_name": "correo",
+            "data_type": "character varying",
+            "is_nullable": "YES"
+        },
+        {
+            "table_name": "persona",
+            "column_name": "fecha_registro",
+            "data_type": "date",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_documento",
+            "column_name": "id_persona_documento",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_documento",
+            "column_name": "id_persona",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_documento",
+            "column_name": "id_tipo_documento",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_documento",
+            "column_name": "numero_documento",
+            "data_type": "character varying",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_documento",
+            "column_name": "estado",
+            "data_type": "character varying",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_trabajador",
+            "column_name": "id_persona_trabajador",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_trabajador",
+            "column_name": "id_persona",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_trabajador",
+            "column_name": "id_area",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_trabajador",
+            "column_name": "cargo",
+            "data_type": "character varying",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_trabajador",
+            "column_name": "fecha_ingreso",
+            "data_type": "date",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "persona_trabajador",
+            "column_name": "fecha_fin",
+            "data_type": "date",
+            "is_nullable": "YES"
+        },
+        {
+            "table_name": "persona_trabajador",
+            "column_name": "estado",
+            "data_type": "boolean",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "tipo_documento",
+            "column_name": "id_tipo_documento",
+            "data_type": "bigint",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "tipo_documento",
+            "column_name": "nombre",
+            "data_type": "character varying",
+            "is_nullable": "NO"
+        },
+        {
+            "table_name": "tipo_documento",
+            "column_name": "estado",
+            "data_type": "boolean",
+            "is_nullable": "NO"
+        }
+    ],
+    "types": [
+        {
+            "id_tipo_certificado": 1,
+            "nombre_tipo": "Capacitación",
+            "estado": true
+        },
+        {
+            "id_tipo_certificado": 2,
+            "nombre_tipo": "Reconocimiento",
+            "estado": true
+        },
+        {
+            "id_tipo_certificado": 3,
+            "nombre_tipo": "Prácticas",
+            "estado": true
+        }
+    ],
+    "states": {
+        "actividad": [
+            {
+                "estado": "Activa",
+                "total": 2
+            }
+        ],
+        "actividad_sesion": [
+            {
+                "estado": "activo",
+                "total": 1
+            },
+            {
+                "estado": "Finalizada",
+                "total": 1
+            }
+        ],
+        "participacion": [
+            {
+                "estado": "Activo",
+                "total": 3
+            }
+        ],
+        "asistencia": [
+            {
+                "estado": "nn",
+                "total": 1
+            },
+            {
+                "estado": "PRESENTE",
+                "total": 2
+            }
+        ],
+        "tipo_certificado": [
+            {
+                "estado": true,
+                "total": 3
+            }
+        ],
+        "certificado": [],
+        "certificado_documento": []
+    },
+    "counts": {
+        "actividad": 2,
+        "actividad_sesion": 2,
+        "participacion": 3,
+        "asistencia": 3,
+        "tipo_certificado": 3,
+        "certificado": 0,
+        "certificado_documento": 0,
+        "certificado_firma": 0,
+        "firma": 0,
+        "actividad_firma": 0
+    },
+    "participations_present_in_multiple_sessions": [],
+    "demonstration_readonly_validation": {
+        "audited_at": "2026-11-10T18:44:21+00:00",
+        "identity": {
+            "database": "certificados_morales",
+            "read_only": "on"
+        },
+        "id_tipo_certificado": 1,
+        "beneficiarios_comprobados": 2,
+        "vistas_previas": [
+            {
+                "archivo": "certificados\/vistas-previas\/vista-previa-1.pdf",
+                "paginas": 1,
+                "emitida": false,
+                "identidad_sesion_disponible": false
+            },
+            {
+                "archivo": "certificados\/vistas-previas\/vista-previa-2.pdf",
+                "paginas": 1,
+                "emitida": false,
+                "identidad_sesion_disponible": false
+            }
+        ],
+        "certificados": 0,
+        "documentos": 0
+    }
+}

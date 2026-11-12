@@ -369,11 +369,11 @@ class UserSecurityTest extends TestCase
 
     public function test_all_registered_protected_routes_reject_guests(): void
     {
-        $public = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password'];
+        $public = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/certificados/verificar/{code}'];
         $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/')));
-        $this->assertCount(182, $routes);
+        $this->assertCount(204, $routes);
         $protected = array_values(array_filter($routes, fn ($route) => ! in_array($route->uri(), $public, true)));
-        $this->assertCount(179, $protected);
+        $this->assertCount(200, $protected);
         foreach ($protected as $route) {
             $uri = '/'.preg_replace('/\{[^}]+\}/', '1', $route->uri());
             $this->json($route->methods()[0], $uri)->assertUnauthorized()->assertHeaderMissing('Location');
@@ -383,9 +383,9 @@ class UserSecurityTest extends TestCase
     public function test_an_institutional_cookie_without_permissions_does_not_authorize_any_crud(): void
     {
         $this->cookieFor($this->actor());
-        $allowed = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/auth/me', 'api/auth/logout'];
+        $allowed = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/auth/me', 'api/auth/logout', 'api/certificados/verificar/{code}'];
         $routes = array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/') && ! in_array($route->uri(), $allowed, true));
-        $this->assertCount(177, $routes);
+        $this->assertCount(198, $routes);
         foreach ($routes as $route) {
             $uri = '/'.preg_replace('/\{[^}]+\}/', '1', $route->uri());
             $this->json($route->methods()[0], $uri)->assertForbidden();
@@ -415,7 +415,7 @@ class UserSecurityTest extends TestCase
             'invalid subject shape' => [['sub' => ['id' => 1]]],
             'zero subject' => [['sub' => 0]],
             'non-integer expiry' => [['exp' => 'not-a-timestamp']],
-            'future issuance despite valid nbf' => [['iat' => time() + 120, 'nbf' => time() - 10]],
+            'future issuance despite valid nbf' => [['future_issuance' => true]],
         ];
     }
 
@@ -423,6 +423,11 @@ class UserSecurityTest extends TestCase
     public function test_signed_tokens_must_have_valid_institutional_claims(array $overrides): void
     {
         $this->actor();
+        if ($overrides['future_issuance'] ?? false) {
+            unset($overrides['future_issuance']);
+            $overrides['iat'] = time() + 120;
+            $overrides['nbf'] = time() - 10;
+        }
         $payload = array_replace(['sub' => 1, 'iat' => time() - 10, 'exp' => time() + 300], $overrides);
         $header = JWT::urlsafeB64Encode(json_encode(['typ' => 'JWT', 'alg' => 'HS256']));
         $body = JWT::urlsafeB64Encode(json_encode($payload));

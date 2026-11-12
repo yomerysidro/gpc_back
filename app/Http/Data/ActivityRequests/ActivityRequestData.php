@@ -207,6 +207,7 @@ class ActivityRequestData
             'id_solicitud_actividad' => ['sometimes', 'integer', 'min:1'],
             'id_usuario_responsable' => ['sometimes', 'integer', 'min:1'],
             'tipo_decision' => ['sometimes', 'string', 'in:REVISION_CONFORME,OBSERVAR,DERIVAR_GERENCIA,APROBAR,RECHAZAR'],
+            'estado_nuevo' => ['sometimes', 'string', Rule::in(self::STATES)],
             'fecha_desde' => ['sometimes', 'date_format:Y-m-d'],
             'fecha_hasta' => ['sometimes', 'date_format:Y-m-d', Rule::when(isset($filters['fecha_desde']), ['after_or_equal:fecha_desde'])],
             'page' => ['sometimes', 'integer', 'min:1'],
@@ -247,7 +248,7 @@ class ActivityRequestData
             });
         }
 
-        foreach (['id_solicitud_actividad', 'id_usuario_responsable', 'tipo_decision'] as $field) {
+        foreach (['id_solicitud_actividad', 'id_usuario_responsable', 'tipo_decision', 'estado_nuevo'] as $field) {
             if (isset($validated[$field])) {
                 $query->where('decision.'.$field, $validated[$field]);
             }

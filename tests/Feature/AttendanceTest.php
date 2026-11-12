@@ -52,6 +52,7 @@ class AttendanceTest extends TestCase
         Schema::create('certificado.actividad_sesion', function (Blueprint $table) {
             $table->increments('id_actividad_sesion');
             $table->integer('id_actividad');
+            $table->string('estado', 30)->default('Activo');
         });
         Schema::create('certificado.asistencia', function (Blueprint $table) {
             $table->increments('id_asistencia');
@@ -236,7 +237,7 @@ class AttendanceTest extends TestCase
             'null participation' => ['ID_PARTICIPACION', null],
             'null session' => ['ID_ACTIVIDAD_SESION', null],
             'invalid entry hour' => ['HORA_ENTRADA', '25:00'],
-            'seconds in input' => ['HORA_ENTRADA', '08:00:00'],
+            'fractional seconds in input' => ['HORA_ENTRADA', '08:00:00.001'],
             'invalid exit hour' => ['HORA_SALIDA', 'bad'],
             'null status' => ['ESTADO', null],
             'nonstring status' => ['ESTADO', 123],

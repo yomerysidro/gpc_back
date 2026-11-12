@@ -4,9 +4,12 @@ namespace App\Http\Controllers\ActivitySession;
 
 use App\Http\Controllers\Controller;
 use App\Http\Data\ActivitySession\ActivitySessionData;
+use App\Models\ActivitySession\ActivitySession;
+use App\Services\CertificationReadiness;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Throwable;
@@ -23,6 +26,11 @@ class ActivitySessionController extends Controller
             return $this->error($response['message'], $response['status']);
         }
 
+        $blockers = app(CertificationReadiness::class)->closureBlockersForSessions($response['data']->all());
+        foreach ($response['data'] as $session) {
+            $this->addClosureCapabilities($session, $blockers[$session->id_actividad_sesion]);
+        }
+
         return $this->ok($response['data'], $response['message']);
     }
 
@@ -34,7 +42,29 @@ class ActivitySessionController extends Controller
             return $this->error($response['message'], $response['status']);
         }
 
-        return $this->ok($response['data'], $response['message']);
+        $session = $response['data'];
+        $this->addClosureCapabilities($session);
+
+        return $this->ok($session, $response['message']);
+    }
+
+    /** @param list<string>|null $blockers */
+    private function addClosureCapabilities(object $session, ?array $blockers = null): void
+    {
+        $readiness = app(CertificationReadiness::class);
+        $blockers ??= $readiness->closureBlockers($session);
+        $model = (new ActivitySession)->newFromBuilder((array) $session);
+        $session->finalizada = $session->estado === CertificationReadiness::FINAL_SESSION_STATE;
+        if (! $session->finalizada && Gate::denies('update', $model)) {
+            $blockers[] = 'No dispone del permiso efectivo para finalizar esta sesión.';
+        }
+        $session->puede_finalizarse = ! $session->finalizada && $blockers === [];
+        $session->motivos_bloqueo_finalizacion = $blockers;
+        $session->puede_certificarse = false;
+        $session->motivos_bloqueo_certificacion = $readiness->preparationBlockers('sesion');
+        if ($readiness->usesDevelopmentPolicy()) {
+            $session->motivos_bloqueo_certificacion[] = 'La preparación de desarrollo no habilita emisión oficial ni firma digital.';
+        }
     }
 
     public function store(Request $request): JsonResponse

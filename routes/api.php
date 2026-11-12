@@ -15,6 +15,10 @@ use App\Http\Controllers\CertificateDocument\CertificateDocumentController;
 use App\Http\Controllers\CertificateInquiry\CertificateInquiryController;
 use App\Http\Controllers\CertificateSignature\CertificateSignatureController;
 use App\Http\Controllers\CertificateType\CertificateTypeController;
+use App\Http\Controllers\Certification\AdministrativeSignerController;
+use App\Http\Controllers\Certification\CertificateHumanResourcesController;
+use App\Http\Controllers\Certification\CertificateSigningController;
+use App\Http\Controllers\Certification\CertificationReadinessController;
 use App\Http\Controllers\DocumentType\TipoDocumentoController;
 use App\Http\Controllers\Institution\InstitutionController;
 use App\Http\Controllers\Module\ModuleController;
@@ -34,13 +38,30 @@ use App\Http\Controllers\Supervisory_internship\Supervisory_internshipController
 use App\Http\Controllers\User\UserController;
 use App\Http\Middleware\ActivityRequests\AuthorizeActivityRequest;
 use App\Http\Middleware\AuthorizeModuleOperation;
+use App\Http\Middleware\NormalizeAttendanceInput;
 use Illuminate\Support\Facades\Route;
+
+Route::get('certificados/verificar/{code}', [CertificateDocumentController::class, 'verify'])
+    ->where('code', '[a-f0-9]{30}')->middleware('throttle:30,1')->name('certificates.verify');
 
 // ============================================================
 // USUARIOS
 // ============================================================
 // Certificaciones y firmas: solo usuarios autenticados y autorizados por polÃƒÂ­ticas.
 Route::middleware('auth.cookie')->group(function () {
+    Route::post('certificados-documentos/{id}/enviar-rrhh', [CertificateHumanResourcesController::class, 'send'])->whereNumber('id');
+    Route::get('rrhh/certificados', [CertificateHumanResourcesController::class, 'inbox']);
+    Route::get('rrhh/actividades', [CertificateHumanResourcesController::class, 'activities']);
+    Route::get('rrhh/actividades/{activity}/sesiones', [CertificateHumanResourcesController::class, 'sessions'])->whereNumber('activity');
+    Route::get('rrhh/sesiones/{session}/certificados', [CertificateHumanResourcesController::class, 'certificates'])->whereNumber('session');
+    Route::get('rrhh/certificados/{id}', [CertificateHumanResourcesController::class, 'detail'])->whereNumber('id');
+    Route::get('rrhh/certificados/{id}/pdf', [CertificateHumanResourcesController::class, 'pdf'])->whereNumber('id');
+    Route::get('rrhh/certificados/{id}/historial', [CertificateHumanResourcesController::class, 'history'])->whereNumber('id');
+    Route::post('rrhh/certificados/{id}/recibir', [CertificateHumanResourcesController::class, 'receive'])->whereNumber('id');
+    Route::post('rrhh/certificados/{id}/disponible', [CertificateHumanResourcesController::class, 'available'])->whereNumber('id');
+    Route::post('rrhh/certificados/{id}/entregar', [CertificateHumanResourcesController::class, 'deliver'])->whereNumber('id');
+    Route::get('mis-certificados', [CertificateHumanResourcesController::class, 'mine']);
+    Route::get('mis-certificados/{id}/pdf', [CertificateHumanResourcesController::class, 'ownPdf'])->whereNumber('id');
     Route::prefix('tipos-certificado')->group(function () {
         Route::get('/list', [CertificateTypeController::class, 'list']);
         Route::get('/detail/{idTipoCertificado}', [CertificateTypeController::class, 'detail']);
@@ -50,6 +71,7 @@ Route::middleware('auth.cookie')->group(function () {
         Route::delete('/delete/{idTipoCertificado}', [CertificateTypeController::class, 'destroy']);
     });
     Route::prefix('certificados')->group(function () {
+        Route::post('/{id}/generar-documento', [CertificateDocumentController::class, 'generate'])->whereNumber('id');
         Route::get('/list', [CertificateController::class, 'list']);
         Route::get('/detail/{idCertificado}', [CertificateController::class, 'detail']);
         Route::post('/create', [CertificateController::class, 'store']);
@@ -66,12 +88,41 @@ Route::middleware('auth.cookie')->group(function () {
         Route::delete('/delete/{idReconocimiento}', [RecognitionController::class, 'destroy']);
     });
     Route::prefix('certificados-documentos')->group(function () {
+        Route::get('/{id}/firma/pdf-autorizado', [CertificateSigningController::class, 'authorizedPdf'])->whereNumber('id');
+        Route::post('/{id}/firma/revision-pdf', [CertificateSigningController::class, 'reviewPdf'])->whereNumber('id')->middleware('throttle:10,1');
+        Route::delete('/{id}/firma/revision-pdf', [CertificateSigningController::class, 'cancelPdf'])->whereNumber('id');
+        Route::post('/{id}/firma/confirmar-pdf', [CertificateSigningController::class, 'confirmPdf'])->whereNumber('id');
+        Route::post('/firmas/lote/progreso', [CertificateSigningController::class, 'batchProgress']);
+        Route::get('/{id}/firma/progreso', [CertificateSigningController::class, 'progress'])->whereNumber('id');
+        Route::get('/{id}/firma/firmantes-asignados', [CertificateSigningController::class, 'progress'])->whereNumber('id');
+        Route::get('/{id}/firma/disponibilidad', [CertificateSigningController::class, 'progress'])->whereNumber('id');
+        Route::get('/{id}/emision/estado', [CertificateSigningController::class, 'progress'])->whereNumber('id');
+        Route::get('/{id}/firma/firmantes-disponibles', [CertificateSigningController::class, 'availableSigners'])->whereNumber('id');
+        Route::get('/{id}/firma/verificacion', [CertificateSigningController::class, 'verification'])->whereNumber('id');
+        Route::post('/{id}/firma/asignar', [CertificateSigningController::class, 'assign'])->whereNumber('id');
+        Route::post('/{id}/firma/aplicar', [CertificateSigningController::class, 'sign'])->whereNumber('id');
+        Route::post('/{id}/emitir', [CertificateSigningController::class, 'issue'])->whereNumber('id');
+        Route::get('/{id}/archivo-final', [CertificateSigningController::class, 'finalDownload'])->whereNumber('id');
+        Route::prefix('/{id}/firma/demo')->whereNumber('id')->middleware('throttle:30,1')->group(function () {
+            Route::get('/progreso', [CertificateSigningController::class, 'demoProgress']);
+            Route::post('/asignar', [CertificateSigningController::class, 'demoAssign']);
+            Route::post('/simular', [CertificateSigningController::class, 'demoSimulate']);
+        });
+        Route::post('/{id}/revisar-envio', [CertificateDocumentController::class, 'reviewExisting'])->whereNumber('id');
+        Route::post('/{id}/enviar-gerencia', [CertificateDocumentController::class, 'remitExisting'])->whereNumber('id');
+        Route::get('/{id}/historial', [CertificateDocumentController::class, 'history'])->whereNumber('id');
+        Route::get('/{id}/archivo', [CertificateDocumentController::class, 'download'])->whereNumber('id')->name('certificates.document.download');
         Route::get('/list', [CertificateDocumentController::class, 'list']);
         Route::get('/detail/{idCertificadoDocumento}', [CertificateDocumentController::class, 'detail']);
         Route::post('/create', [CertificateDocumentController::class, 'store']);
         Route::put('/update/{idCertificadoDocumento}', [CertificateDocumentController::class, 'update']);
         Route::patch('/update/{idCertificadoDocumento}', [CertificateDocumentController::class, 'update']);
         Route::delete('/delete/{idCertificadoDocumento}', [CertificateDocumentController::class, 'destroy']);
+    });
+    Route::prefix('funcionarios-firmantes')->group(function () {
+        Route::get('/trabajadores', [AdministrativeSignerController::class, 'workers']);
+        Route::get('/', [AdministrativeSignerController::class, 'index']);
+        Route::post('/habilitar', [AdministrativeSignerController::class, 'store']);
     });
     Route::prefix('firmas')->group(function () {
         Route::get('/list', [SignatureController::class, 'list']);
@@ -110,7 +161,7 @@ Route::middleware('auth.cookie')->group(function () {
 // ============================================================
 // ASISTENCIAS
 // ============================================================
-Route::prefix('attendance')->middleware(['auth.cookie', AuthorizeModuleOperation::class.':App\Models\Attendance\Attendance'])->group(function () {
+Route::prefix('attendance')->middleware(['auth.cookie', NormalizeAttendanceInput::class, AuthorizeModuleOperation::class.':App\Models\Attendance\Attendance'])->group(function () {
     Route::get('/list', [AttendanceController::class, 'list']);
     Route::get('/{idAttendance}', [AttendanceController::class, 'detail'])->whereNumber('idAttendance');
     Route::post('/create', [AttendanceController::class, 'store']);
@@ -162,6 +213,14 @@ Route::prefix('activity-session')->middleware(['auth.cookie', AuthorizeModuleOpe
     Route::put('/{idActivitySession}', [ActivitySessionController::class, 'update'])->whereNumber('idActivitySession');
     Route::patch('/{idActivitySession}', [ActivitySessionController::class, 'update'])->whereNumber('idActivitySession');
     Route::delete('/{idActivitySession}', [ActivitySessionController::class, 'destroy'])->whereNumber('idActivitySession');
+});
+
+Route::middleware('auth.cookie')->group(function () {
+    Route::get('certificaciones/pendientes', [CertificationReadinessController::class, 'pending']);
+    Route::get('activity-session/{id}/beneficiarios', [CertificationReadinessController::class, 'sessionBeneficiaries'])->whereNumber('id');
+    Route::post('activity-session/{id}/finalizar', [CertificationReadinessController::class, 'finalize'])->whereNumber('id');
+    Route::post('activity-session/{id}/preparar-certificados', [CertificationReadinessController::class, 'prepare'])->whereNumber('id');
+    Route::get('activity/{id}/beneficiarios-certificacion', [CertificationReadinessController::class, 'activityBeneficiaries'])->whereNumber('id');
 });
 
 // ============================================================

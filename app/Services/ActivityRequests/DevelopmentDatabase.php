@@ -19,6 +19,8 @@ class DevelopmentDatabase
             || ($connection['database'] ?? null) !== 'certificados_morales_test'
             || ! in_array($connection['host'] ?? null, ['127.0.0.1', '::1', 'localhost'], true)
             || ! empty($connection['url'])
+            || ! empty($connection['read'])
+            || ! empty($connection['write'])
             || ($connection['username'] ?? null) !== 'certificados_morales_test_app'
             || ! is_string($connection['password'] ?? null)
             || $connection['password'] === '') {

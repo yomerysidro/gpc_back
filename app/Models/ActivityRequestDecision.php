@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\User\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -28,6 +29,8 @@ class ActivityRequestDecision extends Model
         'id_solicitud_actividad' => 'integer',
         'id_usuario_responsable' => 'integer',
         'fecha_decision' => 'immutable_datetime',
+        'id_certificado_documento' => 'integer',
+        'datos' => 'array',
     ];
 
     public function request(): BelongsTo
@@ -38,5 +41,10 @@ class ActivityRequestDecision extends Model
     public function responsibleUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'id_usuario_responsable', 'id_usuario');
+    }
+
+    public function document(): BelongsTo
+    {
+        return $this->belongsTo(CertificateDocument::class, 'id_certificado_documento', 'id_certificado_documento');
     }
 }

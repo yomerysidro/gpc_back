@@ -22,7 +22,15 @@ class AttendanceController extends Controller
      */
     public function list(Request $request): JsonResponse
     {
-        $response = AttendanceData::getAttendances($request->attributes->get('activity_module_areas'));
+        $validator = Validator::make($request->query(), [
+            'id_actividad' => 'sometimes|integer|min:1',
+            'id_actividad_sesion' => 'sometimes|integer|min:1',
+            'id_participacion' => 'sometimes|integer|min:1',
+        ]);
+        if ($validator->fails()) {
+            return $this->information('Invalid validation data.', 422, $validator->errors());
+        }
+        $response = AttendanceData::getAttendances($request->attributes->get('activity_module_areas'), $validator->validated());
 
         if (! $response['success']) {
             return $this->error($response['message'], $response['status']);
@@ -52,10 +60,11 @@ class AttendanceController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
+                'ID_ACTIVIDAD' => ['sometimes', 'required', 'integer', 'min:1'],
                 'ID_PARTICIPACION' => ['bail', 'required', 'integer', Rule::exists(Participation::class, 'id_participacion')],
                 'ID_ACTIVIDAD_SESION' => ['bail', 'required', 'integer', Rule::exists(ActivitySession::class, 'id_actividad_sesion')],
-                'HORA_ENTRADA' => ['nullable', 'date_format:H:i'],
-                'HORA_SALIDA' => ['nullable', 'date_format:H:i'],
+                'HORA_ENTRADA' => ['nullable', 'date_format:H:i,H:i:s'],
+                'HORA_SALIDA' => ['nullable', 'date_format:H:i,H:i:s'],
                 'ESTADO' => ['required', 'string', 'max:30'],
             ]);
 
@@ -88,15 +97,22 @@ class AttendanceController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
+                'ID_ACTIVIDAD' => ['sometimes', 'required', 'integer', 'min:1'],
                 'ID_PARTICIPACION' => ['bail', 'sometimes', 'required', 'integer', Rule::exists(Participation::class, 'id_participacion')],
                 'ID_ACTIVIDAD_SESION' => ['bail', 'sometimes', 'required', 'integer', Rule::exists(ActivitySession::class, 'id_actividad_sesion')],
-                'HORA_ENTRADA' => ['sometimes', 'nullable', 'date_format:H:i'],
-                'HORA_SALIDA' => ['sometimes', 'nullable', 'date_format:H:i'],
+                'HORA_ENTRADA' => ['sometimes', 'nullable', 'date_format:H:i,H:i:s'],
+                'HORA_SALIDA' => ['sometimes', 'nullable', 'date_format:H:i,H:i:s'],
                 'ESTADO' => ['sometimes', 'required', 'string', 'max:30'],
             ]);
 
             if ($validator->fails()) {
                 return $this->information('Invalid validation data.', 422, $validator->errors());
+            }
+
+            if ($request->all() !== [] && $validator->validated() === []) {
+                return $this->information('No se recibió ningún campo editable de asistencia.', 422, [
+                    'campos' => ['Utilice ID_PARTICIPACION, ID_ACTIVIDAD_SESION, ESTADO, HORA_ENTRADA o HORA_SALIDA, en mayúsculas o minúsculas.'],
+                ]);
             }
 
             $response = AttendanceData::updateAttendance($idAttendance, $validator->validated());

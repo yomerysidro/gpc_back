@@ -2,6 +2,8 @@
 
 namespace App\Data\Certificate;
 
+use App\Services\SessionCertificatePreparation;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -23,7 +25,7 @@ class CertificateData
         'id_participacion' => 'nullable|integer',
         'id_practica' => 'nullable|integer',
         'fecha_emision' => 'nullable|date_format:Y-m-d',
-        'estado' => 'boolean',
+        'estado' => 'in:PREPARADO,PENDIENTE_FIRMA,FIRMADO,EMITIDO,ANULADO',
         'notificado' => 'boolean',
         'fecha_notificacion' => 'nullable|date',
     ];
@@ -51,16 +53,6 @@ class CertificateData
         ],
     ];
 
-    private const UNIQUE_KEYS = [
-        0 => [
-            0 => 'id_persona',
-            1 => 'id_tipo_certificado',
-            2 => 'id_reconocimiento',
-            3 => 'id_participacion',
-            4 => 'id_practica',
-        ],
-    ];
-
     private const DEPENDENCIES = [
         0 => [
             0 => 'certificado.certificado_documento',
@@ -82,6 +74,13 @@ class CertificateData
             }
             $filters = Validator::make($filters, $rules)->validate();
             $query = DB::table(self::TABLE)->select(self::columns());
+            $query->where(fn (Builder $query) => $query->whereNull('estado')->orWhereNotIn('estado', ['PENDIENTE_FIRMA', 'FIRMADO']));
+            if (Schema::hasColumn('certificado.certificado_documento', 'estado_flujo')) {
+                $query->whereNotExists(function (Builder $document): void {
+                    $document->selectRaw('1')->from('certificado.certificado_documento as managed')
+                        ->whereColumn('managed.id_certificado', self::TABLE.'.id_certificado')->whereNotNull('managed.estado_flujo');
+                });
+            }
             foreach ($filters as $field => $value) {
                 if (array_key_exists($field, self::RULES)) {
                     $query->where($field, $value);
@@ -107,7 +106,7 @@ class CertificateData
             $id = DB::table(self::TABLE)->insertGetId($data, self::KEY);
 
             return self::find($id);
-        }), 201);
+        }, 3), 201);
     }
 
     public static function update($id, array $input, bool $partial = false): array
@@ -134,7 +133,7 @@ class CertificateData
             }
 
             return self::find($id);
-        }));
+        }, 3));
     }
 
     public static function destroy($id): array
@@ -156,6 +155,9 @@ class CertificateData
             $rules[$field] = ($partial || str_contains($rule, 'nullable') ? 'sometimes|' : 'required|').$rule;
         }
         $rules[self::KEY] = 'prohibited';
+        $rules['id_sesion'] = 'prohibited';
+        $rules['id_actividad_sesion'] = 'prohibited';
+        $rules['origen'] = 'prohibited';
         $rules['hash_certificado'] = 'prohibited';
         $rules['passphrase_cifrada'] = 'prohibited';
 
@@ -177,16 +179,17 @@ class CertificateData
 
     private static function checkDuplicates(array $data, $id = null): void
     {
-        foreach (self::UNIQUE_KEYS as $fields) {
-            $query = DB::table(self::TABLE);
-            foreach ($fields as $field) {
-                $query->where($field, $data[$field] ?? null);
-            }
-            if ($id !== null) {
-                $query->where(self::KEY, '<>', $id);
-            }
-            abort_if($query->lockForUpdate()->exists(), 409, 'El registro o su orden ya está asignado.');
+        $query = DB::table(self::TABLE)->where('id_tipo_certificado', $data['id_tipo_certificado']);
+        foreach (['id_participacion', 'id_practica', 'id_reconocimiento'] as $origin) {
+            $query->where($origin, $data[$origin] ?? null);
         }
+        if (Schema::hasColumn(self::TABLE, 'id_actividad_sesion')) {
+            $query->where('id_actividad_sesion', $data['id_actividad_sesion'] ?? null);
+        }
+        if ($id !== null) {
+            $query->where(self::KEY, '<>', $id);
+        }
+        abort_if($query->exists(), 409, 'Ya existe un certificado del mismo tipo para este origen.');
     }
 
     private static function assertNoDependencies($id): void
@@ -204,6 +207,13 @@ class CertificateData
         $query = DB::table(self::TABLE)->where(self::KEY, $id);
         if (! $sensitive) {
             $query->select(self::columns());
+            $query->where(fn (Builder $query) => $query->whereNull('estado')->orWhereNotIn('estado', ['PENDIENTE_FIRMA', 'FIRMADO']));
+            if (Schema::hasColumn('certificado.certificado_documento', 'estado_flujo')) {
+                $query->whereNotExists(function (Builder $document): void {
+                    $document->selectRaw('1')->from('certificado.certificado_documento as managed')
+                        ->whereColumn('managed.id_certificado', self::TABLE.'.id_certificado')->whereNotNull('managed.estado_flujo');
+                });
+            }
         }
         $record = ($lock ? $query->lockForUpdate() : $query)->first();
         abort_unless($record, 404, 'Registro no encontrado.');
@@ -243,9 +253,30 @@ class CertificateData
 
     private static function businessRules(array &$data, ?object $record): void
     {
+        abort_if($record && ($record->id_actividad_sesion ?? null) !== null && $record->fecha_emision === null
+            && DB::table('certificado.certificado_documento')->where('id_certificado', $record->id_certificado)->exists(),
+            409, 'El certificado de sesión preparado no puede emitirse ni alterarse por el CRUD genérico.');
+        abort_if(in_array($data['estado'] ?? null, ['PENDIENTE_FIRMA', 'FIRMADO', 'EMITIDO'], true), 409,
+            'El estado de firma solo puede establecerse mediante el circuito documental autorizado.');
+        abort_if($record && in_array($record->estado, ['PENDIENTE_FIRMA', 'FIRMADO'], true), 409,
+            'El certificado remitido conserva su identidad y estado mediante el circuito documental.');
+        abort_if(! $record && ($data['estado'] ?? null) === 'PREPARADO', 409, 'La preparación requiere el documento revisado y el servicio transaccional.');
+        if (($data['estado'] ?? null) === 'PREPARADO' || ($data['estado'] ?? null) === 'PENDIENTE_FIRMA') {
+            abort_if(($data['fecha_emision'] ?? null) !== null || (bool) ($data['notificado'] ?? false), 409,
+                'Un certificado en preparación o pendiente de firma no puede tener emisión ni notificación.');
+        }
+        if ($record && Schema::hasColumn('certificado.certificado_documento', 'estado_flujo')) {
+            abort_if(DB::table('certificado.certificado_documento')->where('id_certificado', $record->id_certificado)->whereNotNull('estado_flujo')->exists(),
+                409, 'El certificado preparado solo puede cambiar por el circuito administrativo.');
+        }
+        abort_if(! $record && ($data['estado'] ?? null) === SessionCertificatePreparation::DEMONSTRATION_STATE, 409,
+            'La demostración se registra exclusivamente mediante la emisión confirmada por sesión.');
+        abort_if($record && $record->estado === SessionCertificatePreparation::DEMONSTRATION_STATE
+            && ($data['estado'] ?? null) !== $record->estado, 409,
+            'Un certificado de demostración no puede convertirse en institucional cambiando su estado.');
         $origins = array_filter(['id_reconocimiento', 'id_participacion', 'id_practica'], fn ($field) => ($data[$field] ?? null) !== null);
-        if (count($origins) > 1) {
-            throw ValidationException::withMessages(['id_reconocimiento' => 'Los orígenes del certificado son mutuamente excluyentes.']);
+        if (count($origins) !== 1) {
+            throw ValidationException::withMessages(['id_reconocimiento' => 'Indique exactamente un origen del certificado: participación, práctica o reconocimiento.']);
         }
         foreach ($origins as $field) {
             [$table, $key] = self::FOREIGN_KEYS[$field];

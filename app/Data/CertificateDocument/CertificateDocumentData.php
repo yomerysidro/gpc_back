@@ -2,6 +2,9 @@
 
 namespace App\Data\CertificateDocument;
 
+use App\Services\CertificateDocumentGenerator;
+use App\Services\SessionCertificatePreparation;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -22,7 +25,7 @@ class CertificateDocumentData
         'codigo_verificacion' => 'string|max:30',
         'ruta_archivo' => 'string|max:255',
         'motivo_reemision' => 'nullable|string|max:255',
-        'estado' => 'in:GENERADO,ANULADO',
+        'estado' => 'in:Vigente,Anulado',
         'fecha_generacion' => 'date_format:Y-m-d',
     ];
 
@@ -65,6 +68,13 @@ class CertificateDocumentData
             }
             $filters = Validator::make($filters, $rules)->validate();
             $query = DB::table(self::TABLE)->select(self::columns());
+            $query->whereNotExists(function (Builder $certificate): void {
+                $certificate->selectRaw('1')->from('certificado.certificado as reserved')
+                    ->whereColumn('reserved.id_certificado', self::TABLE.'.id_certificado')->whereIn('reserved.estado', ['PENDIENTE_FIRMA', 'FIRMADO']);
+            });
+            if (Schema::hasColumn(self::TABLE, 'estado_flujo')) {
+                $query->whereNull('estado_flujo');
+            }
             foreach ($filters as $field => $value) {
                 if (array_key_exists($field, self::RULES)) {
                     $query->where($field, $value);
@@ -97,6 +107,7 @@ class CertificateDocumentData
     {
         return self::execute(fn () => DB::transaction(function () use ($id, $input, $partial) {
             $record = self::find($id, true, true);
+            abort_if(($record->estado_flujo ?? null) !== null, 409, 'El documento preparado y su historial son inmutables; use el circuito administrativo.');
             $changes = self::validated($input, $partial);
             $data = array_replace((array) $record, $changes);
             unset($data[self::KEY]);
@@ -222,6 +233,32 @@ class CertificateDocumentData
 
     private static function businessRules(array &$data, ?object $record): void
     {
+        if (Schema::hasColumn('certificado.certificado', 'id_actividad_sesion')) {
+            abort_if(DB::table('certificado.certificado as c')->whereIn('c.id_certificado', array_values(array_filter([
+                $data['id_certificado'] ?? null, $record?->id_certificado,
+            ])))->whereNotNull('c.id_actividad_sesion')->whereNull('c.fecha_emision')
+                ->whereExists(fn (Builder $document) => $document->selectRaw('1')->from(self::TABLE.' as approved')
+                    ->whereColumn('approved.id_certificado', 'c.id_certificado'))->exists(),
+                409, 'El PDF aprobado de sesión se conserva mediante el circuito documental.');
+        }
+        abort_if(DB::table('certificado.certificado')->whereIn('id_certificado', array_values(array_filter([
+            $data['id_certificado'] ?? null, $record?->id_certificado,
+        ])))->whereIn('estado', ['PENDIENTE_FIRMA', 'FIRMADO'])->exists(), 409,
+            'El documento remitido no puede sustituirse o modificarse mediante el CRUD.');
+        if (! $record && Schema::hasColumn(self::TABLE, 'estado_flujo')) {
+            abort_if(DB::table('certificado.certificado')->where('id_certificado', $data['id_certificado'])->value('estado') === 'PREPARADO'
+                || DB::table(self::TABLE)->where('id_certificado', $data['id_certificado'])->whereNotNull('estado_flujo')->exists(),
+                409, 'Los documentos preparados se registran exclusivamente mediante confirmación de revisión.');
+        }
+        if ($record && DB::table('certificado.certificado')->where('id_certificado', $record->id_certificado)->value('estado') === SessionCertificatePreparation::DEMONSTRATION_STATE) {
+            foreach (['id_certificado', 'codigo_verificacion', 'ruta_archivo', 'fecha_generacion'] as $field) {
+                abort_if(($data[$field] ?? null) != $record->$field, 409, 'La identidad y el contenido del documento generado son inmutables.');
+            }
+            app(CertificateDocumentGenerator::class)->assertArtifact($record);
+            abort_if($record->estado === 'Anulado' && $data['estado'] !== 'Anulado', 409, 'Un documento anulado no se reactiva mediante el CRUD genérico.');
+        }
+        abort_if($record && str_starts_with($record->ruta_archivo, 'certificados/desarrollo/'), 409,
+            'Un documento generado debe conservar su código, contenido e identidad; requiere un procedimiento de reemisión.');
         self::checkDuplicates($data, $record ? $record->{self::KEY} : null);
         if ($record) {
             self::assertNoDependencies($record->{self::KEY});

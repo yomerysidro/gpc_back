@@ -1,5 +1,12 @@
 # Certificaciones y firmas
 
+> Auditoría vigente del 5 de noviembre de 2026: consulte
+> [cierre de sesiones, elegibilidad y contratos actuales](session-certification-api-contract.md)
+> y [el inventario PostgreSQL de solo lectura](certification-schema-audit.json).
+> Este documento conserva antecedentes del CRUD; sus estados GENERADO/ANULADO y
+> validaciones booleanas no representan el contrato real de PostgreSQL para
+> documentos y certificados. La emisión oficial y la firma siguen sin integración.
+
 Se implementaron ocho entidades con el patrón Controller → Data → consultas DB,
 respuestas del trait `ApiResponse` y modelos Eloquent. No se crearon ni ejecutaron
 migraciones. No se modificó el módulo User.

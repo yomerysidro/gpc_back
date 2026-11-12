@@ -18,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->trimStrings(except: ['mensaje']);
         $middleware->encryptCookies(except: [JwtService::COOKIE]);
         $middleware->alias(['auth.cookie' => AuthenticateCookie::class, 'role' => EnsureRole::class, 'permission' => EnsurePermission::class]);
         $middleware->redirectGuestsTo(

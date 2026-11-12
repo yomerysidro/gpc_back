@@ -1,0 +1,42 @@
+-- PROPUESTA RECHAZADA POR EL USUARIO. NO EJECUTAR.
+-- Decisión vigente: conservar exactamente la estructura actual de certificados_morales.
+-- No añadir identificadores, columnas, tablas ni restricciones. No ejecutar migraciones.
+-- El contenido siguiente se conserva solo como antecedente comentado; no contiene SQL ejecutable.
+--
+-- -- PROPUESTA PARA REVISIÓN. NO EJECUTADA. Requiere autorización expresa.
+-- -- Una sola columna nueva en una tabla existente; sin tabla de preparaciones.
+-- -- Los certificados históricos conservan NULL: no se infiere su sesión.
+-- BEGIN;
+-- SET LOCAL lock_timeout = '5s';
+-- SET LOCAL statement_timeout = '60s';
+--
+-- ALTER TABLE certificado.certificado
+--     ADD COLUMN id_actividad_sesion BIGINT NULL;
+--
+-- ALTER TABLE certificado.certificado
+--     ADD CONSTRAINT certificado_sesion_origen_check CHECK (
+--         id_actividad_sesion IS NULL OR (
+--             id_participacion IS NOT NULL
+--             AND id_practica IS NULL
+--             AND id_reconocimiento IS NULL
+--         )
+--     ),
+--     ADD CONSTRAINT certificado_asistencia_sesion_fk
+--         FOREIGN KEY (id_participacion, id_actividad_sesion)
+--         REFERENCES certificado.asistencia (id_participacion, id_actividad_sesion)
+--         ON UPDATE RESTRICT ON DELETE RESTRICT;
+--
+-- -- asistencia ya tiene UNIQUE(id_participacion, id_actividad_sesion).
+-- -- Este índice impide también los duplicados de dos solicitudes concurrentes.
+-- CREATE UNIQUE INDEX certificado_participacion_sesion_tipo_unique
+--     ON certificado.certificado (id_participacion, id_actividad_sesion, id_tipo_certificado)
+--     WHERE id_actividad_sesion IS NOT NULL;
+--
+-- -- El servicio debe validar y bloquear participación, sesión y asistencia:
+-- -- misma actividad/persona, Finalizada, Activo, PRESENTE, tipo autorizado y ámbito.
+-- -- No modificar filas históricas ni usar fecha/ruta/JSON para atribuir una sesión.
+-- -- No borrar automáticamente un certificado anulado para permitir reemisión:
+-- -- conservar la identidad y registrar versiones documentales con motivo real.
+--
+-- -- Ejecutar esta transacción únicamente después de autorización expresa.
+-- COMMIT;

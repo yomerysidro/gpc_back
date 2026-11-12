@@ -182,6 +182,15 @@ class InstitutionalActivityRequestSecurityTest extends TestCase
             ->assertJsonPath('data.data.0.observacion', 'Decisión de prueba')
             ->assertJsonPath('data.data.0.id_usuario_responsable', 3)
             ->assertJsonPath('data.data.0.tipo_decision', $action === 'approve' ? 'APROBAR' : 'RECHAZAR');
+        $historyUrl = '/api/activity-requests/decisions/history?';
+        $filters = ['estado_nuevo' => $state, 'tipo_decision' => $action === 'approve' ? 'APROBAR' : 'RECHAZAR', 'per_page' => 1];
+        $this->getJson($historyUrl.http_build_query(['estado_nuevo' => 'Observada']))->assertOk()
+            ->assertJsonPath('data.total', 1)->assertJsonPath('data.data.0.tipo_decision', 'OBSERVAR');
+        $this->getJson($historyUrl.http_build_query($filters))->assertOk()
+            ->assertJsonPath('data.total', 1)->assertJsonPath('data.data.0.estado_nuevo', $state);
+        $this->getJson($historyUrl.http_build_query($filters + ['page' => 2]))->assertOk()
+            ->assertJsonPath('data.current_page', 2)->assertJsonCount(0, 'data.data');
+        $this->getJson($historyUrl.'estado_nuevo=desconocido')->assertUnprocessable();
         $this->cookieFor($actors[0]);
         $this->getJson('/api/activity-requests/mine')->assertOk()->assertJsonPath('data.data.0.estado', $state);
         $this->getJson('/api/activity-requests/'.$id.'/history')->assertOk()

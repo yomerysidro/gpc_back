@@ -28,7 +28,8 @@ class CertificateSignature extends Model
     protected $casts = [
         'id_certificado_documento' => 'integer',
         'id_firma' => 'integer',
-        'fecha_firma' => 'date:Y-m-d',
+        'fecha_firma' => 'datetime:Y-m-d H:i:s',
+        'id_persona' => 'integer',
         'orden_firma' => 'integer',
     ];
 

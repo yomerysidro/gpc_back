@@ -107,7 +107,7 @@ class ModuleIntegrationTest extends TestCase
 
     private function certificate(): array
     {
-        return ['id_persona' => 1, 'id_tipo_certificado' => 1, 'id_participacion' => 1, 'estado' => true, 'notificado' => false];
+        return ['id_persona' => 1, 'id_tipo_certificado' => 1, 'id_participacion' => 1, 'fecha_emision' => '2026-01-01', 'estado' => 'Vigente', 'notificado' => false];
     }
 
     private function attendance(): array
@@ -115,11 +115,12 @@ class ModuleIntegrationTest extends TestCase
         return ['ID_PARTICIPACION' => 1, 'ID_ACTIVIDAD_SESION' => 1, 'HORA_ENTRADA' => '08:00', 'HORA_SALIDA' => '09:00', 'ESTADO' => 'PRESENTE'];
     }
 
-    public function test_all_ninety_routes_deny_guests_and_users_without_policies(): void
+    public function test_all_protected_module_routes_deny_guests_and_users_without_policies(): void
     {
         $controllers = array_map(fn ($entity) => $entity.'Controller', self::ENTITIES);
-        $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => in_array(class_basename($route->getControllerClass() ?? ''), $controllers, true)));
-        $this->assertCount(90, $routes);
+        $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => in_array(class_basename($route->getControllerClass() ?? ''), $controllers, true)
+            && in_array('auth.cookie', $route->gatherMiddleware(), true)));
+        $this->assertCount(95, $routes);
         foreach ($routes as $route) {
             $uri = preg_replace('/\{[^}]+\}/', '1', $route->uri());
             $this->json($route->methods()[0], '/'.$uri)->assertUnauthorized()->assertExactJson(['success' => false, 'message' => 'No autenticado.', 'data' => []]);

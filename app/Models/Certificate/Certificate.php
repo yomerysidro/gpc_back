@@ -2,6 +2,7 @@
 
 namespace App\Models\Certificate;
 
+use App\Models\ActivitySession\ActivitySession;
 use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\CertificateType\CertificateType;
 use App\Models\Participation\Participation;
@@ -40,9 +41,10 @@ class Certificate extends Model
         'id_tipo_certificado' => 'integer',
         'id_reconocimiento' => 'integer',
         'id_participacion' => 'integer',
+        'id_actividad_sesion' => 'integer',
         'id_practica' => 'integer',
         'fecha_emision' => 'date:Y-m-d',
-        'estado' => 'boolean',
+        'estado' => 'string',
         'notificado' => 'boolean',
         'fecha_notificacion' => 'datetime:Y-m-d H:i:s',
     ];
@@ -50,6 +52,11 @@ class Certificate extends Model
     public function tipoCertificado(): BelongsTo
     {
         return $this->belongsTo(CertificateType::class, 'id_tipo_certificado', 'id_tipo_certificado');
+    }
+
+    public function session(): BelongsTo
+    {
+        return $this->belongsTo(ActivitySession::class, 'id_actividad_sesion', 'id_actividad_sesion');
     }
 
     public function reconocimiento(): BelongsTo

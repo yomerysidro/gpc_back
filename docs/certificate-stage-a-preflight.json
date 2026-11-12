@@ -1,0 +1,886 @@
+{
+    "checked_at":  "2026-11-10T22:53:51+00:00",
+    "identity":  {
+                     "database":  "certificados_morales",
+                     "read_only":  "on",
+                     "server_version":  "15.19 (a434678)"
+                 },
+    "writes_performed":  false,
+    "columns":  [
+                    {
+                        "table_name":  "asistencia",
+                        "column_name":  "id_asistencia",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "asistencia",
+                        "column_name":  "id_participacion",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "asistencia",
+                        "column_name":  "id_actividad_sesion",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "asistencia",
+                        "column_name":  "hora_entrada",
+                        "data_type":  "time without time zone",
+                        "is_nullable":  "YES"
+                    },
+                    {
+                        "table_name":  "asistencia",
+                        "column_name":  "hora_salida",
+                        "data_type":  "time without time zone",
+                        "is_nullable":  "YES"
+                    },
+                    {
+                        "table_name":  "asistencia",
+                        "column_name":  "estado",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "id_certificado",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "id_persona",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "id_tipo_certificado",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "id_reconocimiento",
+                        "data_type":  "bigint",
+                        "is_nullable":  "YES"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "id_participacion",
+                        "data_type":  "bigint",
+                        "is_nullable":  "YES"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "id_practica",
+                        "data_type":  "bigint",
+                        "is_nullable":  "YES"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "fecha_emision",
+                        "data_type":  "date",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "estado",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "notificado",
+                        "data_type":  "boolean",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "column_name":  "fecha_notificacion",
+                        "data_type":  "timestamp without time zone",
+                        "is_nullable":  "YES"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "column_name":  "id_certificado_documento",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "column_name":  "id_certificado",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "column_name":  "codigo_verificacion",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "column_name":  "hash_certificado",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "column_name":  "ruta_archivo",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "column_name":  "motivo_reemision",
+                        "data_type":  "character varying",
+                        "is_nullable":  "YES"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "column_name":  "fecha_generacion",
+                        "data_type":  "timestamp without time zone",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "column_name":  "estado",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_firma",
+                        "column_name":  "id_certificado_firma",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_firma",
+                        "column_name":  "id_certificado_documento",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_firma",
+                        "column_name":  "id_firma",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_firma",
+                        "column_name":  "orden_firma",
+                        "data_type":  "integer",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "certificado_firma",
+                        "column_name":  "fecha_firma",
+                        "data_type":  "timestamp without time zone",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "solicitud_decision",
+                        "column_name":  "id_solicitud_decision",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "solicitud_decision",
+                        "column_name":  "id_solicitud_actividad",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "solicitud_decision",
+                        "column_name":  "id_usuario_responsable",
+                        "data_type":  "bigint",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "solicitud_decision",
+                        "column_name":  "tipo_decision",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "solicitud_decision",
+                        "column_name":  "estado_anterior",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "solicitud_decision",
+                        "column_name":  "estado_nuevo",
+                        "data_type":  "character varying",
+                        "is_nullable":  "NO"
+                    },
+                    {
+                        "table_name":  "solicitud_decision",
+                        "column_name":  "observacion",
+                        "data_type":  "text",
+                        "is_nullable":  "YES"
+                    },
+                    {
+                        "table_name":  "solicitud_decision",
+                        "column_name":  "fecha_decision",
+                        "data_type":  "timestamp with time zone",
+                        "is_nullable":  "NO"
+                    }
+                ],
+    "constraints":  [
+                        {
+                            "table_name":  "asistencia",
+                            "conname":  "asistencia_id_participacion_id_actividad_sesion_unique",
+                            "contype":  "u",
+                            "convalidated":  true,
+                            "definition":  "UNIQUE (id_participacion, id_actividad_sesion)"
+                        },
+                        {
+                            "table_name":  "asistencia",
+                            "conname":  "asistencia_pkey",
+                            "contype":  "p",
+                            "convalidated":  true,
+                            "definition":  "PRIMARY KEY (id_asistencia)"
+                        },
+                        {
+                            "table_name":  "asistencia",
+                            "conname":  "certificado_asistencia_id_actividad_sesion_foreign",
+                            "contype":  "f",
+                            "convalidated":  true,
+                            "definition":  "FOREIGN KEY (id_actividad_sesion) REFERENCES actividad_sesion(id_actividad_sesion) ON DELETE CASCADE"
+                        },
+                        {
+                            "table_name":  "asistencia",
+                            "conname":  "certificado_asistencia_id_participacion_foreign",
+                            "contype":  "f",
+                            "convalidated":  true,
+                            "definition":  "FOREIGN KEY (id_participacion) REFERENCES participacion(id_participacion) ON DELETE CASCADE"
+                        },
+                        {
+                            "table_name":  "certificado",
+                            "conname":  "certificado_certificado_id_participacion_foreign",
+                            "contype":  "f",
+                            "convalidated":  true,
+                            "definition":  "FOREIGN KEY (id_participacion) REFERENCES participacion(id_participacion)"
+                        },
+                        {
+                            "table_name":  "certificado",
+                            "conname":  "certificado_certificado_id_persona_foreign",
+                            "contype":  "f",
+                            "convalidated":  true,
+                            "definition":  "FOREIGN KEY (id_persona) REFERENCES persona(id_persona)"
+                        },
+                        {
+                            "table_name":  "certificado",
+                            "conname":  "certificado_certificado_id_practica_foreign",
+                            "contype":  "f",
+                            "convalidated":  true,
+                            "definition":  "FOREIGN KEY (id_practica) REFERENCES practica(id_practica)"
+                        },
+                        {
+                            "table_name":  "certificado",
+                            "conname":  "certificado_certificado_id_reconocimiento_foreign",
+                            "contype":  "f",
+                            "convalidated":  true,
+                            "definition":  "FOREIGN KEY (id_reconocimiento) REFERENCES reconocimiento(id_reconocimiento)"
+                        },
+                        {
+                            "table_name":  "certificado",
+                            "conname":  "certificado_certificado_id_tipo_certificado_foreign",
+                            "contype":  "f",
+                            "convalidated":  true,
+                            "definition":  "FOREIGN KEY (id_tipo_certificado) REFERENCES tipo_certificado(id_tipo_certificado)"
+                        },
+                        {
+                            "table_name":  "certificado",
+                            "conname":  "certificado_origen_check",
+                            "contype":  "c",
+                            "convalidated":  true,
+                            "definition":  "CHECK ((((\nCASE\n    WHEN (id_reconocimiento IS NOT NULL) THEN 1\n    ELSE 0\nEND +\nCASE\n    WHEN (id_participacion IS NOT NULL) THEN 1\n    ELSE 0\nEND) +\nCASE\n    WHEN (id_practica IS NOT NULL) THEN 1\n    ELSE 0\nEND) = 1))"
+                        },
+                        {
+                            "table_name":  "certificado",
+                            "conname":  "certificado_pkey",
+                            "contype":  "p",
+                            "convalidated":  true,
+                            "definition":  "PRIMARY KEY (id_certificado)"
+                        },
+                        {
+                            "table_name":  "certificado_documento",
+                            "conname":  "certificado_certificado_documento_codigo_verificacion_unique",
+                            "contype":  "u",
+                            "convalidated":  true,
+                            "definition":  "UNIQUE (codigo_verificacion)"
+                        },
+                        {
+                            "table_name":  "certificado_documento",
+                            "conname":  "certificado_certificado_documento_hash_certificado_unique",
+                            "contype":  "u",
+                            "convalidated":  true,
+                            "definition":  "UNIQUE (hash_certificado)"
+                        },
+                        {
+                            "table_name":  "certificado_documento",
+                            "conname":  "certificado_certificado_documento_id_certificado_foreign",
+                            "contype":  "f",
+                            "convalidated":  true,
+                            "definition":  "FOREIGN KEY (id_certificado) REFERENCES certificado(id_certificado) ON DELETE CASCADE"
+                        },
+                        {
+                            "table_name":  "certificado_documento",
+                            "conname":  "certificado_documento_estado_check",
+                            "contype":  "c",
+                            "convalidated":  true,
+                            "definition":  "CHECK (((estado)::text = ANY ((ARRAY[\u0027Vigente\u0027::character varying, \u0027Anulado\u0027::character varying])::text[])))"
+                        },
+                        {
+                            "table_name":  "certificado_documento",
+                            "conname":  "certificado_documento_pkey",
+                            "contype":  "p",
+                            "convalidated":  true,
+                            "definition":  "PRIMARY KEY (id_certificado_documento)"
+                        }
+                    ],
+    "indexes":  [
+                    {
+                        "table_name":  "asistencia",
+                        "name":  "asistencia_id_participacion_id_actividad_sesion_unique",
+                        "indisunique":  true,
+                        "indisvalid":  true,
+                        "indisready":  true,
+                        "definition":  "CREATE UNIQUE INDEX asistencia_id_participacion_id_actividad_sesion_unique ON certificado.asistencia USING btree (id_participacion, id_actividad_sesion)"
+                    },
+                    {
+                        "table_name":  "asistencia",
+                        "name":  "asistencia_pkey",
+                        "indisunique":  true,
+                        "indisvalid":  true,
+                        "indisready":  true,
+                        "definition":  "CREATE UNIQUE INDEX asistencia_pkey ON certificado.asistencia USING btree (id_asistencia)"
+                    },
+                    {
+                        "table_name":  "certificado",
+                        "name":  "certificado_pkey",
+                        "indisunique":  true,
+                        "indisvalid":  true,
+                        "indisready":  true,
+                        "definition":  "CREATE UNIQUE INDEX certificado_pkey ON certificado.certificado USING btree (id_certificado)"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "name":  "certificado_certificado_documento_codigo_verificacion_unique",
+                        "indisunique":  true,
+                        "indisvalid":  true,
+                        "indisready":  true,
+                        "definition":  "CREATE UNIQUE INDEX certificado_certificado_documento_codigo_verificacion_unique ON certificado.certificado_documento USING btree (codigo_verificacion)"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "name":  "certificado_certificado_documento_hash_certificado_unique",
+                        "indisunique":  true,
+                        "indisvalid":  true,
+                        "indisready":  true,
+                        "definition":  "CREATE UNIQUE INDEX certificado_certificado_documento_hash_certificado_unique ON certificado.certificado_documento USING btree (hash_certificado)"
+                    },
+                    {
+                        "table_name":  "certificado_documento",
+                        "name":  "certificado_documento_pkey",
+                        "indisunique":  true,
+                        "indisvalid":  true,
+                        "indisready":  true,
+                        "definition":  "CREATE UNIQUE INDEX certificado_documento_pkey ON certificado.certificado_documento USING btree (id_certificado_documento)"
+                    }
+                ],
+    "counts":  {
+                   "certificado":  0,
+                   "certificado_documento":  0,
+                   "certificado_firma":  0,
+                   "firma":  0,
+                   "actividad_firma":  0,
+                   "participacion":  3,
+                   "actividad_sesion":  2,
+                   "asistencia":  3
+               },
+    "duplicate_origin_groups":  {
+                                    "id_participacion":  0,
+                                    "id_practica":  0,
+                                    "id_reconocimiento":  0
+                                },
+    "participation_person_mismatches":  0,
+    "attendance_activity_mismatches":  0,
+    "historical_certificate_rows_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "historical_null_emission_dates":  0,
+    "configured_session_type_ids":  [
+
+                                    ],
+    "proposed_sql_sha256":  "8c09b4bb7dc1d29f350b36d2b0a3ae81c7cc0550c5d11566d2dc5855c62727fb",
+    "sql_scope_validated":  true,
+    "sql_applied":  false,
+    "schema_compatible_with_proposal":  true,
+    "backup":  {
+                   "generated":  false,
+                   "restore_verified":  false,
+                   "reason":  "No PostgreSQL dump/restore binaries found in PATH, usual Windows installations or Ubuntu WSL; Docker engine is not running."
+               },
+    "isolated_postgresql_validation":  "not_run_no_available_restore_environment",
+    "activation_blockers":  [
+                                "backup_restore_not_verified",
+                                "session_identity_column_missing",
+                                "emission_date_not_nullable",
+                                "no_configured_session_types",
+                                "no_registered_signatures_or_activity_signers"
+                            ],
+    "isolated_application_tests":  {
+                                       "database":  "sqlite_memory",
+                                       "passed":  25,
+                                       "assertions":  367,
+                                       "failed":  0,
+                                       "institutional_writes":  false
+                                   },
+    "readiness_update":  {
+                             "checked_at":  "2026-11-10T23:07:15+00:00",
+                             "backup":  {
+                                            "client":  "C:/Users/Yomer-Ysidro/AppData/Roaming/DBeaverData/drivers/clients/postgresql/win/17",
+                                            "client_version":  "17.0",
+                                            "format":  "PostgreSQL custom archive",
+                                            "path":  "C:\\Users\\Yomer-Ysidro\\Documents\\Proyecto_Perfil\\gpc_back\\storage\\app/private/backups/certificados_morales-20261110-230718-ee5ebae7/certificados_morales.dump",
+                                            "bytes":  172336,
+                                            "sha256":  "e762200cc4de9942a54f6001aeb23b74f03378f2e60f6b9002701d55891d9457",
+                                            "pg_dump_exit_code":  0,
+                                            "toc_verified":  true,
+                                            "all_blocks_decoded":  true,
+                                            "database_restore_verified":  false
+                                        },
+                             "counts":  {
+                                            "certificado":  0,
+                                            "certificado_documento":  0,
+                                            "certificado_firma":  0,
+                                            "firma":  0,
+                                            "actividad_firma":  0
+                                        },
+                             "configured_signature_ids":  [
+
+                                                          ],
+                             "activity_signature_assignment_ids":  [
+
+                                                                   ],
+                             "signature_permission_holders":  [
+
+                                                              ],
+                             "development_session_type_ids":  [
+                                                                  1
+                                                              ],
+                             "local_preparation_session_type_ids":  [
+                                                                        1
+                                                                    ],
+                             "signers_optional_for_administrative_remission":  true,
+                             "schema_applied":  false,
+                             "docker_allowed":  false,
+                             "remaining_condition":  "Restaurar y verificar el respaldo en PostgreSQL aislado nativo antes de aplicar el SQL mínimo autorizado.",
+                             "current_tests":  {
+                                                   "database":  "sqlite_memory",
+                                                   "passed":  54,
+                                                   "assertions":  706,
+                                                   "failed":  0,
+                                                   "institutional_writes":  false
+                                               }
+                         },
+    "restore_destination_check":  {
+                                      "checked_at":  "2026-11-10T23:20:07+00:00",
+                                      "identity":  {
+                                                       "database":  "certificados_morales",
+                                                       "role":  "equipo_dev",
+                                                       "version":  "PostgreSQL 15.19 (a434678) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit"
+                                                   },
+                                      "permissions":  {
+                                                          "rolcreatedb":  false,
+                                                          "rolsuper":  false
+                                                      },
+                                      "databases":  [
+                                                        {
+                                                            "datname":  "postgres",
+                                                            "datallowconn":  true
+                                                        },
+                                                        {
+                                                            "datname":  "certificados_morales",
+                                                            "datallowconn":  true
+                                                        }
+                                                    ],
+                                      "certificate_columns":  [
+                                                                  {
+                                                                      "column_name":  "fecha_emision",
+                                                                      "is_nullable":  "NO"
+                                                                  }
+                                                              ],
+                                      "counts":  {
+                                                     "certificados":  0,
+                                                     "documentos":  0,
+                                                     "firmas":  0,
+                                                     "asignaciones":  0
+                                                 },
+                                      "local_preparation_session_type_ids":  [
+                                                                                 1
+                                                                             ],
+                                      "source_writes":  false,
+                                      "restore_attempted":  false,
+                                      "schema_applied":  false,
+                                      "missing_requirement":  "Una base nueva y vacía exclusiva de restauración, accesible con credenciales que permitan restaurar esquemas, tablas, datos y restricciones. equipo_dev no dispone de CREATEDB. No usar postgres ni certificados_morales como destino."
+                                  },
+    "direct_activation_check":  {
+                                    "checked_at":  "2026-11-10T23:28:32+00:00",
+                                    "environment":  "local",
+                                    "identity":  {
+                                                     "database":  "certificados_morales",
+                                                     "role":  "equipo_dev",
+                                                     "version":  "PostgreSQL 15.19 (a434678) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit"
+                                                 },
+                                    "columns":  [
+                                                    {
+                                                        "column_name":  "id_asistencia",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "id_participacion",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "id_actividad_sesion",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "hora_entrada",
+                                                        "data_type":  "time without time zone",
+                                                        "is_nullable":  "YES"
+                                                    },
+                                                    {
+                                                        "column_name":  "hora_salida",
+                                                        "data_type":  "time without time zone",
+                                                        "is_nullable":  "YES"
+                                                    },
+                                                    {
+                                                        "column_name":  "estado",
+                                                        "data_type":  "character varying",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "id_certificado",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "id_persona",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "id_tipo_certificado",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "id_reconocimiento",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "YES"
+                                                    },
+                                                    {
+                                                        "column_name":  "id_participacion",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "YES"
+                                                    },
+                                                    {
+                                                        "column_name":  "id_practica",
+                                                        "data_type":  "bigint",
+                                                        "is_nullable":  "YES"
+                                                    },
+                                                    {
+                                                        "column_name":  "fecha_emision",
+                                                        "data_type":  "date",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "estado",
+                                                        "data_type":  "character varying",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "notificado",
+                                                        "data_type":  "boolean",
+                                                        "is_nullable":  "NO"
+                                                    },
+                                                    {
+                                                        "column_name":  "fecha_notificacion",
+                                                        "data_type":  "timestamp without time zone",
+                                                        "is_nullable":  "YES"
+                                                    }
+                                                ],
+                                    "constraints":  [
+                                                        {
+                                                            "conname":  "asistencia_id_participacion_id_actividad_sesion_unique",
+                                                            "convalidated":  true,
+                                                            "table_name":  "asistencia",
+                                                            "definition":  "UNIQUE (id_participacion, id_actividad_sesion)"
+                                                        },
+                                                        {
+                                                            "conname":  "asistencia_pkey",
+                                                            "convalidated":  true,
+                                                            "table_name":  "asistencia",
+                                                            "definition":  "PRIMARY KEY (id_asistencia)"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_asistencia_id_actividad_sesion_foreign",
+                                                            "convalidated":  true,
+                                                            "table_name":  "asistencia",
+                                                            "definition":  "FOREIGN KEY (id_actividad_sesion) REFERENCES actividad_sesion(id_actividad_sesion) ON DELETE CASCADE"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_asistencia_id_participacion_foreign",
+                                                            "convalidated":  true,
+                                                            "table_name":  "asistencia",
+                                                            "definition":  "FOREIGN KEY (id_participacion) REFERENCES participacion(id_participacion) ON DELETE CASCADE"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_certificado_id_participacion_foreign",
+                                                            "convalidated":  true,
+                                                            "table_name":  "certificado",
+                                                            "definition":  "FOREIGN KEY (id_participacion) REFERENCES participacion(id_participacion)"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_certificado_id_persona_foreign",
+                                                            "convalidated":  true,
+                                                            "table_name":  "certificado",
+                                                            "definition":  "FOREIGN KEY (id_persona) REFERENCES persona(id_persona)"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_certificado_id_practica_foreign",
+                                                            "convalidated":  true,
+                                                            "table_name":  "certificado",
+                                                            "definition":  "FOREIGN KEY (id_practica) REFERENCES practica(id_practica)"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_certificado_id_reconocimiento_foreign",
+                                                            "convalidated":  true,
+                                                            "table_name":  "certificado",
+                                                            "definition":  "FOREIGN KEY (id_reconocimiento) REFERENCES reconocimiento(id_reconocimiento)"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_certificado_id_tipo_certificado_foreign",
+                                                            "convalidated":  true,
+                                                            "table_name":  "certificado",
+                                                            "definition":  "FOREIGN KEY (id_tipo_certificado) REFERENCES tipo_certificado(id_tipo_certificado)"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_origen_check",
+                                                            "convalidated":  true,
+                                                            "table_name":  "certificado",
+                                                            "definition":  "CHECK ((((\nCASE\n    WHEN (id_reconocimiento IS NOT NULL) THEN 1\n    ELSE 0\nEND +\nCASE\n    WHEN (id_participacion IS NOT NULL) THEN 1\n    ELSE 0\nEND) +\nCASE\n    WHEN (id_practica IS NOT NULL) THEN 1\n    ELSE 0\nEND) = 1))"
+                                                        },
+                                                        {
+                                                            "conname":  "certificado_pkey",
+                                                            "convalidated":  true,
+                                                            "table_name":  "certificado",
+                                                            "definition":  "PRIMARY KEY (id_certificado)"
+                                                        }
+                                                    ],
+                                    "indexes":  [
+                                                    {
+                                                        "relname":  "asistencia_id_participacion_id_actividad_sesion_unique",
+                                                        "indisunique":  true,
+                                                        "indisvalid":  true,
+                                                        "indisready":  true,
+                                                        "definition":  "CREATE UNIQUE INDEX asistencia_id_participacion_id_actividad_sesion_unique ON certificado.asistencia USING btree (id_participacion, id_actividad_sesion)"
+                                                    },
+                                                    {
+                                                        "relname":  "asistencia_pkey",
+                                                        "indisunique":  true,
+                                                        "indisvalid":  true,
+                                                        "indisready":  true,
+                                                        "definition":  "CREATE UNIQUE INDEX asistencia_pkey ON certificado.asistencia USING btree (id_asistencia)"
+                                                    },
+                                                    {
+                                                        "relname":  "certificado_pkey",
+                                                        "indisunique":  true,
+                                                        "indisvalid":  true,
+                                                        "indisready":  true,
+                                                        "definition":  "CREATE UNIQUE INDEX certificado_pkey ON certificado.certificado USING btree (id_certificado)"
+                                                    }
+                                                ],
+                                    "migration_tables":  [
+                                                             {
+                                                                 "schemaname":  "public",
+                                                                 "tablename":  "migrations"
+                                                             }
+                                                         ],
+                                    "ownership":  {
+                                                      "owns_table":  false
+                                                  },
+                                    "duplicates":  [
+
+                                                   ],
+                                    "mismatches":  {
+                                                       "total":  0
+                                                   },
+                                    "snapshots":  {
+                                                      "acceso.modulo":  {
+                                                                            "count":  16,
+                                                                            "digest":  "fe12cdf4758c6622d9024babb6599751"
+                                                                        },
+                                                      "acceso.permiso":  {
+                                                                             "count":  71,
+                                                                             "digest":  "53cc3505a16c19f931ccfb3b3703bbe5"
+                                                                         },
+                                                      "acceso.rol":  {
+                                                                         "count":  3,
+                                                                         "digest":  "d68a8b3d030464b25d7559a9225d9383"
+                                                                     },
+                                                      "acceso.rol_modulo":  {
+                                                                                "count":  26,
+                                                                                "digest":  "ee65f92af31d36bc8c90c1c04a32c415"
+                                                                            },
+                                                      "acceso.rol_modulo_permiso":  {
+                                                                                        "count":  113,
+                                                                                        "digest":  "6f68f1a75302540e8f0bdcc2c0cb3302"
+                                                                                    },
+                                                      "acceso.usuario":  {
+                                                                             "count":  3,
+                                                                             "digest":  "efc799ac2ab5f54a8010a84b34881a07"
+                                                                         },
+                                                      "acceso.usuario_rol":  {
+                                                                                 "count":  3,
+                                                                                 "digest":  "05a906e1ddd2c656640aa47c84acede5"
+                                                                             },
+                                                      "certificado.actividad":  {
+                                                                                    "count":  2,
+                                                                                    "digest":  "174672f9c896d8c753661c3d36a537af"
+                                                                                },
+                                                      "certificado.actividad_firma":  {
+                                                                                          "count":  0,
+                                                                                          "digest":  "d41d8cd98f00b204e9800998ecf8427e"
+                                                                                      },
+                                                      "certificado.actividad_ponente":  {
+                                                                                            "count":  1,
+                                                                                            "digest":  "3a17ed25361e5ea630b99669770795be"
+                                                                                        },
+                                                      "certificado.actividad_sesion":  {
+                                                                                           "count":  2,
+                                                                                           "digest":  "c8babe061def8603060523e5fb94a9b6"
+                                                                                       },
+                                                      "certificado.asistencia":  {
+                                                                                     "count":  3,
+                                                                                     "digest":  "4eaf89999e4e4a8a5c088ce25ba32595"
+                                                                                 },
+                                                      "certificado.certificado":  {
+                                                                                      "count":  0,
+                                                                                      "digest":  "d41d8cd98f00b204e9800998ecf8427e"
+                                                                                  },
+                                                      "certificado.certificado_documento":  {
+                                                                                                "count":  0,
+                                                                                                "digest":  "d41d8cd98f00b204e9800998ecf8427e"
+                                                                                            },
+                                                      "certificado.certificado_firma":  {
+                                                                                            "count":  0,
+                                                                                            "digest":  "d41d8cd98f00b204e9800998ecf8427e"
+                                                                                        },
+                                                      "certificado.consulta_certificado":  {
+                                                                                               "count":  0,
+                                                                                               "digest":  "d41d8cd98f00b204e9800998ecf8427e"
+                                                                                           },
+                                                      "certificado.firma":  {
+                                                                                "count":  0,
+                                                                                "digest":  "d41d8cd98f00b204e9800998ecf8427e"
+                                                                            },
+                                                      "certificado.participacion":  {
+                                                                                        "count":  3,
+                                                                                        "digest":  "0c4e760d7df3ad4a8f513b0691609a61"
+                                                                                    },
+                                                      "certificado.reconocimiento":  {
+                                                                                         "count":  1,
+                                                                                         "digest":  "5def5438b25ba8ad64bdc4494083123a"
+                                                                                     },
+                                                      "certificado.solicitud_actividad":  {
+                                                                                              "count":  1,
+                                                                                              "digest":  "e0c127fbebb35ee4cef30a1c65e8fa87"
+                                                                                          },
+                                                      "certificado.solicitud_decision":  {
+                                                                                             "count":  3,
+                                                                                             "digest":  "747af803798f5700b14932df71ad25d9"
+                                                                                         },
+                                                      "certificado.tipo_actividad":  {
+                                                                                         "count":  1,
+                                                                                         "digest":  "9d911793eafb6ab1ceb8106ccbc96266"
+                                                                                     },
+                                                      "certificado.tipo_certificado":  {
+                                                                                           "count":  3,
+                                                                                           "digest":  "b5304adfab4a01bebc9bb1413c2e349a"
+                                                                                       },
+                                                      "certificado.tipo_participacion":  {
+                                                                                             "count":  2,
+                                                                                             "digest":  "e1c9add5047695d170a2e91de32a3d05"
+                                                                                         },
+                                                      "gestion.area":  {
+                                                                           "count":  10,
+                                                                           "digest":  "229d21cc30bca510ba044b402d23bb5e"
+                                                                       },
+                                                      "gestion.institucion":  {
+                                                                                  "count":  1,
+                                                                                  "digest":  "261a235f3798c8d8c476705b6729747d"
+                                                                              },
+                                                      "gestion.persona":  {
+                                                                              "count":  3,
+                                                                              "digest":  "a893272d84c8000c158c427b5478ca31"
+                                                                          },
+                                                      "gestion.persona_documento":  {
+                                                                                        "count":  3,
+                                                                                        "digest":  "a5affb78cfc94714d997ae0aba3f6973"
+                                                                                    },
+                                                      "gestion.persona_ponente":  {
+                                                                                      "count":  2,
+                                                                                      "digest":  "7eaa0157157003974b41c38bf3d9a0ce"
+                                                                                  },
+                                                      "gestion.persona_practicante":  {
+                                                                                          "count":  2,
+                                                                                          "digest":  "e4be6dfbfaba6ac9e0711cb693190b8b"
+                                                                                      },
+                                                      "gestion.persona_trabajador":  {
+                                                                                         "count":  4,
+                                                                                         "digest":  "8b1ea7d4c01cc5d1321960e2f54319cc"
+                                                                                     },
+                                                      "gestion.practica":  {
+                                                                               "count":  1,
+                                                                               "digest":  "c9449f0dc325b20612b741cbd92ba18a"
+                                                                           },
+                                                      "gestion.practica_supervisor":  {
+                                                                                          "count":  1,
+                                                                                          "digest":  "9be92eab883e68e4065171e6da52d684"
+                                                                                      },
+                                                      "gestion.tipo_documento":  {
+                                                                                     "count":  3,
+                                                                                     "digest":  "c309e680c1e5a9dd678bec026448a7a8"
+                                                                                 }
+                                                  },
+                                    "preparation_type_ids":  [
+                                                                 1
+                                                             ]
+                                },
+    "current_activation_status":  {
+                                      "checked_at":  "2026-11-10T23:31:49.6372177Z",
+                                      "backup_deleted_by_user_request":  true,
+                                      "backup_available":  false,
+                                      "direct_execution_authorized":  true,
+                                      "migration":  "database/migrations/2026_11_10_232757_enable_session_certificate_stage_a.php",
+                                      "pretend_only":  true,
+                                      "schema_applied":  false,
+                                      "database":  "certificados_morales",
+                                      "role":  "equipo_dev",
+                                      "table_owner":  "certificados_morales_owner",
+                                      "member_of_owner":  false,
+                                      "inherits_owner":  false,
+                                      "schema_create":  false,
+                                      "missing_requirement":  "Conexión autorizada del propietario para ejecutar ALTER TABLE. No requiere otra base, Docker ni instalación."
+                                  }
+}

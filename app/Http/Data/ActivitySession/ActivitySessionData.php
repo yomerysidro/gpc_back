@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\ActivitySession;
 
+use App\Services\CertificationReadiness;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -26,6 +27,8 @@ class ActivitySessionData
                 ->when($areaIds !== null, fn ($query) => $query->whereIn('id_actividad', DB::table('certificado.actividad')->select('id_actividad')->whereIn('id_area', $areaIds)))
                 ->orderBy('id_actividad_sesion', 'desc')
                 ->get();
+
+            app(CertificationReadiness::class)->addAttendanceCounters($activitySessions->all());
 
             return ['success' => true, 'message' => 'Sesiones de actividad obtenidas correctamente.', 'data' => $activitySessions];
         } catch (Throwable $e) {
@@ -55,6 +58,8 @@ class ActivitySessionData
             if (! $activitySession) {
                 return ['success' => false, 'message' => 'Sesión de actividad no encontrada.', 'status' => 404];
             }
+
+            app(CertificationReadiness::class)->addAttendanceCounters([$activitySession]);
 
             return ['success' => true, 'message' => 'Sesión de actividad obtenida correctamente.', 'data' => $activitySession];
         } catch (Throwable $e) {
@@ -152,6 +157,12 @@ class ActivitySessionData
                 'estado',
             ]));
 
+            if ($activitySession->estado === CertificationReadiness::FINAL_SESSION_STATE && $updateData !== []) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'La sesión finalizada requiere un procedimiento de rectificación.', 'status' => 409];
+            }
+
             self::validateBusinessRules(array_replace((array) $activitySession, $updateData));
 
             if (isset($updateData['id_actividad']) && (string) $updateData['id_actividad'] !== (string) $activitySession->id_actividad
@@ -237,10 +248,11 @@ class ActivitySessionData
                 return ['success' => false, 'message' => 'Sesión de actividad no encontrada.', 'status' => 404];
             }
 
-            if (DB::table('certificado.asistencia')->where('id_actividad_sesion', $id)->exists()) {
+            if ($activitySession->estado === CertificationReadiness::FINAL_SESSION_STATE
+                || DB::table('certificado.asistencia')->where('id_actividad_sesion', $id)->exists()) {
                 DB::rollBack();
 
-                return ['success' => false, 'message' => 'No se puede eliminar la sesión porque tiene asistencias relacionadas.', 'status' => 409];
+                return ['success' => false, 'message' => 'No se puede eliminar una sesión finalizada o con asistencias relacionadas.', 'status' => 409];
             }
 
             DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $id)->delete();
@@ -269,6 +281,10 @@ class ActivitySessionData
     private static function validateBusinessRules(array $data): void
     {
         $errors = [];
+
+        if (($data['estado'] ?? null) === CertificationReadiness::FINAL_SESSION_STATE) {
+            $errors['estado'] = ['Utilice la operación de finalizar sesión; el CRUD no puede consolidar asistencias.'];
+        }
 
         $activity = DB::table('certificado.actividad')
             ->select('id_actividad', 'fecha_inicio', 'fecha_fin')

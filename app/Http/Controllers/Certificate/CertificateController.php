@@ -3,11 +3,14 @@
 namespace App\Http\Controllers\Certificate;
 
 use App\Data\Certificate\CertificateData;
+use App\Http\Controllers\Certification\CertificateHumanResourcesController;
 use App\Http\Controllers\Controller;
 use App\Models\Certificate\Certificate;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 
 class CertificateController extends Controller
 {
@@ -15,11 +18,21 @@ class CertificateController extends Controller
 
     public function list()
     {
+        if (Schema::hasColumn('certificado.certificado', 'id_actividad_sesion')) {
+            return app(CertificateHumanResourcesController::class)->catalog(request(), certificates: true);
+        }
+
         return $this->respond('viewAny', fn () => CertificateData::list(request()->query()));
     }
 
     public function detail($id)
     {
+        if (ctype_digit((string) $id) && Gate::allows('viewAny', Certificate::class)
+            && Schema::hasColumn('certificado.certificado', 'id_actividad_sesion')
+            && DB::table('certificado.certificado')->where('id_certificado', $id)->whereIn('estado', ['PREPARADO', 'PENDIENTE_FIRMA'])->exists()) {
+            return app(CertificateHumanResourcesController::class)->preparedCertificate(request(), (int) $id);
+        }
+
         return $this->respond('view', fn () => CertificateData::detail($id), $id);
     }
 

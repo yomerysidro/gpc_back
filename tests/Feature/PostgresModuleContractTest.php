@@ -8,6 +8,7 @@ use App\Models\Attendance\Attendance;
 use App\Models\Certificate\Certificate;
 use App\Models\Person\Persona;
 use App\Models\Practice\Practice;
+use App\Services\CertificationReadiness;
 use Illuminate\Database\Connection;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -202,5 +203,77 @@ class PostgresModuleContractTest extends TestCase
         DB::table('certificado.certificado')->insert(['id_persona' => $ids['person'], 'id_tipo_certificado' => $ids['type'], 'id_participacion' => $participation, 'fecha_emision' => '2026-02-01', 'estado' => 'Vigente']);
         $this->deleteJson('/api/attendance/delete/'.$id)->assertConflict();
         $this->assertSame(1, DB::table('certificado.asistencia')->count());
+    }
+
+    public function test_proposed_session_identity_rejects_duplicates_and_ambiguous_contexts(): void
+    {
+        $ids = $this->origins();
+        DB::unprepared(file_get_contents(base_path('docs/session-certification-schema-proposal.sql')));
+        $activityType = DB::table('certificado.tipo_actividad')->insertGetId(['nombre' => 'Fixture', 'estado' => true], 'id_tipo_actividad');
+        $activity = DB::table('certificado.actividad')->insertGetId(['id_area' => $ids['area'], 'id_tipo_actividad' => $activityType, 'nombre' => 'Fixture', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'Activa'], 'id_actividad');
+        $otherActivity = DB::table('certificado.actividad')->insertGetId(['id_area' => $ids['area'], 'id_tipo_actividad' => $activityType, 'nombre' => 'Otra', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'Activa'], 'id_actividad');
+        $participationType = DB::table('certificado.tipo_participacion')->insertGetId(['nombre' => 'Asistente', 'estado' => true], 'id_tipo_participacion');
+        $participation = DB::table('certificado.participacion')->insertGetId(['id_persona' => $ids['person'], 'id_actividad' => $activity, 'id_tipo_participacion' => $participationType, 'fecha_inscripcion' => '2026-01-01', 'estado' => 'ACTIVO'], 'id_participacion');
+        $session = DB::table('certificado.actividad_sesion')->insertGetId(['id_actividad' => $activity, 'nombre' => 'Fixture', 'fecha' => '2026-01-20', 'hora_inicio' => '08:00', 'hora_fin' => '09:00', 'estado' => 'Finalizada'], 'id_actividad_sesion');
+        $certificate = ['id_persona' => $ids['person'], 'id_tipo_certificado' => $ids['type'], 'id_participacion' => $participation, 'id_actividad' => $activity, 'id_actividad_sesion' => $session, 'fecha_emision' => '2026-02-01', 'estado' => 'Vigente'];
+        $id = DB::table('certificado.certificado')->insertGetId($certificate, 'id_certificado');
+        $this->assertSqlState('23505', fn () => DB::table('certificado.certificado')->insert($certificate));
+        $this->assertSqlState('23514', fn () => DB::table('certificado.certificado')->where('id_certificado', $id)->update(['id_actividad' => null]));
+        $this->assertSqlState('23503', fn () => DB::table('certificado.certificado')->where('id_certificado', $id)->update(['id_actividad' => $otherActivity]));
+        $otherPerson = DB::table('gestion.persona')->insertGetId(['nombres' => 'Otra', 'apellido_paterno' => 'Prueba', 'fecha_registro' => '2026-01-01'], 'id_persona');
+        $this->assertSqlState('23503', fn () => DB::table('certificado.certificado')->where('id_certificado', $id)->update(['id_persona' => $otherPerson]));
+        $global = array_replace($certificate, ['id_actividad' => null, 'id_actividad_sesion' => null]);
+        DB::table('certificado.certificado')->insert($global);
+        $this->assertSqlState('23505', fn () => DB::table('certificado.certificado')->insert($global));
+        $this->assertSame(3, DB::table('certificado.certificado')->count());
+        $this->assertSame($ids['practice'], DB::table('certificado.certificado')->where('id_certificado', $ids['certificate'])->value('id_practica'));
+        $worker = DB::table('gestion.persona_trabajador')->insertGetId(['id_persona' => $ids['person'], 'id_area' => $ids['area'], 'cargo' => 'Fixture', 'fecha_ingreso' => '2026-01-01', 'estado' => true], 'id_persona_trabajador');
+        $recognition = DB::table('certificado.reconocimiento')->insertGetId(['id_persona_trabajador' => $worker, 'titulo' => 'Fixture', 'fecha_reconocimiento' => '2026-02-01', 'estado' => 'Vigente'], 'id_reconocimiento');
+        $recognitionCertificate = ['id_persona' => $ids['person'], 'id_tipo_certificado' => $ids['type'], 'id_reconocimiento' => $recognition, 'fecha_emision' => '2026-02-01', 'estado' => 'Vigente'];
+        DB::table('certificado.certificado')->insert($recognitionCertificate);
+        $this->assertSqlState('23505', fn () => DB::table('certificado.certificado')->insert($recognitionCertificate));
+        $this->assertSqlState('23514', fn () => DB::table('certificado.certificado')->where('id_certificado', $ids['certificate'])->update(['id_actividad' => $activity, 'id_actividad_sesion' => $session]));
+        $this->assertDatabaseHas('certificado.certificado', ['id_reconocimiento' => $recognition, 'id_actividad_sesion' => null]);
+        $this->assertDatabaseHas('certificado.actividad', ['id_actividad' => $activity, 'estado' => 'Activa']);
+    }
+
+    public function test_two_present_participants_have_consistent_counters_and_individual_idempotent_closure(): void
+    {
+        $ids = $this->origins();
+        $activityType = DB::table('certificado.tipo_actividad')->insertGetId(['nombre' => 'Fixture', 'estado' => true], 'id_tipo_actividad');
+        $activity = DB::table('certificado.actividad')->insertGetId(['id_area' => $ids['area'], 'id_tipo_actividad' => $activityType, 'nombre' => 'Fixture', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'Activa'], 'id_actividad');
+        $participationType = DB::table('certificado.tipo_participacion')->insertGetId(['nombre' => 'Asistente', 'estado' => true], 'id_tipo_participacion');
+        $session = DB::table('certificado.actividad_sesion')->insertGetId(['id_actividad' => $activity, 'nombre' => 'Primera', 'fecha' => '2026-01-20', 'hora_inicio' => '08:00', 'hora_fin' => '09:00', 'estado' => 'Activo'], 'id_actividad_sesion');
+        $otherSession = DB::table('certificado.actividad_sesion')->insertGetId(['id_actividad' => $activity, 'nombre' => 'Segunda', 'fecha' => '2026-01-21', 'hora_inicio' => '08:00', 'hora_fin' => '09:00', 'estado' => 'Activo'], 'id_actividad_sesion');
+        $secondPerson = DB::table('gestion.persona')->insertGetId(['nombres' => 'Segunda', 'apellido_paterno' => 'Prueba', 'fecha_registro' => '2026-01-01'], 'id_persona');
+        foreach ([$ids['person'], $secondPerson] as $person) {
+            $participation = DB::table('certificado.participacion')->insertGetId(['id_persona' => $person, 'id_actividad' => $activity, 'id_tipo_participacion' => $participationType, 'fecha_inscripcion' => '2026-01-01', 'estado' => 'Activo'], 'id_participacion');
+            DB::table('certificado.asistencia')->insert(['id_participacion' => $participation, 'id_actividad_sesion' => $session, 'estado' => 'PRESENTE']);
+            $this->assertSqlState('23505', fn () => DB::table('certificado.asistencia')->insert(['id_participacion' => $participation, 'id_actividad_sesion' => $session, 'estado' => 'PRESENTE']));
+        }
+        /** The base DDL predates requests; this isolated fixture supplies the fields read by closure. */
+        DB::statement('CREATE TABLE certificado.solicitud_actividad (id_solicitud_actividad BIGINT PRIMARY KEY, id_actividad BIGINT REFERENCES certificado.actividad(id_actividad), estado VARCHAR(30) NOT NULL)');
+        DB::table('certificado.solicitud_actividad')->insert(['id_solicitud_actividad' => 1, 'id_actividad' => $activity, 'estado' => 'Aprobada']);
+        $readiness = app(CertificationReadiness::class);
+        config(['certification.session_closure' => null]);
+        self::assertFalse($readiness->finalize($session, 1, [$ids['area']])['finalizada']);
+        config(['certification.session_closure' => [
+            'reference' => 'EXCLUSIVA DE PRUEBAS, sin validez institucional',
+            'final_state' => 'Finalizada',
+            'open_states' => ['Activo'], 'active_participation_states' => ['Activo'],
+            'eligible_attendance_states' => ['PRESENTE'], 'ineligible_attendance_states' => ['AUSENTE'],
+            'require_entry' => false, 'require_exit' => false, 'regularizations' => 'not_applicable',
+        ]]);
+        foreach ([1, 2] as $attempt) {
+            $result = $readiness->finalize($session, 1, [$ids['area']]);
+            self::assertTrue($result['finalizada']);
+            self::assertSame('Activa', $result['estado_actividad']);
+            self::assertSame('Finalizada', $result['sesion']->estado);
+            self::assertSame(2, $result['sesion']->contadores['inscritos_actividad_vigentes']);
+            self::assertSame(2, $result['sesion']->contadores['presentes']);
+            self::assertSame(0, $result['sesion']->contadores['pendientes']);
+        }
+        self::assertSame('Activo', DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $otherSession)->value('estado'));
+        self::assertSame(1, DB::table('certificado.certificado')->count());
     }
 }

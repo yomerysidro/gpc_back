@@ -3,6 +3,7 @@
 namespace App\Http\Data\Attendance;
 
 use App\Http\Data\GestionIntegrity;
+use App\Services\CertificationReadiness;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -13,11 +14,14 @@ class AttendanceData
     /**
      * Listar todas las asistencias.
      */
-    public static function getAttendances(?array $areaIds = null): array
+    public static function getAttendances(?array $areaIds = null, array $filters = []): array
     {
         try {
             $attendances = self::attendanceQuery()
                 ->when($areaIds !== null, fn (Builder $query) => $query->whereIn('participacion.id_actividad', DB::table('certificado.actividad')->select('id_actividad')->whereIn('id_area', $areaIds)))
+                ->when(isset($filters['id_actividad']), fn (Builder $query) => $query->where('participacion.id_actividad', $filters['id_actividad']))
+                ->when(isset($filters['id_actividad_sesion']), fn (Builder $query) => $query->where('asistencia.id_actividad_sesion', $filters['id_actividad_sesion']))
+                ->when(isset($filters['id_participacion']), fn (Builder $query) => $query->where('asistencia.id_participacion', $filters['id_participacion']))
                 ->orderBy('asistencia.id_asistencia', 'desc')
                 ->get();
 
@@ -177,7 +181,16 @@ class AttendanceData
                 $updateData
             );
 
-            self::validateBusinessRules($finalData);
+            if (DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $attendance->id_actividad_sesion)
+                ->sharedLock()->value('estado') === CertificationReadiness::FINAL_SESSION_STATE) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'La sesión está finalizada; se requiere regularización autorizada.', 'status' => 409];
+            }
+
+            self::validateBusinessRules(isset($data['ID_ACTIVIDAD'])
+                ? [...$finalData, 'ID_ACTIVIDAD' => $data['ID_ACTIVIDAD']]
+                : $finalData);
 
             if (DB::table('certificado.certificado')->whereIn('id_participacion', [$attendance->id_participacion, $finalData['ID_PARTICIPACION']])->lockForUpdate()->exists()) {
                 DB::rollBack();
@@ -262,6 +275,12 @@ class AttendanceData
             }
 
             DB::table('certificado.participacion')->where('id_participacion', $attendance->id_participacion)->lockForUpdate()->first();
+            if (DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $attendance->id_actividad_sesion)
+                ->sharedLock()->value('estado') === CertificationReadiness::FINAL_SESSION_STATE) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'La sesión está finalizada; no se puede eliminar su asistencia.', 'status' => 409];
+            }
             if (DB::table('certificado.certificado')->where('id_participacion', $attendance->id_participacion)->lockForUpdate()->exists()) {
                 DB::rollBack();
 
@@ -325,11 +344,18 @@ class AttendanceData
             ];
         }
 
+        if ($activitySession && $activitySession->estado === CertificationReadiness::FINAL_SESSION_STATE) {
+            $errors['ID_ACTIVIDAD_SESION'] = ['La sesión está finalizada; se requiere un procedimiento de regularización autorizado.'];
+        }
+
         /**
          * Verificar que la participación y la sesión
          * pertenezcan a la misma actividad.
          */
         if ($participation && $activitySession) {
+            if (isset($data['ID_ACTIVIDAD']) && (int) $data['ID_ACTIVIDAD'] !== (int) $participation->id_actividad) {
+                $errors['ID_ACTIVIDAD'] = ['La actividad indicada no corresponde a la participación.'];
+            }
             if (
                 (string) $participation->id_actividad !==
                 (string) $activitySession->id_actividad

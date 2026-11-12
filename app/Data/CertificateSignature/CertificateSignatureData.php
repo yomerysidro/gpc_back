@@ -62,6 +62,9 @@ class CertificateSignatureData
             }
             $filters = Validator::make($filters, $rules)->validate();
             $query = DB::table(self::TABLE)->select(self::columns());
+            if (Schema::hasColumn(self::TABLE, 'estado_firma')) {
+                $query->whereNull('estado_firma');
+            }
             foreach ($filters as $field => $value) {
                 if (array_key_exists($field, self::RULES)) {
                     $query->where($field, $value);
@@ -180,6 +183,9 @@ class CertificateSignatureData
         $query = DB::table(self::TABLE)->where(self::KEY, $id);
         if (! $sensitive) {
             $query->select(self::columns());
+            if (Schema::hasColumn(self::TABLE, 'estado_firma')) {
+                $query->whereNull('estado_firma');
+            }
         }
         $record = ($lock ? $query->lockForUpdate() : $query)->first();
         abort_unless($record, 404, 'Registro no encontrado.');

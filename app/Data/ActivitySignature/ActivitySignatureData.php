@@ -2,6 +2,7 @@
 
 namespace App\Data\ActivitySignature;
 
+use Illuminate\Database\Query\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -121,6 +122,9 @@ class ActivitySignatureData
         return self::execute(fn () => DB::transaction(function () use ($id) {
             self::find($id, true);
             $record = self::find($id, true);
+            $data = (array) $record;
+            self::checkRelations($data);
+            self::businessRules($data, $record);
             abort_unless(Schema::hasTable('certificado.certificado_firma'), 503, 'No se puede verificar el historial de firmas.');
             abort_if(DB::table('certificado.certificado_firma')->where('id_firma', $record->id_firma)->exists(), 409, 'La firma tiene aplicaciones históricas.');
             self::assertNoDependencies($id);
@@ -224,6 +228,12 @@ class ActivitySignatureData
 
     private static function businessRules(array &$data, ?object $record): void
     {
+        $activities = array_values(array_unique(array_filter([$data['id_actividad'] ?? null, $record?->id_actividad])));
+        abort_if(DB::table('certificado.certificado as c')->join('certificado.participacion as p', 'p.id_participacion', '=', 'c.id_participacion')
+            ->whereIn('p.id_actividad', $activities)->whereIn('c.estado', ['PREPARADO', 'PENDIENTE_FIRMA', 'FIRMADO'])
+            ->whereExists(fn (Builder $document) => $document->selectRaw('1')->from('certificado.certificado_documento as d')
+                ->whereColumn('d.id_certificado', 'c.id_certificado')->where('d.estado', 'Vigente'))->exists(), 409,
+            'Los responsables de una actividad con documentos remitidos deben conservarse.');
         // A signature already used by an issued document cannot be reassigned retroactively.
         abort_unless(Schema::hasTable('certificado.certificado_firma'), 503, 'No se puede verificar el historial de firmas.');
         if ($record) {
