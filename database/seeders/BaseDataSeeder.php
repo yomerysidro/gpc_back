@@ -103,6 +103,7 @@ class BaseDataSeeder extends Seeder
             'role' => 'Gerencial',
             'area' => 'Alcaldía',
             'position' => 'Alcalde',
+            'signs_certificates' => true,
         ],
     ];
 
@@ -226,7 +227,12 @@ class BaseDataSeeder extends Seeder
             'gestion.persona_trabajador',
             'id_persona_trabajador',
             ['id_persona' => $personId],
-            ['id_area' => $areaId, 'cargo' => $data['position'], 'estado' => true],
+            [
+                'id_area' => $areaId,
+                'cargo' => $data['position'],
+                'estado' => true,
+                'habilitado_firma_certificados' => $data['signs_certificates'] ?? false,
+            ],
             ['fecha_ingreso' => $today]
         );
 
