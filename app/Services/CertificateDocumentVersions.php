@@ -83,13 +83,23 @@ class CertificateDocumentVersions
     /** @return array<string, mixed> */
     public function approvedContent(object $document): array
     {
-        $current = $this->current($document);
+        return RequestReadMemo::remember(self::class.'.approved.'.hash('sha256', serialize([
+            $document->id_certificado_documento, $document->hash_certificado,
+        ])), fn (): array => $this->readApprovedContent($document));
+    }
+
+    /** @return array<string, mixed> */
+    private function readApprovedContent(object $document): array
+    {
+        $current = $this->current($document, readOnly: true);
         if ($current !== null) {
             return ['message' => $current['message'], 'context' => $current['context']];
         }
         $disk = Storage::disk('local');
         $originalHash = $document->hash_certificado_original ?? $document->hash_certificado;
-        foreach ($disk->files('certificados/revisiones') as $path) {
+        $indexed = 'certificados/preparados/'.$document->codigo_verificacion.'.manifest';
+        $paths = $disk->exists($indexed) ? [$indexed] : $disk->files('certificados/revisiones');
+        foreach ($paths as $path) {
             if (! str_ends_with($path, '.manifest')) {
                 continue;
             }

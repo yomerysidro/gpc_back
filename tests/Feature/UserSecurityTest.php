@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Activity\Activity;
 use App\Models\User\User;
 use App\Services\Auth\JwtService;
 use Firebase\JWT\JWT;
@@ -9,8 +10,10 @@ use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -278,6 +281,62 @@ class UserSecurityTest extends TestCase
         $this->assertSame(0, DB::transactionLevel());
     }
 
+    public function test_permission_resolution_uses_one_query_and_observes_role_revocation(): void
+    {
+        $user = $this->actor('Administrador');
+        $this->grant(['actividades.ver']);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+
+        $permissions = $user->permissionKeys();
+
+        $this->assertContains('actividades.ver', $permissions);
+        $this->assertContains('personas.crear', $permissions);
+        $this->assertCount(1, DB::getQueryLog());
+        DB::table('acceso.rol')->update(['estado' => false]);
+        $this->assertSame([], $user->permissionKeys());
+        DB::disableQueryLog();
+    }
+
+    public function test_repeated_gates_share_permissions_and_immediately_observe_role_revocation(): void
+    {
+        $user = $this->actor('Administrador');
+        $this->grant(['actividades.ver']);
+        Route::get('/permission-read-probe', function () use ($user): array {
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            $allowed = Gate::forUser($user)->allows('viewAny', Activity::class);
+            $administrator = $user->isSystemAdministrator();
+            Gate::forUser($user)->allows('viewAny', Activity::class);
+            $queries = count(DB::getQueryLog());
+            DB::table('acceso.rol')->update(['estado' => false]);
+
+            return ['allowed' => $allowed, 'administrator' => $administrator, 'queries' => $queries,
+                'after' => Gate::forUser($user)->allows('viewAny', Activity::class),
+                'administrator_after' => $user->isSystemAdministrator()];
+        });
+
+        $this->getJson('/permission-read-probe')->assertOk()->assertExactJson([
+            'allowed' => true, 'administrator' => true, 'queries' => 1, 'after' => false, 'administrator_after' => false,
+        ]);
+    }
+
+    public function test_permission_reads_are_not_shared_between_users_in_the_same_request(): void
+    {
+        $administrator = $this->actor('Administrador');
+        DB::table('acceso.usuario')->insert(['id_usuario' => 2, 'id_persona' => 1, 'correo' => 'reader@example.test', 'estado' => true]);
+        $reader = User::findOrFail(2);
+        Route::get('/permission-read-probe', fn (): array => [
+            'administrator' => Gate::forUser($administrator)->allows('viewAny', Activity::class),
+            'reader' => Gate::forUser($reader)->allows('viewAny', Activity::class),
+            'reader_is_administrator' => $reader->isSystemAdministrator(),
+        ]);
+
+        $this->getJson('/permission-read-probe')->assertOk()->assertExactJson([
+            'administrator' => true, 'reader' => false, 'reader_is_administrator' => false,
+        ]);
+    }
+
     public function test_inactive_administrator_role_does_not_authorize_role_administration(): void
     {
         $user = $this->actor('Administrador');
@@ -287,7 +346,35 @@ class UserSecurityTest extends TestCase
         DB::table('acceso.rol')->update(['estado' => true]);
         $this->cookieFor($user);
         $this->getJson('/api/roles')->assertOk();
-        $this->getJson('/api/activity')->assertForbidden();
+        $this->getJson('/api/activity')->assertOk();
+    }
+
+    public function test_administrator_can_manage_person_documents_without_catalogued_crud_permissions(): void
+    {
+        $this->cookieFor($this->actor('Administrador'));
+        Schema::create('certificado.certificado', function (Blueprint $table): void {
+            $table->increments('id_certificado');
+            $table->integer('id_persona');
+        });
+
+        $this->getJson('/api/person-documents/list')->assertOk();
+        $this->getJson('/api/person-documents/detail/1')->assertOk();
+        $this->putJson('/api/person-documents/update/1', [
+            'id_persona' => 1, 'id_tipo_documento' => 1, 'numero_documento' => '87654321', 'estado' => 'Activo',
+        ])->assertOk();
+        $this->assertDatabaseHas('gestion.persona_documento', ['id_persona_documento' => 1, 'numero_documento' => '87654321']);
+        $this->deleteJson('/api/person-documents/delete/1')->assertOk();
+        $this->assertDatabaseCount('gestion.persona_documento', 0);
+        $this->postJson('/api/person-documents/create', [
+            'id_persona' => 1, 'id_tipo_documento' => 1, 'numero_documento' => '11223344', 'estado' => 'Activo',
+        ])->assertCreated();
+        $this->assertDatabaseHas('gestion.persona_documento', ['id_persona' => 1, 'numero_documento' => '11223344']);
+        $this->getJson('/api/auth/me')->assertOk();
+        $permissions = User::findOrFail(1)->permissionKeys();
+        foreach (['personas.ver', 'personas.verpersonas', 'personas.crear', 'personas.editar', 'personas.eliminar'] as $permission) {
+            $this->assertContains($permission, $permissions);
+        }
+        $this->assertNotContains('firmas.firmar', $permissions);
     }
 
     public function test_invalid_expired_and_inactive_user_cookies_are_rejected(): void
@@ -369,13 +456,13 @@ class UserSecurityTest extends TestCase
 
     public function test_all_registered_protected_routes_reject_guests(): void
     {
-        $public = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/certificados/verificar/{code}'];
+        $public = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/certificados/verificar/{code}', 'api/certificados/consulta-dni', 'api/portal-certificados/consultar-dni'];
         $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/')));
-        $this->assertCount(204, $routes);
+        $this->assertCount(243, $routes);
         $protected = array_values(array_filter($routes, fn ($route) => ! in_array($route->uri(), $public, true)));
-        $this->assertCount(200, $protected);
+        $this->assertCount(237, $protected);
         foreach ($protected as $route) {
-            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', $route->uri());
+            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{origen}', 'reconocimiento', $route->uri()));
             $this->json($route->methods()[0], $uri)->assertUnauthorized()->assertHeaderMissing('Location');
         }
     }
@@ -383,12 +470,14 @@ class UserSecurityTest extends TestCase
     public function test_an_institutional_cookie_without_permissions_does_not_authorize_any_crud(): void
     {
         $this->cookieFor($this->actor());
-        $allowed = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/auth/me', 'api/auth/logout', 'api/certificados/verificar/{code}'];
+        $allowed = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/auth/me', 'api/auth/logout', 'api/certificados/verificar/{code}', 'api/certificados/consulta-dni', 'api/portal-certificados/consultar-dni',
+            'api/mis-certificados', 'api/mis-certificados/{id}/pdf'];
         $routes = array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/') && ! in_array($route->uri(), $allowed, true));
-        $this->assertCount(198, $routes);
+        $this->assertCount(233, $routes);
         foreach ($routes as $route) {
-            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', $route->uri());
-            $this->json($route->methods()[0], $uri)->assertForbidden();
+            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{origen}', 'reconocimiento', $route->uri()));
+            $response = $this->json($route->methods()[0], $uri);
+            $this->assertSame(403, $response->status(), $route->methods()[0].' '.$uri);
         }
     }
 

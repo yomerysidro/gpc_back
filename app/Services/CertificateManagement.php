@@ -7,14 +7,16 @@ use App\Models\ActivitySession\ActivitySession;
 use App\Models\Certificate\Certificate;
 use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\Participation\Participation;
+use App\Models\Recognition\Recognition;
 use App\Models\User\User;
+use App\Services\RequestSchema as Schema;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -32,7 +34,422 @@ class CertificateManagement
 
     private bool $schemaVerified = false;
 
+    private ?bool $minimalSchema = null;
+
     public function __construct(private CertificateDocumentGenerator $generator) {}
+
+    private function authorizeOrigin(string $origin, int $id, User $actor): object
+    {
+        $this->authorizeOriginAccess($origin, $id, $actor);
+
+        return app(CertificateOrigins::class)->context($origin, $id);
+    }
+
+    private function authorizeOriginAccess(string $origin, int $id, User $actor): void
+    {
+        foreach ([Certificate::class, CertificateDocument::class] as $model) {
+            abort_unless(Gate::forUser($actor)->allows('viewAny', $model)
+                && Gate::forUser($actor)->allows('create', $model), 403, 'No autorizado para preparar certificados.');
+        }
+        $origins = app(CertificateOrigins::class);
+        $origins->authorize($origin, $id, $actor);
+        if (in_array($origin, ['ponente_actividad', 'ponente_sesion'], true)) {
+            abort_unless(Gate::forUser($actor)->allows('create', Recognition::class),
+                403, 'No autorizado para registrar el reconocimiento municipal.');
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function activityOriginIdentity(object $context, ?int $recognitionId = null): array
+    {
+        return ! in_array($context->origen, ['ponente_actividad', 'ponente_sesion'], true) ? [] : [
+            'origen' => $context->origen, 'modalidad_reconocimiento' => $context->modalidad_reconocimiento,
+            'id_actividad_ponente' => $context->id_actividad_ponente, 'id_actividad' => $context->id_actividad,
+            'actividad' => $context->actividad, 'id_sesion' => $context->id_sesion, 'id_reconocimiento' => $recognitionId,
+        ];
+    }
+
+    /** @param array{mensaje: string, motivo: string}|null $text
+     * @return array<string, mixed>
+     */
+    public function reviewOrigin(string $origin, int $id, User $actor, ?array $text = null): array
+    {
+        return $origin === 'ponente_sesion'
+            ? $this->withSessionReviewLock($id, $actor, fn (): array => $this->reviewOriginUnlocked($origin, $id, $actor, $text))
+            : $this->reviewOriginUnlocked($origin, $id, $actor, $text);
+    }
+
+    /** @param array{mensaje: string, motivo: string}|null $text
+     * @return array<string, mixed>
+     */
+    private function reviewOriginUnlocked(string $origin, int $id, User $actor, ?array $text): array
+    {
+        $started = microtime(true);
+        if ($origin === 'ponente_sesion') {
+            $existing = $this->consultSessionRecognition($id, $actor, $text, true);
+            if ($existing['recuperado']) {
+                return $existing;
+            }
+        }
+        $context = $this->authorizeOrigin($origin, $id, $actor);
+        $contextFinished = microtime(true);
+        $origins = app(CertificateOrigins::class);
+        $existing = in_array($origin, ['ponente_actividad', 'ponente_sesion'], true) ? $origins->activityCertificates($context) : collect();
+        if ($origin === 'ponente_sesion' && $existing->isNotEmpty()) {
+            return $this->recoverSessionRecognition($existing, $actor, $text);
+        }
+        abort_if(in_array($origin, ['ponente_actividad', 'ponente_sesion'], true) ? $existing->isNotEmpty()
+            : DB::table('certificado.certificado')->where('id_'.$origin, $id)
+                ->where('id_tipo_certificado', $context->id_tipo_certificado)->exists(),
+            409, 'Ya existe un certificado de este origen y tipo; consulte el catálogo existente.');
+        if ($origin === 'ponente_sesion' && $text === null) {
+            $text = ['mensaje' => $origins->message($context), 'motivo' => $origins->recognitionMotive($context)];
+        }
+        $context = $origins->withSessionRecognitionText($context, $text);
+        $message = $origins->message($context);
+        if ($origin === 'ponente_sesion') {
+            $previous = $this->reusableSessionReview($id, $actor, $context);
+            if ($previous !== null) {
+                return $previous;
+            }
+        }
+        $eligibilityFinished = microtime(true);
+        $token = bin2hex(random_bytes(32));
+        $code = bin2hex(random_bytes(15));
+        $tokenFinished = microtime(true);
+        $pdf = $this->generator->reviewPdf($context, $message, $code, []);
+        $pdfFinished = microtime(true);
+        $manifest = ['actor' => (int) $actor->getAuthIdentifier(), 'context' => (array) $context,
+            'message' => $message, 'code' => $code, 'hash' => hash('sha256', $pdf),
+            'template_hash' => hash_file('sha256', resource_path('views/certificates/origins.blade.php')),
+            'expires' => now()->addMinutes(30)->timestamp];
+        if ($origin === 'ponente_sesion') {
+            $manifest['revision_ponente_sesion'] = 1;
+        }
+        $path = 'certificados/revisiones/'.hash('sha256', $token);
+        $created = [];
+        $reservationStarted = microtime(true);
+        try {
+            $this->writeExclusive($path.'.pdf', $pdf, function () use (&$created, $path): void {
+                $created[] = $path.'.pdf';
+            });
+            $this->writeExclusive($path.'.manifest', Crypt::encryptString(json_encode($manifest, JSON_THROW_ON_ERROR)), function () use (&$created, $path): void {
+                $created[] = $path.'.manifest';
+            });
+            if ($origin === 'ponente_sesion') {
+                abort_unless(Storage::disk('local')->put($this->sessionRecognitionReviewPointer($id, $actor),
+                    Crypt::encryptString(json_encode(['token' => $token], JSON_THROW_ON_ERROR))), 503, 'No se pudo conservar la revisión vigente.');
+            }
+        } catch (Throwable $exception) {
+            Storage::disk('local')->delete($created);
+            throw $exception;
+        }
+
+        if (app()->environment('local', 'testing')) {
+            Log::debug('certificado.revision.tiempos', ['contexto_ms' => ($contextFinished - $started) * 1000,
+                'elegibilidad_ms' => ($eligibilityFinished - $contextFinished) * 1000, 'pdf_ms' => ($pdfFinished - $tokenFinished) * 1000,
+                'token_ms' => ($tokenFinished - $eligibilityFinished) * 1000, 'reserva_ms' => (microtime(true) - $reservationStarted) * 1000]);
+        }
+
+        return $this->originReviewResult($context, $token, $manifest, $pdf);
+    }
+
+    /** @param array<string, mixed> $manifest
+     * @return array<string, mixed>
+     */
+    private function originReviewResult(object $context, string $token, array $manifest, string $pdf): array
+    {
+        $origin = $context->origen;
+        $origins = app(CertificateOrigins::class);
+
+        return ['modo' => 'administrativo', 'persistido' => false, 'token_revision' => $token,
+            'origen' => $origin, 'id_origen' => $context->id_origen, 'mensaje' => $manifest['message'], 'hash_pdf' => $manifest['hash'],
+            'expires_at' => date(DATE_ATOM, $manifest['expires']),
+            'vista_previa_pdf' => ['contenido_base64' => base64_encode($pdf), 'tipo_contenido' => 'application/pdf'],
+            ...$this->activityOriginIdentity($context),
+            ...($origin === 'ponente_sesion' ? ['motivo' => $origins->recognitionMotive($context), 'texto_editable' => true,
+                'mensaje_estructurado_disponible' => true,
+                'requiere_confirmacion' => true, 'recuperado' => false] : [])];
+    }
+
+    private function sessionRecognitionReviewPointer(int $id, User $actor): string
+    {
+        return 'certificados/revisiones/ponente-sesion-'.hash('sha256', $actor->getAuthIdentifier().'|'.$id).'.current';
+    }
+
+    /** @return array<string, mixed>|null */
+    private function reusableSessionReview(int $id, User $actor, object $context): ?array
+    {
+        $disk = Storage::disk('local');
+        $pointer = $this->sessionRecognitionReviewPointer($id, $actor);
+        if (! $disk->exists($pointer)) {
+            return null;
+        }
+        try {
+            $record = json_decode(Crypt::decryptString($disk->get($pointer)), true, 512, JSON_THROW_ON_ERROR);
+            $token = $record['token'] ?? null;
+            if (! is_string($token) || preg_match('/^[a-f0-9]{64}$/D', $token) !== 1) {
+                return null;
+            }
+            $path = 'certificados/revisiones/'.hash('sha256', $token);
+            if (! $disk->exists($path.'.manifest') || ! $disk->exists($path.'.pdf')) {
+                return null;
+            }
+            $manifest = json_decode(Crypt::decryptString($disk->get($path.'.manifest')), true, 512, JSON_THROW_ON_ERROR);
+            if (($manifest['actor'] ?? null) !== (int) $actor->getAuthIdentifier() || ($manifest['context'] ?? null) !== (array) $context
+                || ($manifest['expires'] ?? 0) <= now()->timestamp
+                || ($manifest['template_hash'] ?? null) !== hash_file('sha256', resource_path('views/certificates/origins.blade.php'))) {
+                return null;
+            }
+            $pdf = $disk->get($path.'.pdf');
+            if (! str_starts_with($pdf, '%PDF-') || ! hash_equals($manifest['hash'], hash('sha256', $pdf))) {
+                return null;
+            }
+        } catch (Throwable) {
+            return null;
+        }
+
+        return [...$this->originReviewResult($context, $token, $manifest, $pdf), 'revision_reutilizada' => true];
+    }
+
+    /** @return array<string, mixed> */
+    private function withSessionReviewLock(int $id, User $actor, callable $operation): array
+    {
+        $disk = Storage::disk('local');
+        $path = $this->sessionRecognitionReviewPointer($id, $actor).'.lock';
+        abort_unless($disk->makeDirectory(dirname($path)), 503, 'No se pudo preparar el almacenamiento privado.');
+        $stream = @fopen($disk->path($path), 'c+b');
+        abort_unless(is_resource($stream), 503, 'No se pudo abrir la reserva de revisión.');
+        try {
+            abort_unless(flock($stream, LOCK_EX | LOCK_NB), 409, 'Ya hay una revisión de este reconocimiento en curso.');
+
+            return $operation();
+        } finally {
+            flock($stream, LOCK_UN);
+            fclose($stream);
+        }
+    }
+
+    /** @param Collection<int, object> $certificates
+     * @param  array{mensaje: string, motivo: string}|null  $text
+     * @return array<string, mixed>
+     */
+    private function recoverSessionRecognition(Collection $certificates, User $actor, ?array $text, bool $includePdf = true): array
+    {
+        abort_unless($certificates->count() === 1 && $certificates->first()->estado !== 'ANULADO', 409,
+            'No existe una preparación vigente e inequívoca recuperable.');
+        $documents = DB::table('certificado.certificado_documento')->where('id_certificado', $certificates->first()->id_certificado)
+            ->where('estado', 'Vigente')->get();
+        abort_unless($documents->count() === 1, 409, 'El certificado no tiene un documento vigente inequívoco.');
+        $workflow = app(CertificateDocumentWorkflow::class);
+        $document = $this->generator->authorizedArtifact($workflow->document((int) $documents->first()->id_certificado_documento, $actor), readOnly: true);
+        $saved = app(CertificateOrigins::class)->savedSessionRecognitionText(app(CertificateDocumentVersions::class)->approvedContent($document));
+        abort_unless($saved !== [] && ($text === null || ($text['mensaje'] === $saved['mensaje'] && $text['motivo'] === $saved['motivo'])),
+            409, 'El reconocimiento ya está preparado; su texto es inmutable. Consulte el documento guardado.');
+
+        $detail = $workflow->detail((int) $document->id_certificado_documento, $actor);
+
+        $state = $detail['estado_certificado'];
+        $prepared = in_array($state, [self::PREPARED, self::PENDING], true)
+            ? $this->preparationResult((int) $document->id_certificado_documento, $actor, false, knownDetail: $detail)
+            : [...$detail, 'estado_flujo' => $state, 'puede_enviar_gerencia' => false,
+                'enviado' => false, 'siguiente_paso' => 'consultar_documento'];
+
+        return [...$prepared, ...$saved,
+            'puede_preparar' => false, 'puede_generar_pdf' => false, 'puede_emitir' => false,
+            'puede_consultar_certificado_existente' => true, 'estado_elegibilidad' => 'Documento existente',
+            'remision' => $state === self::PENDING ? ['estado_persistido' => self::PENDING,
+                'historial_en_bd' => false, 'fecha_envio_en_bd' => null] : ($detail['remision'] ?? null),
+            'creado' => false, 'persistido' => true, 'recuperado' => true, 'requiere_confirmacion' => false, 'token_revision' => null,
+            'hash_pdf' => $document->hash_certificado,
+            ...($includePdf ? ['vista_previa_pdf' => ['contenido_base64' => base64_encode(Storage::disk('local')->get($document->ruta_archivo)),
+                'tipo_contenido' => 'application/pdf', 'persistido' => true]] : [])];
+    }
+
+    /** @param array{mensaje: string, motivo: string}|null $text
+     * @return array<string, mixed>
+     */
+    public function consultSessionRecognition(int $id, User $actor, ?array $text = null, bool $includePdf = false): array
+    {
+        app(SessionSpeakers::class)->assertSchema();
+        $origins = app(CertificateOrigins::class);
+        $origins->authorize('ponente_sesion', $id, $actor);
+        $assignment = $origins->assignment($id);
+        $session = RequestReadMemo::remember(ActivitySession::class.'.'.$assignment->id_actividad_sesion,
+            fn (): ?ActivitySession => ActivitySession::find($assignment->id_actividad_sesion));
+        abort_unless($session && (int) $session->id_actividad === (int) $assignment->id_actividad,
+            409, 'La sesión no pertenece a la actividad.');
+        $certificates = DB::table('certificado.reconocimiento as r')
+            ->leftJoin('certificado.certificado as c', 'c.id_reconocimiento', '=', 'r.id_reconocimiento')
+            ->where('r.id_actividad_ponente', $id)->get(['c.*']);
+        if ($certificates->isEmpty()) {
+            if ($includePdf) {
+                return ['recuperado' => false];
+            }
+
+            $evaluation = $origins->activityRecognition($id, true);
+            $allowed = Gate::forUser($actor)->allows('create', Certificate::class)
+                && Gate::forUser($actor)->allows('create', CertificateDocument::class)
+                && Gate::forUser($actor)->allows('create', Recognition::class);
+
+            return [...$evaluation, 'puede_preparar' => $allowed && $evaluation['puede_preparar'],
+                'puede_generar_pdf' => $allowed && $evaluation['puede_generar_pdf'], 'recuperado' => false, 'persistido' => false];
+        }
+
+        $recovered = $this->recoverSessionRecognition($certificates, $actor, $text, $includePdf);
+        abort_unless((int) ($recovered['id_actividad_ponente'] ?? 0) === $id
+            && (int) ($recovered['id_sesion'] ?? 0) === (int) $session->id_actividad_sesion
+            && (int) ($recovered['id_actividad'] ?? 0) === (int) $assignment->id_actividad,
+            409, 'El documento no conserva la asignación y sesión solicitadas.');
+
+        return $recovered;
+    }
+
+    /** @param array{mensaje: string, motivo: string}|null $text
+     * @return array<string, mixed>
+     */
+    public function confirmOrigin(string $origin, int $id, string $token, User $actor, ?array $text = null): array
+    {
+        return $origin === 'ponente_sesion'
+            ? $this->withSessionReviewLock($id, $actor, fn (): array => $this->confirmOriginUnlocked($origin, $id, $token, $actor, $text))
+            : $this->confirmOriginUnlocked($origin, $id, $token, $actor, $text);
+    }
+
+    /** @param array{mensaje: string, motivo: string}|null $text
+     * @return array<string, mixed>
+     */
+    private function confirmOriginUnlocked(string $origin, int $id, string $token, User $actor, ?array $text): array
+    {
+        $this->authorizeOriginAccess($origin, $id, $actor);
+        $path = 'certificados/revisiones/'.hash('sha256', $token);
+        abort_unless(Storage::disk('local')->exists($path.'.manifest'), 409, 'La revisión no existe.');
+        try {
+            $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get($path.'.manifest')), true, 512, JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            abort(409, 'La revisión no es válida.');
+        }
+        abort_unless($manifest['actor'] === (int) $actor->getAuthIdentifier(), 403, 'La revisión pertenece a otro usuario.');
+        abort_unless(($manifest['context']['origen'] ?? null) === $origin && ($manifest['context']['id_origen'] ?? null) === $id,
+            409, 'La revisión pertenece a otro origen.');
+        $approvedText = $manifest['context']['texto_reconocimiento'] ?? null;
+        if ($approvedText !== null) {
+            if ($text === null && $origin === 'ponente_sesion') {
+                $defaultContext = (object) $manifest['context'];
+                unset($defaultContext->texto_reconocimiento);
+                $origins = app(CertificateOrigins::class);
+                if ($approvedText['mensaje'] === $origins->message($defaultContext) && $approvedText['motivo'] === $origins->recognitionMotive($defaultContext)) {
+                    $text = ['mensaje' => $approvedText['mensaje'], 'motivo' => $approvedText['motivo']];
+                }
+            }
+            abort_unless($text !== null, 422, 'Confirme el mensaje y motivo de la vista previa.');
+            abort_unless($origin === 'ponente_sesion' && ($approvedText['v'] ?? null) === 1
+                && $text['mensaje'] === ($approvedText['mensaje'] ?? null) && $text['motivo'] === ($approvedText['motivo'] ?? null)
+                && $manifest['message'] === $text['mensaje'], 409, 'El texto cambió; genere y revise nuevamente el PDF.');
+        } else {
+            abort_if($text !== null, 409, 'El texto no corresponde a la revisión; revise nuevamente el PDF.');
+        }
+        $created = null;
+        $committed = false;
+        try {
+            return DB::transaction(function () use ($origin, $id, $actor, $manifest, $path, $text, $token, &$created, &$committed): array {
+                if ($origin === 'ponente_sesion' && DB::connection()->getDriverName() === 'pgsql') {
+                    DB::statement("SET LOCAL lock_timeout = '3s'");
+                }
+                $origins = app(CertificateOrigins::class);
+                if ($origin === 'ponente_sesion') {
+                    DB::table('certificado.actividad')->where('id_actividad', $manifest['context']['id_actividad'])->lockForUpdate()->first();
+                } else {
+                    $origins->lock($origin, $id);
+                }
+                DB::table('certificado.tipo_certificado')->where('id_tipo_certificado', $manifest['context']['id_tipo_certificado'])->lockForUpdate()->first();
+                $context = $origins->withSessionRecognitionText($origin === 'ponente_sesion' ? $origins->context($origin, $id)
+                    : $this->authorizeOrigin($origin, $id, $actor), $text);
+                abort_unless((array) $context === $manifest['context'], 409, 'El origen o su acreditación cambiaron; revise nuevamente.');
+                $existing = in_array($origin, ['ponente_actividad', 'ponente_sesion'], true) ? $origins->activityCertificates($context)
+                    : DB::table('certificado.certificado')->where('id_'.$origin, $id)
+                        ->where('id_tipo_certificado', $context->id_tipo_certificado)->get();
+                if ($existing->isNotEmpty()) {
+                    abort_unless($existing->count() === 1 && in_array($existing->first()->estado, [self::PREPARED, self::PENDING], true)
+                        && $existing->first()->fecha_emision === null,
+                        409, 'El certificado ya existe y no es una preparación recuperable.');
+                    $document = DB::table('certificado.certificado_documento')->where('id_certificado', $existing->first()->id_certificado)->get();
+                    abort_unless($document->count() === 1 && $document->first()->codigo_verificacion === $manifest['code']
+                        && hash_equals($document->first()->hash_certificado, $manifest['hash']) && $document->first()->estado === 'Vigente',
+                        409, 'Ya existe un documento distinto; no se duplicará ni sobrescribirá.');
+                    $this->generator->assertArtifact($document->first());
+
+                    $detail = app(CertificateDocumentWorkflow::class)->detail((int) $document->first()->id_certificado_documento, $actor);
+
+                    return [...$this->preparationResult((int) $document->first()->id_certificado_documento, $actor, false, knownDetail: $detail),
+                        ...$this->activityOriginIdentity($context, (int) $existing->first()->id_reconocimiento)];
+                }
+                if ($origin === 'ponente_sesion') {
+                    $pointer = $this->sessionRecognitionReviewPointer($id, $actor);
+                    if (Storage::disk('local')->exists($pointer)) {
+                        try {
+                            $currentTokenHash = Crypt::decryptString(Storage::disk('local')->get($pointer));
+                            if (str_starts_with($currentTokenHash, '{')) {
+                                $currentTokenHash = hash('sha256', json_decode($currentTokenHash, true, 512, JSON_THROW_ON_ERROR)['token']);
+                            }
+                        } catch (Throwable) {
+                            abort(409, 'La revisión vigente no es válida; revise nuevamente el PDF.');
+                        }
+                        abort_unless(hash_equals($currentTokenHash, hash('sha256', $token)), 409, 'Existe una revisión más reciente; utilice su token.');
+                    } else {
+                        abort_if(isset($manifest['revision_ponente_sesion']), 409, 'Falta la revisión vigente; revise nuevamente el PDF.');
+                    }
+                }
+                abort_unless($manifest['expires'] > now()->timestamp
+                    && hash_equals($manifest['template_hash'], hash_file('sha256', resource_path('views/certificates/origins.blade.php'))),
+                    409, 'La revisión o la plantilla caducó; revise nuevamente.');
+                $pdf = Storage::disk('local')->get($path.'.pdf');
+                abort_unless(is_string($pdf) && str_starts_with($pdf, '%PDF-') && hash_equals($manifest['hash'], hash('sha256', $pdf)),
+                    409, 'El PDF revisado no conserva su integridad.');
+                $recognitionId = $origin === 'reconocimiento' ? $id : null;
+                if (in_array($origin, ['ponente_actividad', 'ponente_sesion'], true)) {
+                    $recognitionId = DB::table('certificado.reconocimiento')->insertGetId([
+                        ...($origin === 'ponente_sesion' ? ['id_actividad_ponente' => $id,
+                            ...(Schema::hasColumn('certificado.reconocimiento', 'id_tipo_certificado') ? ['id_tipo_certificado' => $context->id_tipo_certificado] : [])] : []),
+                        'id_persona_trabajador' => $context->datos_origen['id_persona_trabajador'],
+                        'titulo' => $context->datos_origen['titulo'], 'motivo' => $origins->recognitionMotive($context),
+                        'descripcion' => null, 'fecha_reconocimiento' => today()->toDateString(), 'estado' => self::PREPARED,
+                    ], 'id_reconocimiento');
+                }
+                $certificateId = DB::table('certificado.certificado')->insertGetId([
+                    'id_persona' => $context->id_persona, 'id_tipo_certificado' => $context->id_tipo_certificado,
+                    'id_reconocimiento' => $recognitionId,
+                    'id_practica' => $origin === 'practica' ? $id : null, 'id_participacion' => null, 'id_actividad_sesion' => null,
+                    'fecha_emision' => null, 'estado' => self::PREPARED, 'notificado' => false, 'fecha_notificacion' => null,
+                ], 'id_certificado');
+                $candidate = 'certificados/preparados/'.$manifest['code'].'.pdf';
+                if ($origin === 'ponente_sesion') {
+                    $approvedPath = 'certificados/preparados/'.$manifest['code'].'.manifest';
+                    if (Storage::disk('local')->exists($approvedPath)) {
+                        abort_unless(json_decode(Crypt::decryptString(Storage::disk('local')->get($approvedPath)), true, 512, JSON_THROW_ON_ERROR) === $manifest,
+                            409, 'La aprobación existente pertenece a otra revisión.');
+                    } else {
+                        app(CertificateDocumentVersions::class)->writeExclusive($approvedPath,
+                            Crypt::encryptString(json_encode($manifest, JSON_THROW_ON_ERROR)));
+                    }
+                }
+                $this->writeReviewedPdf($candidate, $pdf, function () use (&$created, $candidate): void {
+                    $created = $candidate;
+                });
+                $documentId = DB::table('certificado.certificado_documento')->insertGetId([
+                    'id_certificado' => $certificateId, 'codigo_verificacion' => $manifest['code'],
+                    'hash_certificado' => $manifest['hash'], 'ruta_archivo' => $candidate, 'estado' => 'Vigente', 'fecha_generacion' => now(),
+                ], 'id_certificado_documento');
+                $detail = app(CertificateDocumentWorkflow::class)->detail($documentId, $actor);
+                $committed = true;
+
+                return [...$this->preparationResult($documentId, $actor, true, knownDetail: $detail),
+                    ...$this->activityOriginIdentity($context, $recognitionId)];
+            });
+        } catch (Throwable $exception) {
+            $this->generator->discardFailedArtifact($created, $exception, $committed);
+            throw $exception;
+        }
+    }
 
     public function assertSchema(): void
     {
@@ -74,7 +491,7 @@ class CertificateManagement
 
     private function usesMinimalSchema(): bool
     {
-        return ! Schema::hasColumn('certificado.certificado_documento', 'estado_flujo');
+        return $this->minimalSchema ??= ! Schema::hasColumn('certificado.certificado_documento', 'estado_flujo');
     }
 
     /** @return array{disponible: bool, motivos: list<string>} */
@@ -145,6 +562,20 @@ class CertificateManagement
         $configured = DB::table('certificado.actividad_firma')->where('id_actividad', $activityId)->count();
         $signers = $this->generator->signers($activityId);
         abort_unless($configured === count($signers), 422, 'Configure responsables reales y vigentes; no se omiten asignaciones inválidas.');
+        if ($signers !== []) {
+            app(AdministrativeSigners::class)->assertAuthorizationAvailable();
+            $authorized = DB::table('gestion.persona_trabajador')
+                ->whereIn('id_persona_trabajador', array_column($signers, 'id_persona_trabajador'))
+                ->where('habilitado_firma_certificados', true)->where('estado', true)
+                ->whereDate('fecha_ingreso', '<=', today())
+                ->where(fn (Builder $query) => $query->whereNull('fecha_fin')->orWhereDate('fecha_fin', '>=', today()))
+                ->when(DB::transactionLevel() > 0, fn (Builder $query) => $query->lockForUpdate())
+                ->get(['id_persona_trabajador'])->pluck('id_persona_trabajador')->map(fn (mixed $id): int => (int) $id)->all();
+            foreach ($signers as $signer) {
+                abort_unless(in_array($signer['id_persona_trabajador'], $authorized, true), 422,
+                    'El responsable configurado no está administrativamente habilitado.');
+            }
+        }
         foreach ($signers as $signer) {
             abort_unless(trim($signer['nombre']) !== '' && trim((string) $signer['cargo']) !== '' && $signer['orden_firma'] > 0, 422, 'Cada responsable requiere nombre, cargo y orden válidos.');
         }
@@ -161,16 +592,71 @@ class CertificateManagement
         $this->authorizePreparation($actor);
         $this->assertSchema();
         $context = $this->context($sessionId, $participationId, $typeId, $actor);
-        $signers = $workers === null ? $this->signers((int) $context->id_actividad) : $this->selectedSigners($context, $workers);
+        $existing = $this->preparedForContext($context, $actor);
+        if ($existing !== null) {
+            $approvedMessage = $existing->mensaje_aprobado ?? null;
+            if ($approvedMessage === null) {
+                try {
+                    $approvedMessage = app(CertificateDocumentVersions::class)->approvedContent($existing)['message'];
+                } catch (HttpException $exception) {
+                    if ($exception->getStatusCode() !== 409) {
+                        throw $exception;
+                    }
+                }
+            }
+            $token = bin2hex(random_bytes(32));
+            $expires = now()->addMinutes(30);
+            $this->writeExclusive('certificados/revisiones/'.hash('sha256', $token).'.manifest', Crypt::encryptString(json_encode([
+                'actor' => (int) $actor->getAuthIdentifier(), 'context' => (array) $context,
+                'code' => $existing->codigo_verificacion, 'hash' => $existing->hash_certificado,
+                'message' => $approvedMessage, 'expires' => $expires->timestamp, 'recuperacion' => true,
+            ], JSON_THROW_ON_ERROR)));
+
+            return [...$this->preparationResult((int) $existing->id_certificado_documento, $actor, false),
+                'token_revision' => $token, 'expires_at' => $expires->toIso8601String(),
+                'mensaje_aprobado' => $approvedMessage, 'mensaje_persistido_en_pdf' => $approvedMessage !== null,
+                'hash_pdf' => $existing->hash_certificado,
+                'vista_previa_pdf' => ['contenido_base64' => base64_encode(Storage::disk('local')->get($existing->ruta_archivo)),
+                    'tipo_contenido' => 'application/pdf', 'persistido' => true]];
+        }
+        $signers = $workers === null ? ($this->usesMinimalSchema() ? [] : $this->signers((int) $context->id_actividad))
+            : $this->selectedSigners($context, $workers);
         abort_if($workers !== null && $mode === null, 422, 'Seleccione una modalidad para los funcionarios.');
         $token = bin2hex(random_bytes(32));
         $key = hash('sha256', $token);
         $code = bin2hex(random_bytes(15));
-        $pdf = $this->generator->reviewPdf($context, $message, $code, $signers);
+        $reusable = null;
+        foreach (Storage::disk('local')->files('certificados/revisiones') as $candidate) {
+            if (! str_ends_with($candidate, '.manifest')) {
+                continue;
+            }
+            try {
+                $previous = json_decode(Crypt::decryptString(Storage::disk('local')->get($candidate)), true, 512, JSON_THROW_ON_ERROR);
+            } catch (Throwable) {
+                continue;
+            }
+            if (($previous['actor'] ?? null) !== (int) $actor->getAuthIdentifier()
+                || ($previous['context'] ?? null) !== (array) $context || ($previous['message'] ?? null) !== $message
+                || ($previous['mode'] ?? null) !== $mode || ($previous['signers'] ?? null) !== $signers
+                || ($previous['workers'] ?? null) !== $workers || ($previous['template_hash'] ?? null) !== $this->templateHash()) {
+                continue;
+            }
+            $previousPdf = substr($candidate, 0, -strlen('.manifest')).'.pdf';
+            if (Storage::disk('local')->exists($previousPdf)) {
+                $bytes = Storage::disk('local')->get($previousPdf);
+                if (str_starts_with($bytes, '%PDF-') && hash_equals($previous['hash'], hash('sha256', $bytes))) {
+                    $reusable = ['code' => $previous['code'], 'pdf' => $bytes];
+                    break;
+                }
+            }
+        }
+        $code = $reusable['code'] ?? $code;
+        $pdf = $reusable['pdf'] ?? $this->generator->reviewPdf($context, $message, $code, $signers);
         $manifest = [
             'actor' => (int) $actor->getAuthIdentifier(), 'expires' => now()->addMinutes(30)->timestamp,
             'context' => (array) $context, 'message' => $message, 'mode' => $mode, 'signers' => $signers,
             'workers' => $workers,
+            'recuperacion' => $reusable !== null,
             'code' => $code, 'hash' => hash('sha256', $pdf), 'template_hash' => $this->templateHash(),
         ];
         $path = 'certificados/revisiones/'.$key;
@@ -188,6 +674,7 @@ class CertificateManagement
         }
 
         return ['accion' => 'revisar_documento', 'modo' => 'administrativo', 'token_revision' => $token,
+            'revision_reutilizada' => $reusable !== null,
             'expires_at' => date(DATE_ATOM, $manifest['expires']), 'mensaje' => $message, 'hash_pdf' => $manifest['hash'],
             'firmantes' => $signers, 'asignacion_firmantes_pendiente' => $signers === [], 'persistido' => false, 'emitida' => false,
             'vista_previa_pdf' => ['contenido_base64' => base64_encode($pdf), 'tipo_contenido' => 'application/pdf',
@@ -198,6 +685,65 @@ class CertificateManagement
     {
         return hash('sha256', hash_file('sha256', resource_path('views/certificates/demonstration.blade.php'))
             .hash_file('sha256', resource_path('images/escudo-morales.png')));
+    }
+
+    private function preparedForContext(object $context, User $actor): ?object
+    {
+        $certificates = DB::table('certificado.certificado')->where('id_participacion', $context->id_participacion)
+            ->where('id_actividad_sesion', $context->id_sesion)->where('id_tipo_certificado', $context->id_tipo_certificado)->get();
+        if ($certificates->isEmpty()) {
+            return null;
+        }
+        abort_unless($certificates->count() === 1, 409, 'Existe más de un certificado para esta participación, sesión y tipo.');
+        $certificate = $certificates->first();
+        abort_unless((int) $certificate->id_persona === (int) $context->id_persona
+            && in_array($certificate->estado, [self::PREPARED, self::PENDING], true)
+            && $certificate->fecha_emision === null, 409, 'El certificado existente no es una preparación recuperable.');
+        $documents = DB::table('certificado.certificado_documento')->where('id_certificado', $certificate->id_certificado)
+            ->where('estado', 'Vigente')->get(['id_certificado_documento']);
+        abort_unless($documents->count() === 1, 409, 'El certificado existente requiere un único documento vigente; no se creará otro.');
+        $document = $this->document((int) $documents->first()->id_certificado_documento, $actor);
+        $this->generator->assertArtifact($document);
+
+        return $document;
+    }
+
+    /** @return array<string, mixed>|null */
+    public function recoverPreparation(int $sessionId, int $participationId, int $typeId, User $actor): ?array
+    {
+        $this->authorizePreparation($actor);
+        if (! app(SessionCertificatePreparation::class)->identityAvailable()) {
+            return null;
+        }
+        if (! DB::table('certificado.certificado')->where('id_participacion', $participationId)
+            ->where('id_actividad_sesion', $sessionId)->where('id_tipo_certificado', $typeId)->exists()) {
+            return null;
+        }
+        $document = $this->preparedForContext($this->context($sessionId, $participationId, $typeId, $actor), $actor);
+        abort_unless($document, 409, 'La preparación cambió durante la consulta; vuelva a consultar su estado.');
+
+        return $this->preparationResult((int) $document->id_certificado_documento, $actor, false);
+    }
+
+    /** @param array<string, mixed>|null $knownDetail
+     * @return array<string, mixed>
+     */
+    private function preparationResult(int $id, User $actor, bool $created, bool $send = false, ?int $sessionId = null, ?array $knownDetail = null): array
+    {
+        $detail = $send ? $this->remit($id, $actor, $sessionId) : ($knownDetail ?? $this->detail($id, $actor));
+        $state = $detail['estado_flujo'] ?? $detail['estado_certificado'] ?? null;
+        abort_unless(in_array($state, [self::PREPARED, self::PENDING], true)
+            && ($detail['estado_documento'] ?? $detail['estado'] ?? null) === 'Vigente',
+            409, 'El documento no está en una etapa de preparación recuperable.');
+        $sent = $state === self::PENDING;
+
+        return [...$detail, 'modo' => 'administrativo', 'creado' => $created,
+            'reintento' => $send ? (bool) ($detail['reintento'] ?? false) : ! $created,
+            'preparacion_persistida' => true, 'enviado' => $sent,
+            'estado_flujo' => $state,
+            'puede_enviar_gerencia' => ! $sent && ($detail['facultades']['remitir'] ?? false),
+            'siguiente_paso' => $sent ? 'consultar_gerencia' : 'revisar-envio',
+            'siguiente_accion_preparacion' => $sent ? 'consultar_gerencia' : 'enviar_gerencia'];
     }
 
     /**
@@ -213,7 +759,8 @@ class CertificateManagement
         usort($workers, fn (array $left, array $right): int => $left['orden_firma'] <=> $right['orden_firma']);
         abort_unless($workers !== [] && array_column($workers, 'orden_firma') === range(1, count($workers)),
             422, 'Los órdenes deben ser consecutivos desde uno.');
-        $available = collect(app(AdministrativeSigners::class)->workers([(int) $context->id_area], (int) $context->id_actividad, authorizedOnly: false));
+        app(AdministrativeSigners::class)->assertAuthorizationAvailable();
+        $available = collect(app(AdministrativeSigners::class)->authorizedWorkers());
         $signers = [];
         foreach ($workers as $worker) {
             $signer = $available->firstWhere('id_persona_trabajador', (int) $worker['id_persona_trabajador']);
@@ -234,7 +781,6 @@ class CertificateManagement
         $this->authorizePreparation($actor);
         $this->assertSchema();
         $minimal = $this->usesMinimalSchema();
-        abort_if($minimal && $send, 422, 'Confirme la preparación y luego use revisar-envio y enviar-gerencia con el documento registrado.');
         $key = hash('sha256', $token);
         $path = 'certificados/revisiones/'.$key;
         abort_unless(Storage::disk('local')->exists($path.'.manifest'), 409, 'La revisión no existe o caducó.');
@@ -257,24 +803,39 @@ class CertificateManagement
                 $existing = DB::table('certificado.certificado_documento')->where('codigo_verificacion', $manifest['code'])->first();
                 if ($existing) {
                     $registered = $this->document((int) $existing->id_certificado_documento, $actor);
+                    abort_unless($registered->estado === 'Vigente'
+                        && in_array($registered->estado_flujo ?? $registered->estado_certificado, [self::PREPARED, self::PENDING], true)
+                        && $registered->fecha_emision === null, 409, 'El documento existente no es una preparación recuperable.');
+                    abort_unless((int) ($registered->id_sesion ?? $registered->id_actividad_sesion ?? 0) === $sessionId
+                        && (int) $registered->id_participacion === $participationId
+                        && (int) $registered->id_tipo_certificado === (int) $manifest['context']['id_tipo_certificado']
+                        && (int) $registered->id_persona === (int) $manifest['context']['id_persona']
+                        && hash_equals($registered->hash_certificado, $manifest['hash']), 409, 'El documento existente no corresponde a esta revisión.');
                     if ($minimal) {
                         abort_unless((int) $registered->id_sesion === $sessionId
                             && (int) $registered->id_participacion === $participationId
                             && (int) $registered->id_tipo_certificado === (int) $manifest['context']['id_tipo_certificado']
                             && (int) $registered->id_persona === (int) $manifest['context']['id_persona']
-                            && hash_equals($existing->hash_certificado, $manifest['hash']), 409, 'El documento existente no corresponde a esta revisión.');
-                        $this->generator->assertArtifact($existing);
+                            && hash_equals($registered->hash_certificado, $manifest['hash']), 409, 'El documento existente no corresponde a esta revisión.');
+                        $this->generator->assertArtifact($registered);
 
-                        return [...$this->detail((int) $existing->id_certificado_documento, $actor),
-                            'creado' => false, 'mensaje_aprobado' => $manifest['message'], 'mensaje_persistido_en_pdf' => true,
-                            'estado_flujo' => $registered->estado_certificado];
+                        return [...$this->preparationResult((int) $existing->id_certificado_documento, $actor, false, $send, $sessionId),
+                            'creado' => false, 'mensaje_aprobado' => $manifest['message'], 'mensaje_persistido_en_pdf' => $manifest['message'] !== null,
+                        ];
                     }
                     $event = DB::table('certificado.solicitud_decision')->where('id_certificado_documento', $existing->id_certificado_documento)->where('tipo_decision', 'PREPARAR')->first();
                     $data = $event ? json_decode($event->datos, true, 512, JSON_THROW_ON_ERROR) : [];
-                    abort_unless(($data['revision'] ?? null) === $key && hash_equals($existing->hash_certificado, $manifest['hash']), 409, 'El código corresponde a otra revisión.');
+                    abort_unless((($data['revision'] ?? null) === $key || ($manifest['recuperacion'] ?? false))
+                        && hash_equals($existing->hash_certificado, $manifest['hash']), 409, 'El código corresponde a otra revisión.');
                     $this->generator->assertArtifact($existing);
 
-                    return ['creado' => false, ...($send ? $this->remit((int) $existing->id_certificado_documento, $actor, $sessionId) : $this->detail((int) $existing->id_certificado_documento, $actor))];
+                    return $this->preparationResult((int) $existing->id_certificado_documento, $actor, false, $send, $sessionId);
+                }
+                $context = $this->context($sessionId, $participationId, (int) $manifest['context']['id_tipo_certificado'], $actor);
+                $prepared = $this->preparedForContext($context, $actor);
+                if ($prepared !== null) {
+                    return [...$this->preparationResult((int) $prepared->id_certificado_documento, $actor, false),
+                        'revision_reutilizada' => false, 'requiere_revision_envio' => true];
                 }
                 abort_unless($manifest['expires'] > now()->timestamp, 409, 'La revisión caducó; revise de nuevo el documento.');
                 DB::table('certificado.tipo_certificado')->where('id_tipo_certificado', $manifest['context']['id_tipo_certificado'])->lockForUpdate()->first();
@@ -283,7 +844,7 @@ class CertificateManagement
                 DB::table('gestion.persona_trabajador')->whereIn('id_persona_trabajador', array_column($manifest['signers'], 'id_persona_trabajador'))->lockForUpdate()->get();
                 DB::table('gestion.persona')->whereIn('id_persona', [$manifest['context']['id_persona'], ...array_column($manifest['signers'], 'id_persona')])->lockForUpdate()->get();
                 $context = $this->context($sessionId, $participationId, (int) $manifest['context']['id_tipo_certificado'], $actor);
-                $signers = ($manifest['workers'] ?? null) === null ? $this->signers((int) $context->id_actividad)
+                $signers = ($manifest['workers'] ?? null) === null ? ($minimal ? [] : $this->signers((int) $context->id_actividad))
                     : $this->selectedSigners($context, $manifest['workers']);
                 abort_unless((array) $context === $manifest['context'] && $signers === $manifest['signers']
                     && hash_equals($manifest['template_hash'], $this->templateHash()), 409, 'El contexto o los firmantes cambiaron; revise un nuevo PDF.');
@@ -293,16 +854,22 @@ class CertificateManagement
                 $pdf = Storage::disk('local')->get($path.'.pdf');
                 abort_unless(is_string($pdf) && str_starts_with($pdf, '%PDF-') && hash_equals($manifest['hash'], hash('sha256', $pdf)), 409, 'El archivo revisado fue alterado o no está disponible.');
                 $candidatePath = 'certificados/preparados/'.$manifest['code'].'.pdf';
-                $this->writeExclusive($candidatePath, $pdf, function () use (&$createdPath, $candidatePath): void {
-                    $createdPath = $candidatePath;
-                });
+                if (Storage::disk('local')->exists($candidatePath)) {
+                    abort_if(DB::table('certificado.certificado_documento')->where('ruta_archivo', $candidatePath)->exists(),
+                        409, 'El archivo ya pertenece a otro documento.');
+                    $this->generator->assertArtifact((object) ['ruta_archivo' => $candidatePath, 'hash_certificado' => $manifest['hash']]);
+                } else {
+                    $this->writeExclusive($candidatePath, $pdf, function () use (&$createdPath, $candidatePath): void {
+                        $createdPath = $candidatePath;
+                    });
+                }
                 $certificateId = DB::table('certificado.certificado')->insertGetId([
                     'id_persona' => $context->id_persona, 'id_participacion' => $participationId, 'id_actividad_sesion' => $sessionId,
                     'id_tipo_certificado' => $context->id_tipo_certificado, 'id_practica' => null, 'id_reconocimiento' => null,
                     'fecha_emision' => null, 'estado' => self::PREPARED, 'notificado' => false, 'fecha_notificacion' => null,
                 ], 'id_certificado');
                 $documentData = [
-                    'id_certificado' => $certificateId, 'codigo_verificacion' => $manifest['code'], 'ruta_archivo' => $createdPath,
+                    'id_certificado' => $certificateId, 'codigo_verificacion' => $manifest['code'], 'ruta_archivo' => $candidatePath,
                     'hash_certificado' => $manifest['hash'], 'fecha_generacion' => now(), 'estado' => 'Vigente',
                 ];
                 if (! $minimal) {
@@ -325,12 +892,11 @@ class CertificateManagement
                         }
                     }
                     $this->generator->assertArtifact($this->document($documentId, $actor));
-                    $result = $this->detail($documentId, $actor);
+                    $result = $this->preparationResult($documentId, $actor, true, $send, $sessionId);
                     $commitMayHaveSucceeded = true;
 
                     return [...$result, 'creado' => true, 'mensaje_aprobado' => $manifest['message'],
-                        'mensaje_persistido_en_pdf' => true, 'enviado' => false, 'estado_flujo' => self::PREPARED,
-                        'siguiente_paso' => 'revisar-envio'];
+                        'mensaje_persistido_en_pdf' => true];
                 }
                 foreach ($manifest['signers'] as $signer) {
                     DB::table('certificado.certificado_firma')->insert([
@@ -353,6 +919,24 @@ class CertificateManagement
         }
     }
 
+    private function writeReviewedPdf(string $path, string $bytes, callable $opened): void
+    {
+        $disk = Storage::disk('local');
+        if (! $disk->exists($path)) {
+            try {
+                $this->writeExclusive($path, $bytes, $opened);
+
+                return;
+            } catch (HttpException $exception) {
+                if ($exception->getStatusCode() !== 409 || ! $disk->exists($path)) {
+                    throw $exception;
+                }
+            }
+        }
+        abort_unless(hash_equals(hash('sha256', $bytes), hash('sha256', $disk->get($path))),
+            409, 'La ruta reservada contiene otro documento; no se sobrescribirá. Genere una nueva revisión.');
+    }
+
     private function writeExclusive(string $path, string $bytes, ?callable $opened = null): void
     {
         $disk = Storage::disk('local');
@@ -367,7 +951,12 @@ class CertificateManagement
                 409, 'No se permite guardar revisiones en almacenamiento público.');
         }
         $stream = @fopen($disk->path($path), 'x+b');
-        abort_unless(is_resource($stream), 409, 'No se pudo reservar un archivo nuevo sin sobrescribir.');
+        if (! is_resource($stream)) {
+            clearstatcache(true, $disk->path($path));
+            abort_if(file_exists($disk->path($path)), 409, 'La ruta ya está reservada por un archivo existente; no se sobrescribirá.');
+            Log::warning('certificado.archivo.reserva_no_disponible', ['directorio_escribible' => is_writable($directory)]);
+            abort(503, 'El almacenamiento privado no permite reservar el archivo. Vuelva a intentar.');
+        }
         if ($opened !== null) {
             $opened();
         }
@@ -417,9 +1006,22 @@ class CertificateManagement
     {
         $document = $this->document($id, $actor);
         abort_unless(Gate::forUser($actor)->allows('update', (new CertificateDocument)->newFromBuilder((array) $document)), 403, 'No autorizado para remitir documentos.');
-        abort_unless(Schema::hasColumn('certificado.certificado_documento', 'estado_flujo'), 409,
-            'La remisión por sesión no dispone de identidad persistente. Para documentos ya registrados use revisar-envio y enviar-gerencia del módulo documental.');
-        abort_if($sessionId !== null && (int) $document->id_actividad_sesion !== $sessionId, 422, 'El documento pertenece a otra sesión.');
+        abort_if($sessionId !== null && (int) ($document->id_sesion ?? $document->id_actividad_sesion ?? 0) !== $sessionId,
+            422, 'El documento pertenece a otra sesión.');
+        if ($this->usesMinimalSchema()) {
+            $workflow = app(CertificateDocumentWorkflow::class);
+            if ($document->estado_certificado === self::PENDING) {
+                $this->generator->assertArtifact($document);
+
+                return [...$workflow->detail($id, $actor), 'enviado' => true, 'reintento' => true, 'estado_flujo' => self::PENDING,
+                    'preparacion_persistida' => true, 'puede_enviar_gerencia' => false, 'siguiente_paso' => 'consultar_gerencia'];
+            }
+            $review = $workflow->review($id, $actor);
+            $result = $workflow->remit($id, $review['token_revision'], $actor);
+
+            return [...$result['documento'], ...$result, 'preparacion_persistida' => true,
+                'puede_enviar_gerencia' => false, 'siguiente_paso' => 'consultar_gerencia'];
+        }
 
         return DB::transaction(function () use ($id, $actor): array {
             $document = DB::table('certificado.certificado_documento')->where('id_certificado_documento', $id)->lockForUpdate()->first();

@@ -136,6 +136,19 @@ class SessionDynamicBeneficiariesTest extends TestCase
         $this->assertDatabaseCount('certificado.certificado', 0);
     }
 
+    public function test_session_002_metadata_is_editable_when_only_session_001_has_a_certificate(): void
+    {
+        $this->seedSession();
+        $this->authorize();
+        DB::statement('ALTER TABLE certificado.certificado ADD COLUMN id_actividad_sesion INTEGER');
+        DB::table('certificado.asistencia')->insert(['id_asistencia' => 22, 'id_participacion' => 1, 'id_actividad_sesion' => 2, 'estado' => 'AUSENTE']);
+        DB::table('certificado.certificado')->insert(['id_certificado' => 1, 'id_participacion' => 1, 'id_persona' => 1,
+            'id_tipo_certificado' => 1, 'id_actividad_sesion' => 1, 'estado' => 'PENDIENTE_FIRMA']);
+        $this->patchJson('/api/activity-session/2', ['nombre' => 'Sesión 002 independiente'])->assertOk();
+        $this->assertDatabaseHas('certificado.certificado', ['id_certificado' => 1, 'id_actividad_sesion' => 1, 'estado' => 'PENDIENTE_FIRMA']);
+        $this->assertDatabaseHas('certificado.actividad_sesion', ['id_actividad_sesion' => 1, 'estado' => 'Finalizada']);
+    }
+
     public function test_session_id_is_dynamic_and_one_participation_can_be_present_in_two_sessions(): void
     {
         $this->seedSession();

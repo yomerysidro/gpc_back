@@ -181,7 +181,7 @@ class CertificateDocumentGenerationTest extends TestCase
             ->assertJsonPath('data.vigente', false)->assertJsonPath('data.estado_certificado', 'Vigente')
             ->assertJsonPath('data.puede_ver_documento', false)->assertJsonPath('data.url_documento', null)
             ->assertJsonPath('data.emision_oficial_verificada', false)->assertJsonPath('data.firma_verificada', false);
-        $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertConflict();
+        $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertForbidden();
     }
 
     public function test_public_verification_returns_the_stored_pdf_without_login_or_development_mode(): void
@@ -212,7 +212,7 @@ class CertificateDocumentGenerationTest extends TestCase
         $this->getJson('/api/certificados/verificar/'.$code)->assertOk()
             ->assertJsonPath('data.estado_certificado', $certificateState)->assertJsonPath('data.estado_documento', $documentState)
             ->assertJsonPath('data.vigente', false)->assertJsonPath('data.puede_ver_documento', false);
-        $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertConflict();
+        $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertForbidden();
     }
 
     public function test_an_orphan_document_code_cannot_verify_without_its_certificate(): void
@@ -236,7 +236,7 @@ class CertificateDocumentGenerationTest extends TestCase
             ->assertJsonPath('data.estado_certificado', $state)->assertJsonPath('data.integridad_verificada', true)
             ->assertJsonPath('data.emision_oficial_verificada', false)->assertJsonPath('data.firma_verificada', false)
             ->assertJsonPath('data.puede_ver_documento', false);
-        $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertConflict();
+        $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertForbidden();
     }
 
     #[TestWith(['http://localhost:4200/verificar', 'production'])]

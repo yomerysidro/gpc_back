@@ -5,8 +5,10 @@ namespace Tests\Feature;
 use App\Http\Middleware\NormalizeAttendanceInput;
 use App\Models\User\User;
 use App\Services\Auth\JwtService;
+use App\Services\CertificateAttendanceProtection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class AttendanceHttpIntegrationTest extends TestCase
@@ -70,6 +72,86 @@ class AttendanceHttpIntegrationTest extends TestCase
         DB::table('certificado.solicitud_actividad')->insert(['id_solicitud_actividad' => 1, 'id_actividad' => 1, 'estado' => 'Aprobada']);
         Auth::forgetGuards();
         $this->withCredentials()->withUnencryptedCookie(JwtService::COOKIE, app(JwtService::class)->createToken(User::findOrFail(1)));
+    }
+
+    private function prepareIndependentSessions(): void
+    {
+        $this->authenticate(false);
+        DB::statement('ALTER TABLE certificado.certificado ADD COLUMN id_actividad_sesion INTEGER');
+        DB::statement('CREATE TABLE certificado.certificado_documento (id_certificado_documento INTEGER PRIMARY KEY, id_certificado INTEGER, codigo_verificacion TEXT, hash_certificado TEXT, ruta_archivo TEXT, estado TEXT)');
+        DB::table('certificado.actividad')->where('id_actividad', 1)->update(['nombre' => 'Capacitación Personal']);
+        DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 1)->update(['nombre' => 'Sesión 001']);
+        DB::table('certificado.actividad_sesion')->insert(['id_actividad_sesion' => 3, 'id_actividad' => 1, 'nombre' => 'Sesión 002', 'estado' => 'Activo']);
+        DB::table('gestion.persona')->insert(['id_persona' => 3, 'nombres' => 'No seleccionado']);
+        DB::table('certificado.participacion')->insert(['id_participacion' => 3, 'id_actividad' => 1, 'id_persona' => 3, 'estado' => 'Activo']);
+        $this->seedAttendance();
+        DB::table('certificado.certificado')->insert(['id_certificado' => 1, 'id_participacion' => 1, 'id_persona' => 1,
+            'id_tipo_certificado' => 1, 'id_actividad_sesion' => 1, 'estado' => 'PENDIENTE_FIRMA']);
+        Storage::fake('local');
+        $pdf = '%PDF-1.4 Certificado sesión 001 con código y QR originales';
+        Storage::disk('local')->put('certificados/original.pdf', $pdf);
+        DB::table('certificado.certificado_documento')->insert(['id_certificado_documento' => 1, 'id_certificado' => 1,
+            'codigo_verificacion' => 'CODIGO-ORIGINAL', 'hash_certificado' => hash('sha256', $pdf), 'ruta_archivo' => 'certificados/original.pdf', 'estado' => 'Vigente']);
+    }
+
+    public function test_session_002_attendance_is_independent_and_preserves_the_session_001_certificate_and_pdf(): void
+    {
+        $this->prepareIndependentSessions();
+        $certificate = (array) DB::table('certificado.certificado')->first();
+        $document = (array) DB::table('certificado.certificado_documento')->first();
+        $pdf = Storage::disk('local')->get('certificados/original.pdf');
+        $id = $this->postJson('/api/attendance/create', ['id_participacion' => 1, 'id_actividad_sesion' => 3, 'estado' => 'AUSENTE'])
+            ->assertCreated()->json('data.ID_ASISTENCIA');
+        $this->patchJson('/api/attendance/update/'.$id, ['estado' => 'PRESENTE'])->assertOk();
+        $this->patchJson('/api/attendance/update/'.$id, ['estado' => 'AUSENTE'])->assertOk();
+        $this->assertDatabaseHas('certificado.asistencia', ['id_asistencia' => 1, 'id_actividad_sesion' => 1, 'estado' => 'PRESENTE']);
+        $this->assertDatabaseHas('certificado.asistencia', ['id_asistencia' => $id, 'id_actividad_sesion' => 3, 'estado' => 'AUSENTE']);
+        $this->patchJson('/api/attendance/update/'.$id, ['id_actividad_sesion' => 1])->assertConflict();
+        $this->patchJson('/api/attendance/update/1', ['estado' => 'AUSENTE'])->assertConflict();
+        $this->deleteJson('/api/attendance/delete/1')->assertConflict();
+        self::assertFalse(CertificateAttendanceProtection::forSession(3));
+        self::assertTrue(CertificateAttendanceProtection::forSession(1));
+        $this->deleteJson('/api/attendance/delete/'.$id)->assertOk();
+        self::assertSame($certificate, (array) DB::table('certificado.certificado')->first());
+        self::assertSame($document, (array) DB::table('certificado.certificado_documento')->first());
+        self::assertSame($pdf, Storage::disk('local')->get('certificados/original.pdf'));
+        $this->assertDatabaseCount('certificado.certificado', 1);
+    }
+
+    public function test_session_selection_is_explicit_additive_idempotent_and_does_not_mark_presence(): void
+    {
+        $this->prepareIndependentSessions();
+        $this->getJson('/api/activity-session/3/participantes/candidatos')->assertOk()->assertJsonCount(2, 'data.participantes')
+            ->assertJsonPath('data.participantes.0.seleccionado', false);
+        $this->getJson('/api/activity-session/3/participantes')->assertOk()->assertJsonCount(0, 'data.participantes');
+        foreach ([1, 2] as $attempt) {
+            $this->postJson('/api/activity-session/3/participantes', ['ids_participacion' => [1]])->assertOk()
+                ->assertJsonCount(1, 'data.participantes')->assertJsonPath('data.participantes.0.estado_asistencia', 'AUSENTE')
+                ->assertJsonPath('data.participantes.0.hora_entrada', null);
+        }
+        $this->assertDatabaseCount('certificado.asistencia', 2);
+        $this->assertDatabaseMissing('certificado.asistencia', ['id_participacion' => 3, 'id_actividad_sesion' => 3]);
+        $this->postJson('/api/activity-session/3/participantes', ['ids_participacion' => [3, 2]])->assertUnprocessable();
+        $this->assertDatabaseMissing('certificado.asistencia', ['id_participacion' => 3, 'id_actividad_sesion' => 3]);
+        $this->deleteJson('/api/activity-session/3/participantes/1')->assertOk();
+        $this->deleteJson('/api/activity-session/1/participantes/1')->assertConflict();
+        $this->assertDatabaseHas('certificado.asistencia', ['id_participacion' => 1, 'id_actividad_sesion' => 1, 'estado' => 'PRESENTE']);
+        $this->assertDatabaseCount('certificado.certificado', 1);
+    }
+
+    public function test_session_selection_requires_jwt_permissions_area_and_valid_unique_enrollments(): void
+    {
+        $this->getJson('/api/activity-session/1/participantes')->assertUnauthorized();
+        $this->prepareIndependentSessions();
+        $this->getJson('/api/activity-session/2/participantes')->assertNotFound();
+        $this->postJson('/api/activity-session/3/participantes', ['ids_participacion' => [1, 1]])->assertUnprocessable();
+        $this->postJson('/api/activity-session/3/participantes', ['ids_participacion' => [999]])->assertUnprocessable();
+        DB::table('acceso.permiso')->where('clave', 'participantes.crear')->update(['estado' => false]);
+        $this->postJson('/api/activity-session/3/participantes', ['ids_participacion' => [1]])->assertForbidden();
+        $this->getJson('/api/activity-session/3/participantes/candidatos')->assertOk();
+        DB::table('acceso.permiso')->where('clave', 'participantes.eliminar')->update(['estado' => false]);
+        $this->deleteJson('/api/activity-session/1/participantes/1')->assertForbidden();
+        $this->assertDatabaseCount('certificado.asistencia', 1);
     }
 
     private function seedAttendance(): void

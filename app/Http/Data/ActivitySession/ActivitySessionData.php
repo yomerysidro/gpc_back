@@ -2,6 +2,7 @@
 
 namespace App\Http\Data\ActivitySession;
 
+use App\Services\CertificateAttendanceProtection;
 use App\Services\CertificationReadiness;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -173,9 +174,7 @@ class ActivitySessionData
             }
             $changed = array_filter($updateData, fn ($value, $field) => $value !== ($activitySession->$field ?? null)
                 && ($value === null || ($activitySession->$field ?? null) === null || (string) $value !== (string) $activitySession->$field), ARRAY_FILTER_USE_BOTH);
-            if ($changed !== [] && DB::table('certificado.asistencia as asistencia')
-                ->join('certificado.certificado as certificado', 'certificado.id_participacion', '=', 'asistencia.id_participacion')
-                ->where('asistencia.id_actividad_sesion', $id)->exists()) {
+            if ($changed !== [] && CertificateAttendanceProtection::forSession($id)) {
                 DB::rollBack();
 
                 return ['success' => false, 'message' => 'La sesión sustenta certificados y debe conservarse.', 'status' => 409];

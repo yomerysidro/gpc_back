@@ -92,6 +92,19 @@ class CertificationReadinessTest extends TestCase
             'certification.session_closure' => [...$policy, 'final_state' => 'Finalizada', 'open_states' => ['Activo', 'activo']]]);
     }
 
+    public function test_session_closure_requires_selected_attendances_rather_than_every_activity_enrollment(): void
+    {
+        $this->seedSession('Activo');
+        $this->approveTestPolicy();
+        DB::table('gestion.persona')->insert(['id_persona' => 2, 'nombres' => 'No seleccionado']);
+        DB::table('certificado.participacion')->insert(['id_participacion' => 2, 'id_actividad' => 1, 'id_persona' => 2, 'estado' => 'Activo']);
+        $session = DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 1)->first();
+        self::assertSame([], app(CertificationReadiness::class)->closureBlockers($session));
+        $this->assertDatabaseMissing('certificado.asistencia', ['id_participacion' => 2, 'id_actividad_sesion' => 1]);
+        DB::table('certificado.asistencia')->delete();
+        self::assertNotEmpty(app(CertificationReadiness::class)->closureBlockers($session));
+    }
+
     public function test_new_routes_require_401(): void
     {
         $this->getJson('/api/certificaciones/pendientes')->assertUnauthorized();

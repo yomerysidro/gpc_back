@@ -165,11 +165,17 @@ Guardado mediante las APIs existentes, en este orden:
 
 1. `POST /api/certificados-documentos/{id}/firma/asignar`: misma `modalidad` y lista de `firmantes` revisados, más `confirmar:true`.
 2. Solo si la asignación se completó, `POST /api/certificados-documentos/{id}/firma/confirmar-pdf`: `{"token_revision":"<token de la vista previa elegida>","confirmar":true}`. Usar ese token; la asignación puede devolver otra propuesta por compatibilidad.
-3. Declarar el flujo completo únicamente si la confirmación responde `completada:true` y `pdf_revisado_disponible:true`. Consultar `GET /api/certificados-documentos/{id}/firma/pdf-autorizado` para los bytes exactos revisados y confirmados.
+3. Declarar el flujo completo únicamente si la confirmación responde `completada:true`, `persistido:true` y `pdf_confirmado:true` (alias de `pdf_revisado_disponible`). La confirmación devuelve JSON `success/message/data`, nunca bytes PDF. `disponible_rrhh:true` y la etiqueta «Listo para entrega» solo aparecen cuando se cumplen las condiciones de preparación. Consultar `GET /api/certificados-documentos/{id}/firma/pdf-autorizado` para los bytes exactos revisados y confirmados; esta otra operación devuelve una descarga binaria.
 
 Las dos peticiones no son una transacción distribuida. La asignación es transaccional e idempotente para el mismo plan; si la confirmación falla, el plan puede quedar guardado pendiente de revisión, pero el PDF vigente permanece sin reemplazar. No declarar éxito global ni emitir/notificar. Consultar progreso y reintentar la confirmación con el mismo token si sigue vigente; si expiró, solicitar una nueva revisión del plan guardado. Un plan diferente ya guardado responde 409 y no se reemplaza silenciosamente.
 
 La confirmación compara trabajadores, nombres/cargos resueltos, orden y modalidad con el hash del plan revisado, además de contexto, plantilla, código e integridad. Usa bloqueos existentes y comparación de versión previa para rechazar aprobaciones concurrentes. HTTP 401: JWT ausente/inválido; 403: permisos o token ajeno; 404: documento fuera del ámbito; 422: selección inválida; 409: contexto/plan/versión cambiados, token ausente/caducado o PDF alterado. No se aplica firma criptográfica ni se marca FIRMADO/EMITIDO.
+
+Si el mismo token ya fue confirmado, la aprobación inmutable permite responder `reintento:true` con el mismo hash y disponibilidad, incluso tras vencer o desaparecer los archivos temporales de revisión. Se siguen comprobando usuario propietario, permisos, documento, hash solicitado, integridad y plan confirmado. No se genera otro PDF ni se reescribe la aprobación. Una revisión diferente u obsoleta nunca sustituye automáticamente a la vigente.
+
+La habilitación actual se exige para selecciones nuevas. Si el plan ya está persistido y se conserva exactamente, su revisión/confirmación no se invalida por una deshabilitación administrativa posterior; se mantienen las comprobaciones laborales, de identidad, contexto, concurrencia y permisos. Un cambio de plan sigue requiriendo responsables habilitados y no reemplaza silenciosamente un plan guardado.
+
+Ante un fallo posterior a la activación de una revisión, la limpieza conserva el PDF aprobado para permitir reconsultar progreso y reintentar con el mismo token/hash. Si la revisión pendiente caducó antes de confirmarse, se devuelve 409 explícito y puede solicitarse otra revisión válida del mismo documento. No se declara disponibilidad a partir de la asignación sola.
 
 ## Nuevos certificados desde Etapa A (compatibilidad)
 
@@ -186,3 +192,22 @@ Las pruebas PHPUnit verifican dos nombres y cargos dentro de los streams de text
 `POST /firma/aplicar` continúa bloqueado para firma auténtica; exige su autorización formal y un motor seguro todavía ausente. `POST /emitir` y `/archivo-final` continúan bloqueados. Ni la habilitación, asignación, revisión ni aprobación documental acreditan firma digital o autorizan entrega oficial. El QR público mantiene las restricciones de documentos pendientes.
 
 Para integrar firma oficial faltan PFX/P12 legítimos, carga y custodia segura, verificación de identidad/vigencia/confianza/revocación y motor de firma incremental PDF con verificación posterior. No se necesita otra migración para asignar administrativamente por trabajador.
+
+## Continuación de un documento PREPARADO existente
+
+Para documento 6 usar su ID existente; no crear otro certificado/documento:
+
+1. GET /certificados-documentos/detail/6?flujo=firmas: consultar estado_certificado y facultades.remitir.
+2. POST /certificados-documentos/6/revisar-envio con {}: revisar PDF existente y obtener token_revision.
+3. POST /certificados-documentos/6/enviar-gerencia con {"token_revision":"<token>","confirmar":true}: pasa a PENDIENTE_FIRMA. Repetir el mismo envío válido devuelve reintento:true sin duplicarlo.
+4. GET /certificados-documentos/6/firma/firmantes-disponibles: elegir IDs laborales reales del ámbito documental, sin PFX.
+5. POST /certificados-documentos/6/firma/revision-pdf con {"modalidad":"PARALELA","firmantes":[{"id_persona_trabajador":1,"orden_firma":1}]}: devuelve vista previa y token; no confirma ni guarda la asignación.
+6. POST /certificados-documentos/6/firma/asignar con ese plan y confirmar:true: persiste asignación. Plan idéntico es idempotente; otro plan devuelve 409.
+7. POST /certificados-documentos/6/firma/confirmar-pdf con {"token_revision":"<token de revisión PDF>","confirmar":true}: confirma la revisión exacta. No confundir este token con el de envío a Gerencia.
+8. GET /certificados-documentos/6/firma/progreso: solo tras confirmación válida expone estado_preparacion:PREPARADO_ENTREGA y disponible_rrhh:true.
+
+Estos pasos NO se ejecutaron contra el documento real. Las pruebas utilizan SQLite en memoria y almacenamiento simulado. Ante timeout consultar primero detalle/progreso; para envío persistido no crear otro certificado. Token vencido o composición cambiada requiere revisión nueva (409). Se conservan 401 sin autenticación, 403 sin permiso, 404 fuera de ámbito y 409 por conflicto. Disponibilidad administrativa no equivale a firma criptográfica ni emisión oficial.
+
+## Reconocimientos municipales y prácticas
+
+Las mismas rutas de selección, asignación, revisión y confirmación admiten los nuevos documentos por reconocimiento/práctica preparados con el servicio existente. Para ellos, la validación de contexto usa el origen real y su acreditación, sin exigir una sesión de Capacitación. Las comprobaciones de sesión se conservan para certificados de participantes. El texto del origen no cambia al incorporar responsables. Las nuevas asignaciones siguen exigiendo habilitación global vigente; las históricas se conservan. Véase [certificate-origins-api-contract.md](certificate-origins-api-contract.md), incluidos los casos de ponente externo y sesión que permanecen sin relación acreditable.

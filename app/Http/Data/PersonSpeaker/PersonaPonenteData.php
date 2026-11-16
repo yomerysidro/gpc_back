@@ -117,6 +117,10 @@ class PersonaPonenteData
                 }
 
                 $changes = GestionIntegrity::changes('gestion.persona_ponente', $data, $record);
+                if (array_key_exists('id_persona', $changes)
+                    && DB::table('certificado.actividad_ponente')->where('id_persona_ponente', $id)->exists()) {
+                    return ['success' => false, 'message' => 'El ponente vinculado debe conservar su identidad.', 'data' => null, 'status' => 409];
+                }
                 if ($changes !== []) {
                     DB::table('gestion.persona_ponente')->where('id_persona_ponente', $id)->update($changes);
                 }

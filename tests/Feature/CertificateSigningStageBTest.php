@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\Person_Worker\Person_Worker;
 use App\Models\Role\Role;
 use App\Models\User\User;
 use App\Services\CertificateDocumentGenerator;
+use App\Services\CertificateDocumentVersions;
 use App\Services\CertificateDocumentWorkflow;
 use App\Services\CertificateHumanResources;
 use Illuminate\Support\Facades\Crypt;
@@ -12,12 +14,124 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Mockery\MockInterface;
 use PHPUnit\Framework\Attributes\TestWith;
 use Tests\TestCase;
 
 class CertificateSigningStageBTest extends TestCase
 {
     private const BASE = '/api/certificados-documentos/1/firma';
+
+    public function test_academic_configuration_enables_portal_links_and_removal_blocks_previously_shared_urls_without_writes(): void
+    {
+        $this->assignForPdfRevision();
+        $sourceCertificate = DB::table('certificado.certificado')->first();
+        $manifestPath = 'certificados/revisiones/aprobado.manifest';
+        $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get($manifestPath)), true, 512, JSON_THROW_ON_ERROR);
+        $manifest['context'] += ['id_persona' => $sourceCertificate->id_persona, 'id_tipo_certificado' => $sourceCertificate->id_tipo_certificado];
+        Storage::disk('local')->put($manifestPath, Crypt::encryptString(json_encode($manifest, JSON_THROW_ON_ERROR)));
+        $review = $this->postJson(self::BASE.'/revision-pdf')->assertOk()->json('data');
+        $this->postJson(self::BASE.'/confirmar-pdf', ['token_revision' => $review['token_revision'], 'confirmar' => true])->assertOk();
+        $document = DB::table('certificado.certificado_documento')->first();
+        $certificate = DB::table('certificado.certificado')->first();
+        DB::statement('CREATE TABLE gestion.tipo_documento (id_tipo_documento INTEGER PRIMARY KEY, nombre TEXT, estado BOOLEAN)');
+        DB::statement('CREATE TABLE gestion.persona_documento (id_persona_documento INTEGER PRIMARY KEY, id_persona INTEGER, id_tipo_documento INTEGER, numero_documento TEXT, estado TEXT)');
+        $dniType = DB::table('gestion.tipo_documento')->insertGetId(['nombre' => 'DNI', 'estado' => true], 'id_tipo_documento');
+        $dni = '87654321';
+        DB::table('gestion.persona_documento')->insert(['id_persona' => $certificate->id_persona,
+            'id_tipo_documento' => $dniType, 'numero_documento' => $dni, 'estado' => 'Activo']);
+        $files = collect(Storage::disk('local')->allFiles())->mapWithKeys(fn (string $path): array => [$path => hash_file('sha256', Storage::disk('local')->path($path))])->all();
+        $this->partialMock(CertificateDocumentGenerator::class)->shouldNotReceive('previewPdf', 'reviewPdf', 'generate');
+        app('auth')->forgetGuards();
+        config(['certification.public_lookup.pdf_policy_reference' => 'CONSENTIMIENTO ACADEMICO EXCLUSIVO DE DATOS FICTICIOS DE PRUEBA',
+            'certification.public_lookup.pdf_codes' => []]);
+        $portal = '/api/portal-certificados/consultar-dni';
+        $private = $this->postJson($portal, ['dni' => $dni])->assertOk()->assertJsonCount(1, 'data.certificados')->json('data.certificados.0');
+        self::assertFalse($private['pdf_publicado']);
+        self::assertNull($private['url_documento']);
+        self::assertNull($private['url_descarga']);
+        config(['certification.public_lookup.pdf_codes' => [$document->codigo_verificacion]]);
+        $public = $this->postJson($portal, ['dni' => $dni])->assertOk()->json('data.certificados.0');
+        self::assertTrue($public['pdf_publicado']);
+        $codeUrl = '/api/certificados/verificar/'.$public['codigo_verificacion'];
+        $this->getJson($codeUrl)->assertOk()->assertJsonPath('data.puede_ver_documento', true);
+        $this->get($codeUrl, ['Accept' => 'text/html'])->assertOk()->assertSee('Abrir PDF almacenado');
+        foreach (['url_documento', 'url_descarga'] as $key) {
+            $response = $this->get($public[$key])->assertOk()->assertHeader('Content-Type', 'application/pdf')
+                ->assertHeader('X-Document-SHA256', $review['hash_pdf']);
+            self::assertSame($review['hash_pdf'], hash_file('sha256', $response->baseResponse->getFile()->getPathname()));
+        }
+        config(['certification.public_lookup.pdf_codes' => []]);
+        $this->postJson($portal, ['dni' => $dni])->assertOk()->assertJsonPath('data.certificados.0.pdf_publicado', false)
+            ->assertJsonPath('data.certificados.0.url_documento', null)->assertJsonPath('data.certificados.0.url_descarga', null);
+        $this->getJson($codeUrl)->assertOk()->assertJsonPath('data.url_documento', null)->assertJsonPath('data.url_descarga', null);
+        $this->get($public['url_documento'])->assertForbidden();
+        $this->get($public['url_descarga'])->assertForbidden();
+        self::assertSame((array) $document, (array) DB::table('certificado.certificado_documento')->first());
+        self::assertSame((array) $certificate, (array) DB::table('certificado.certificado')->first());
+        self::assertSame($files, collect(Storage::disk('local')->allFiles())->mapWithKeys(fn (string $path): array => [$path => hash_file('sha256', Storage::disk('local')->path($path))])->all());
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_explicit_publication_serves_identical_confirmed_bytes_for_view_and_download(bool $authenticated): void
+    {
+        $review = $this->prepareHumanResources();
+        $document = DB::table('certificado.certificado_documento')->first();
+        config(['certification.public_lookup.pdf_policy_reference' => 'AUTORIZACION DE PRUEBA',
+            'certification.public_lookup.pdf_codes' => [$document->codigo_verificacion]]);
+        if (! $authenticated) {
+            app('auth')->forgetGuards();
+        }
+        $url = '/api/certificados/verificar/'.$document->codigo_verificacion;
+        $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', true)
+            ->assertJsonPath('data.estado_certificado', 'PENDIENTE_FIRMA');
+        foreach (['?archivo=1', '?archivo=1&descargar=1'] as $query) {
+            $response = $this->get($url.$query)->assertOk()->assertHeader('Content-Type', 'application/pdf')
+                ->assertHeader('X-Document-SHA256', $review['hash_pdf']);
+            self::assertSame($review['hash_pdf'], hash_file('sha256', $response->baseResponse->getFile()->getPathname()));
+            if (str_contains($query, 'descargar')) {
+                $response->assertDownload('certificado-'.$document->codigo_verificacion.'.pdf');
+            } else {
+                self::assertStringStartsWith('inline;', $response->headers->get('Content-Disposition'));
+            }
+        }
+        config(['certification.public_lookup.pdf_policy_reference' => null]);
+        $this->getJson($url.'?archivo=1')->assertForbidden();
+    }
+
+    #[TestWith(['private'])]
+    #[TestWith(['prepared'])]
+    #[TestWith(['cancelled'])]
+    #[TestWith(['hash'])]
+    #[TestWith(['missing'])]
+    #[TestWith(['plan'])]
+    #[TestWith(['unknown'])]
+    public function test_public_pdf_rejects_unauthorized_or_invalid_documents(string $condition): void
+    {
+        $this->prepareHumanResources();
+        $document = DB::table('certificado.certificado_documento')->first();
+        config(['certification.public_lookup.pdf_policy_reference' => 'AUTORIZACION DE PRUEBA',
+            'certification.public_lookup.pdf_codes' => $condition === 'private' ? [] : [$document->codigo_verificacion]]);
+        if ($condition === 'prepared') {
+            DB::table('certificado.certificado')->update(['estado' => 'PREPARADO']);
+        } elseif ($condition === 'cancelled') {
+            DB::table('certificado.certificado_documento')->update(['estado' => 'Anulado']);
+        } elseif ($condition === 'hash') {
+            DB::table('certificado.certificado_documento')->update(['hash_certificado' => str_repeat('0', 64)]);
+        } elseif ($condition === 'missing') {
+            $confirmed = app(CertificateDocumentVersions::class)->resolve($document, readOnly: true);
+            Storage::disk('local')->delete($confirmed->ruta_archivo);
+        } elseif ($condition === 'plan') {
+            DB::table('certificado.certificado_firma')->delete();
+        }
+        app('auth')->forgetGuards();
+        $code = $condition === 'unknown' ? str_repeat('f', 30) : $document->codigo_verificacion;
+        foreach (['?archivo=1', '?archivo=1&descargar=1'] as $query) {
+            $response = $this->getJson('/api/certificados/verificar/'.$code.$query);
+            $condition === 'unknown' ? $response->assertNotFound() : $response->assertForbidden();
+        }
+    }
 
     private function prepareUnassignedPreview(): array
     {
@@ -95,7 +209,7 @@ class CertificateSigningStageBTest extends TestCase
     }
 
     #[TestWith(['estado', false])]
-    #[TestWith(['id_area', 999])]
+    #[TestWith(['habilitado_firma_certificados', false])]
     #[TestWith(['cargo', ''])]
     public function test_dynamic_preview_rejects_ineligible_workers(string $field, mixed $value): void
     {
@@ -133,7 +247,7 @@ class CertificateSigningStageBTest extends TestCase
         ], JSON_THROW_ON_ERROR)));
         DB::table('gestion.persona')->insert(['id_persona' => 11, 'nombres' => 'Segunda Responsable', 'apellido_paterno' => 'Real']);
         DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 11, 'id_persona' => 11,
-            'id_area' => 1, 'cargo' => 'Directora institucional', 'estado' => true, 'fecha_ingreso' => '2020-01-01']);
+            'id_area' => 1, 'cargo' => 'Directora institucional', 'estado' => true, 'habilitado_firma_certificados' => true, 'fecha_ingreso' => '2020-01-01']);
         $this->actor(['emision.ver', 'emision.editar']);
         $this->postJson(self::BASE.'/asignar', ['modalidad' => 'SECUENCIAL', 'confirmar' => true,
             'firmantes' => [['id_persona_trabajador' => 10, 'orden_firma' => 1], ['id_persona_trabajador' => 11, 'orden_firma' => 2]]])
@@ -356,14 +470,14 @@ class CertificateSigningStageBTest extends TestCase
         $certificate = (array) DB::table('certificado.certificado')->first();
         $files = Storage::disk('local')->allFiles('certificados');
         $this->getJson(self::BASE.'/progreso')->assertOk()->assertJsonPath('data.disponible_rrhh', true)
-            ->assertJsonPath('data.preparado_para_entrega', true)->assertJsonPath('data.etiqueta_estado', 'Preparado para entrega');
+            ->assertJsonPath('data.preparado_para_entrega', true)->assertJsonPath('data.etiqueta_estado', 'Listo para entrega');
         $this->actor(['emision.ver'], administrator: false, id: 20);
         DB::enableQueryLog();
         $this->getJson('/api/certificados-documentos/list')->assertOk()->assertJsonPath('data.total', 1)
             ->assertJsonPath('data.data.0.id_certificado_documento', 1)->assertJsonPath('data.data.0.disponible_rrhh', true)
             ->assertJsonPath('data.data.0.estado', 'Vigente')->assertJsonPath('data.data.0.estado_certificado', 'PENDIENTE_FIRMA')
             ->assertJsonPath('data.data.0.estado_preparacion', 'PREPARADO_ENTREGA')
-            ->assertJsonPath('data.data.0.etiqueta_estado', 'Preparado para entrega')
+            ->assertJsonPath('data.data.0.etiqueta_estado', 'Listo para entrega')
             ->assertJsonPath('data.data.0.hash_pdf', $review['hash_pdf'])->assertJsonPath('data.data.0.fecha_emision', null)
             ->assertJsonPath('data.data.0.emision_oficial_verificada', false)->assertJsonCount(2, 'data.data.0.responsables_administrativos');
         $this->getJson('/api/certificados/list')->assertOk()->assertJsonPath('data.total', 1)
@@ -395,26 +509,34 @@ class CertificateSigningStageBTest extends TestCase
         self::assertSame($files, Storage::disk('local')->allFiles('certificados'));
     }
 
-    public function test_existing_catalog_hides_unconfirmed_documents_and_requires_saved_signers(): void
+    public function test_existing_catalog_includes_unconfirmed_documents_but_rrhh_requires_saved_signers(): void
     {
         $this->prepareHumanResources();
         $this->actor(['emision.ver'], administrator: false, id: 20);
         $pointer = Storage::disk('local')->get('certificados/versiones/1/current');
         Storage::disk('local')->delete('certificados/versiones/1/current');
-        $this->getJson('/api/certificados-documentos/list')->assertOk()->assertJsonPath('data.total', 0);
-        $this->getJson('/api/certificados/list')->assertOk()->assertJsonPath('data.total', 0);
-        $this->getJson('/api/certificados/detail/1')->assertNotFound();
+        $this->getJson('/api/certificados-documentos/list')->assertOk()->assertJsonPath('data.total', 1);
+        $this->getJson('/api/certificados/list')->assertOk()->assertJsonPath('data.total', 1)
+            ->assertJsonPath('data.data.0.etiqueta_estado', 'Pendiente de firma')->assertJsonPath('data.data.0.disponible_rrhh', false);
+        $this->getJson('/api/certificados/detail/1')->assertOk()->assertJsonPath('data.etiqueta_estado', 'Pendiente de firma');
         Storage::disk('local')->put('certificados/versiones/1/current', $pointer);
         DB::table('certificado.certificado_firma')->delete();
-        $this->getJson('/api/certificados-documentos/list')->assertOk()->assertJsonPath('data.total', 0);
+        $this->getJson('/api/certificados-documentos/list')->assertOk()->assertJsonPath('data.total', 1)
+            ->assertJsonPath('data.data.0.disponible_rrhh', false);
         $this->getJson('/api/rrhh/certificados')->assertOk()->assertJsonPath('data.total', 0);
         $this->getJson('/api/rrhh/certificados/1/pdf')->assertConflict();
         $this->assertDatabaseHas('certificado.certificado', ['estado' => 'PENDIENTE_FIRMA', 'fecha_emision' => null]);
     }
 
-    public function test_existing_catalog_enforces_jwt_permissions_scope_and_filter_validation(): void
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_existing_catalog_enforces_jwt_permissions_scope_and_filter_validation(bool $pending): void
     {
         $this->prepareHumanResources();
+        if ($pending) {
+            Storage::disk('local')->delete('certificados/versiones/1/current');
+            DB::table('certificado.certificado_firma')->delete();
+        }
         $routes = ['/api/certificados-documentos/list', '/api/certificados/list', '/api/certificados/detail/1'];
         auth('jwt')->forgetUser();
         foreach ($routes as $route) {
@@ -456,8 +578,7 @@ class CertificateSigningStageBTest extends TestCase
         DB::table('certificado.certificado')->update(['estado' => 'PREPARADO']);
         $this->actor(['emision.ver'], administrator: false, id: 20);
         $this->getJson('/api/certificados-documentos/list?estado_preparacion=PREPARADO_ENTREGA')->assertOk()
-            ->assertJsonPath('data.total', 1)->assertJsonPath('data.data.0.estado_certificado', 'PREPARADO')
-            ->assertJsonPath('data.data.0.disponible_rrhh', true);
+            ->assertJsonPath('data.total', 0);
         $download = $this->getJson('/api/certificados-documentos/1/archivo')->assertOk()->assertDownload();
         self::assertSame(base64_decode($review['vista_previa_pdf']['contenido_base64'], true), file_get_contents($download->baseResponse->getFile()->getPathname()));
         $this->assertDatabaseHas('certificado.certificado', ['estado' => 'PREPARADO', 'fecha_emision' => null]);
@@ -512,6 +633,83 @@ class CertificateSigningStageBTest extends TestCase
         self::assertSame("%PDF-1.4\nOriginal aprobado.\n%%EOF", Storage::disk('local')->get('certificados/preparados/original.pdf'));
     }
 
+    public function test_persisted_assignment_can_be_reviewed_and_confirmed_after_administrative_disabling(): void
+    {
+        $this->assignForPdfRevision();
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->update(['habilitado_firma_certificados' => false]);
+        $this->getJson(self::BASE.'/progreso')->assertOk()->assertJsonPath('data.pdf_confirmado', false)
+            ->assertJsonPath('data.disponible_rrhh', false);
+        $plan = ['modalidad' => 'SECUENCIAL', 'firmantes' => [
+            ['id_persona_trabajador' => 10, 'orden_firma' => 1], ['id_persona_trabajador' => 11, 'orden_firma' => 2],
+        ]];
+        $review = $this->postJson(self::BASE.'/revision-pdf', $plan)->assertOk()->json('data');
+        $this->postJson(self::BASE.'/revision-pdf', ['modalidad' => 'PARALELA',
+            'firmantes' => [['id_persona_trabajador' => 10, 'orden_firma' => 1]]])->assertUnprocessable();
+        $this->postJson(self::BASE.'/confirmar-pdf', ['token_revision' => $review['token_revision'],
+            'hash_pdf' => $review['hash_pdf'], 'confirmar' => true])->assertOk()->assertHeader('Content-Type', 'application/json')
+            ->assertJsonPath('success', true)->assertJsonPath('data.pdf_confirmado', true)
+            ->assertJsonPath('data.disponible_rrhh', true)->assertJsonPath('data.etiqueta_estado', 'Listo para entrega');
+        $this->getJson('/api/certificados/list')->assertOk()->assertJsonPath('data.data.0.pdf_confirmado', true)
+            ->assertJsonPath('data.data.0.disponible_rrhh', true);
+        $this->assertDatabaseHas('certificado.certificado', ['estado' => 'PENDIENTE_FIRMA', 'fecha_emision' => null]);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+        $this->assertDatabaseCount('certificado.certificado_firma', 2);
+    }
+
+    public function test_timeout_after_approval_preserves_pdf_and_recovers_the_same_token_without_pending_files(): void
+    {
+        $this->assignForPdfRevision();
+        $review = $this->postJson(self::BASE.'/revision-pdf')->assertOk()->json('data');
+        $confirm = ['token_revision' => $review['token_revision'], 'hash_pdf' => $review['hash_pdf'], 'confirmar' => true];
+        $this->partialMock(CertificateDocumentVersions::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('approve')->once()->andReturnUsing(function (object $document, array $record, callable $validate): void {
+                (new CertificateDocumentVersions)->approve($document, $record, $validate);
+                throw new \RuntimeException('Timeout después de persistir la aprobación.');
+            });
+        });
+        $this->postJson(self::BASE.'/confirmar-pdf', $confirm)->assertStatus(500);
+        $this->getJson(self::BASE.'/progreso')->assertOk()->assertJsonPath('data.pdf_confirmado', true)
+            ->assertJsonPath('data.disponible_rrhh', true);
+        $revision = hash('sha256', $review['token_revision']);
+        $path = 'certificados/versiones/1/'.$revision.'.pdf';
+        $bytes = Storage::disk('local')->get($path);
+        $pointer = Storage::disk('local')->get('certificados/versiones/1/current');
+        Storage::disk('local')->delete(['certificados/revisiones-firmantes/'.$revision.'.manifest',
+            'certificados/revisiones-firmantes/'.$revision.'.pdf']);
+        $this->travel(31)->minutes();
+        foreach ([1, 2] as $attempt) {
+            $this->postJson(self::BASE.'/confirmar-pdf', $confirm)->assertOk()
+                ->assertJsonPath('data.reintento', true)->assertJsonPath('data.pdf_confirmado', true)
+                ->assertJsonPath('data.hash_pdf', $review['hash_pdf'])->assertJsonPath('data.disponible_rrhh', true);
+        }
+        self::assertSame($pointer, Storage::disk('local')->get('certificados/versiones/1/current'));
+        self::assertSame($bytes, Storage::disk('local')->get($path));
+        self::assertSame($review['hash_pdf'], hash('sha256', $bytes));
+        $this->postJson(self::BASE.'/confirmar-pdf', array_replace($confirm, ['hash_pdf' => str_repeat('0', 64)]))->assertConflict();
+        $this->actor(['emision.ver', 'emision.editar'], id: 9);
+        $this->postJson(self::BASE.'/confirmar-pdf', $confirm)->assertForbidden();
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+        $this->assertDatabaseCount('certificado.certificado_firma', 2);
+        self::assertSame("%PDF-1.4\nOriginal aprobado.\n%%EOF", Storage::disk('local')->get('certificados/preparados/original.pdf'));
+    }
+
+    public function test_expired_pending_review_can_be_replaced_on_the_same_persisted_document(): void
+    {
+        $this->assignForPdfRevision();
+        $first = $this->postJson(self::BASE.'/revision-pdf')->assertOk()->json('data');
+        $this->travel(31)->minutes();
+        $this->postJson(self::BASE.'/confirmar-pdf', ['token_revision' => $first['token_revision'],
+            'hash_pdf' => $first['hash_pdf'], 'confirmar' => true])->assertConflict();
+        $this->getJson(self::BASE.'/progreso')->assertOk()->assertJsonPath('data.pdf_confirmado', false);
+        $next = $this->postJson(self::BASE.'/revision-pdf')->assertOk()->json('data');
+        $this->postJson(self::BASE.'/confirmar-pdf', ['token_revision' => $next['token_revision'],
+            'hash_pdf' => $next['hash_pdf'], 'confirmar' => true])->assertOk()->assertJsonPath('data.pdf_confirmado', true);
+        $this->postJson(self::BASE.'/confirmar-pdf', ['token_revision' => $first['token_revision'], 'confirmar' => true])->assertConflict();
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+    }
+
     #[TestWith(['cargo', 409])]
     #[TestWith(['pdf', 409])]
     #[TestWith(['actor', 403])]
@@ -545,9 +743,9 @@ class CertificateSigningStageBTest extends TestCase
             ->assertJsonPath('data.funcionarios.0.cargo', 'Cargo de prueba')
             ->assertJsonPath('data.funcionarios.0.credencial_valida', null);
         DB::table('acceso.usuario_rol')->insert(['id_usuario' => 10, 'id_rol' => 10]);
-        $this->getJson('/api/funcionarios-firmantes')->assertOk()->assertJsonCount(0, 'data.funcionarios');
+        $this->getJson('/api/funcionarios-firmantes')->assertOk()->assertJsonCount(1, 'data.funcionarios');
         $this->actor(['emision.ver', 'emision.editar']);
-        $this->postJson('/api/funcionarios-firmantes/habilitar', ['id_persona_trabajador' => 10, 'id_certificado_documento' => 1,
+        $this->postJson('/api/funcionarios-firmantes', ['id_persona_trabajador' => 10, 'id_certificado_documento' => 1,
             'modalidad' => 'PARALELA', 'orden_firma' => 1, 'confirmar' => true])->assertOk()->assertJsonPath('data.persistido', true);
         $this->getJson('/api/funcionarios-firmantes')->assertOk()->assertJsonCount(1, 'data.funcionarios')
             ->assertJsonPath('data.funcionarios.0.habilitado', true);
@@ -559,21 +757,176 @@ class CertificateSigningStageBTest extends TestCase
         $this->assertDatabaseCount('certificado.certificado_firma', 1);
     }
 
-    public function test_independent_enabling_returns_409_without_claiming_persistence(): void
+    public function test_workers_keep_distinct_employment_ids_without_duplicates_from_credentials(): void
+    {
+        $this->enableRealAssignment();
+        DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 12, 'id_persona' => 10,
+            'id_area' => 1, 'cargo' => 'Otro cargo', 'estado' => true, 'fecha_ingreso' => '2020-01-01']);
+        DB::table('certificado.firma')->insert(['id_firma' => 12, 'id_persona_trabajador' => 10,
+            'ruta_archivo_pfx' => 'privado.pfx', 'passphrase_cifrada' => 'secreto']);
+        $response = $this->getJson('/api/funcionarios-firmantes/trabajadores')->assertOk()
+            ->assertJsonCount(2, 'data.funcionarios')->assertJsonPath('data.catalogo_independiente', false)
+            ->assertJsonPath('data.funcionarios.0.habilitacion_global', true)
+            ->assertJsonPath('data.funcionarios.1.habilitacion_global', false)
+            ->assertJsonPath('data.funcionarios.0.estado_laboral', 'Vigente');
+        self::assertSame([10, 12], array_column($response->json('data.funcionarios'), 'id_persona_trabajador'));
+        self::assertSame($response->json('data.funcionarios.0.nombre'), $response->json('data.funcionarios.1.nombre'));
+        $response->assertDontSee('privado.pfx')->assertDontSee('secreto');
+    }
+
+    public function test_fourth_session_document_enters_catalog_after_remission_and_becomes_ready_after_confirmation(): void
+    {
+        $this->prepareUnassignedPreview();
+        DB::table('gestion.persona')->insert(['id_persona' => 20, 'nombres' => 'Responsable RRHH']);
+        DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 20, 'id_persona' => 20,
+            'id_area' => 1, 'cargo' => 'Personal RRHH', 'estado' => true, 'fecha_ingreso' => '2020-01-01']);
+        config(['certification.preparation.session_type_ids' => [1]]);
+        DB::table('certificado.actividad_sesion')->insert(['id_actividad_sesion' => 3, 'id_actividad' => 1,
+            'nombre' => 'Sesion 002', 'fecha' => '2026-11-01', 'estado' => 'Finalizada']);
+        foreach ([2, 3] as $person) {
+            DB::table('gestion.persona')->insert(['id_persona' => $person, 'nombres' => 'Beneficiario '.$person, 'apellido_paterno' => 'Real']);
+            DB::table('certificado.participacion')->insert(['id_participacion' => $person + 1, 'id_actividad' => 1,
+                'id_persona' => $person, 'estado' => 'Activo']);
+        }
+        $source = (array) DB::table('certificado.certificado_documento')->first();
+        $certificate = (array) DB::table('certificado.certificado')->first();
+        foreach ([[2, 2, 3, 2], [3, 3, 4, 3], [6, 1, 2, 3]] as [$id, $person, $participation, $session]) {
+            DB::table('certificado.certificado')->insert(array_replace($certificate, ['id_certificado' => $id,
+                'id_persona' => $person, 'id_participacion' => $participation, 'id_actividad_sesion' => $session,
+                'estado' => $id === 6 ? 'PREPARADO' : 'PENDIENTE_FIRMA']));
+            $pdf = "%PDF-1.4\nDocumento aislado {$id}.\n%%EOF";
+            $path = 'certificados/preparados/aislado-'.$id.'.pdf';
+            Storage::disk('local')->put($path, $pdf);
+            $code = str_pad((string) $id, 30, '0');
+            DB::table('certificado.certificado_documento')->insert(array_replace($source, ['id_certificado_documento' => $id,
+                'id_certificado' => $id, 'codigo_verificacion' => $code, 'ruta_archivo' => $path, 'hash_certificado' => hash('sha256', $pdf)]));
+            $context = ['tipo_certificado' => 'Capacitacion', 'nombres' => $person === 1 ? 'Antón' : 'Beneficiario '.$person,
+                'apellido_paterno' => $person === 1 ? 'Talián' : 'Real', 'apellido_materno' => null,
+                'actividad' => 'Capacitacion', 'sesion' => $session === 3 ? 'Sesion 002' : 'Sesion 001', 'fecha_sesion' => '2026-11-01'];
+            Storage::disk('local')->put('certificados/revisiones/aislado-'.$id.'.manifest', Crypt::encryptString(json_encode([
+                'code' => $code, 'hash' => hash('sha256', $pdf), 'message' => 'Mensaje aprobado.', 'context' => $context,
+            ], JSON_THROW_ON_ERROR)));
+            DB::table('certificado.asistencia')->insert(['id_participacion' => $participation, 'id_actividad_sesion' => $session, 'estado' => 'PRESENTE']);
+        }
+        $input = ['modalidad' => 'PARALELA', 'firmantes' => [['id_persona_trabajador' => 10, 'orden_firma' => 1]]];
+        foreach ([1, 2, 3] as $id) {
+            $base = '/api/certificados-documentos/'.$id.'/firma';
+            $review = $this->postJson($base.'/revision-pdf', $input)->assertOk()->json('data');
+            $this->postJson($base.'/asignar', $input + ['confirmar' => true])->assertOk();
+            $this->postJson($base.'/confirmar-pdf', ['token_revision' => $review['token_revision'], 'confirmar' => true])->assertOk();
+        }
+        $this->getJson('/api/certificados/list')->assertOk()->assertJsonPath('data.total', 3);
+        $before = DB::table('certificado.certificado_documento')->whereIn('id_certificado_documento', [1, 2, 3])->get()->toArray();
+        $base = '/api/certificados-documentos/6';
+        $this->getJson('/api/certificados-documentos/detail/6?flujo=firmas')->assertOk()
+            ->assertJsonPath('data.estado_certificado', 'PREPARADO')->assertJsonPath('data.facultades.remitir', true);
+        $review = $this->postJson($base.'/revisar-envio', [])->assertOk()->json('data');
+        $send = ['token_revision' => $review['token_revision'], 'confirmar' => true];
+        $this->postJson($base.'/enviar-gerencia', $send)->assertOk()->assertJsonPath('data.reintento', false);
+        $this->postJson($base.'/enviar-gerencia', $send)->assertOk()->assertJsonPath('data.reintento', true);
+        $this->getJson($base.'/firma/progreso')->assertOk()->assertJsonPath('data.disponible_rrhh', false);
+        $pending = $this->getJson('/api/certificados/list?id_sesion=3')->assertOk()->assertJsonPath('data.total', 2)
+            ->assertJsonPath('data.data.0.etiqueta_estado', 'Pendiente de firma')
+            ->assertJsonPath('data.data.0.pdf_confirmado', false)->assertJsonPath('data.data.0.disponible_rrhh', false)->json('data.data.0');
+        $originalPdf = Storage::disk('local')->get('certificados/preparados/aislado-6.pdf');
+        $download = $this->getJson($base.'/archivo')->assertOk()->assertDownload();
+        self::assertSame($originalPdf, file_get_contents($download->baseResponse->getFile()->getPathname()));
+        $this->actor(['emision.ver'], administrator: false, id: 20);
+        $this->getJson('/api/rrhh/certificados')->assertOk()->assertJsonPath('data.total', 3);
+        $this->getJson('/api/rrhh/certificados/6/pdf')->assertConflict();
+        $this->actor();
+        $revision = $this->postJson($base.'/firma/revision-pdf', $input)->assertOk()->json('data');
+        $download = $this->getJson($base.'/archivo')->assertOk()->assertDownload();
+        self::assertSame($originalPdf, file_get_contents($download->baseResponse->getFile()->getPathname()));
+        $this->postJson($base.'/firma/asignar', $input + ['confirmar' => true])->assertOk();
+        $this->postJson($base.'/firma/asignar', $input + ['confirmar' => true])->assertOk()->assertJsonPath('data.reintento', true);
+        $this->getJson('/api/certificados/list')->assertOk()->assertJsonPath('data.total', 4)
+            ->assertJsonPath('data.data.0.id_certificado', 6)->assertJsonPath('data.data.0.id_certificado_documento', 6)
+            ->assertJsonPath('data.data.0.etiqueta_estado', 'Pendiente de firma')->assertJsonPath('data.data.0.disponible_rrhh', false);
+        $download = $this->getJson($base.'/archivo')->assertOk()->assertDownload()
+            ->assertHeader('X-Document-SHA256', $pending['hash_pdf']);
+        self::assertSame($originalPdf, file_get_contents($download->baseResponse->getFile()->getPathname()));
+        $confirm = ['token_revision' => $revision['token_revision'], 'confirmar' => true];
+        $this->postJson($base.'/firma/confirmar-pdf', $confirm)->assertOk();
+        $this->postJson($base.'/firma/confirmar-pdf', $confirm)->assertOk();
+        $this->getJson($base.'/firma/progreso')->assertOk()->assertJsonPath('data.estado_preparacion', 'PREPARADO_ENTREGA')
+            ->assertJsonPath('data.disponible_rrhh', true);
+        $ready = $this->getJson('/api/certificados/list')->assertOk()->assertJsonPath('data.total', 4)
+            ->assertJsonPath('data.data.0.etiqueta_estado', 'Listo para entrega')
+            ->assertJsonPath('data.data.0.pdf_confirmado', true)->assertJsonPath('data.data.0.disponible_rrhh', true)->json('data.data.0');
+        foreach (['id_certificado', 'id_certificado_documento', 'id_participacion', 'id_sesion', 'codigo_verificacion'] as $field) {
+            self::assertSame($pending[$field], $ready[$field]);
+        }
+        $download = $this->getJson($base.'/archivo')->assertOk()->assertDownload()
+            ->assertHeader('X-Document-SHA256', $ready['hash_pdf']);
+        self::assertSame(base64_decode($revision['vista_previa_pdf']['contenido_base64'], true), file_get_contents($download->baseResponse->getFile()->getPathname()));
+        $this->actor(['emision.ver'], administrator: false, id: 20);
+        $this->getJson('/api/rrhh/certificados')->assertOk()->assertJsonPath('data.total', 4);
+        $this->getJson('/api/certificados/list?id_sesion=2')->assertOk()->assertJsonPath('data.total', 2);
+        $this->getJson('/api/certificados/list?id_sesion=3')->assertOk()->assertJsonPath('data.total', 2);
+        self::assertSame(array_map(fn (object $row): array => (array) $row, $before),
+            DB::table('certificado.certificado_documento')->whereIn('id_certificado_documento', [1, 2, 3])->get()->map(fn (object $row): array => (array) $row)->all());
+        $this->assertDatabaseCount('certificado.certificado', 4);
+        $this->assertDatabaseCount('certificado.certificado_documento', 4);
+        $this->assertDatabaseCount('certificado.certificado_firma', 4);
+        $this->assertDatabaseCount('certificado.firma', 0);
+    }
+
+    public function test_inactive_worker_is_excluded_from_future_selection_without_deleting_historical_assignments(): void
+    {
+        $this->prepareHumanResources();
+        $assignments = DB::table('certificado.certificado_firma')->get()->map(fn (object $row): array => (array) $row)->all();
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->update(['estado' => false]);
+
+        $workers = $this->getJson('/api/funcionarios-firmantes/trabajadores')->assertOk()->json('data.funcionarios');
+
+        self::assertFalse(collect($workers)->firstWhere('id_persona_trabajador', 10)['disponible_asignacion']);
+        self::assertSame($assignments, DB::table('certificado.certificado_firma')->get()->map(fn (object $row): array => (array) $row)->all());
+        $this->getJson('/api/certificados-documentos/1/firma/progreso')->assertOk()
+            ->assertJsonCount(2, 'data.firmantes_asignados')->assertJsonPath('data.disponible_rrhh', true);
+    }
+
+    public function test_admin_enable_persists_without_a_document_or_credentials(): void
     {
         $this->enableRealAssignment();
         DB::table('certificado.firma')->delete();
-        $this->actor(['emision.ver', 'ponentes-firmantes.editar']);
-        $input = ['id_persona_trabajador' => 10, 'confirmar' => true];
-        $this->postJson('/api/funcionarios-firmantes/habilitar', $input)->assertConflict()
-            ->assertJsonPath('data.persistido', false)->assertJsonPath('data.completada', false)
-            ->assertJsonPath('data.codigo_bloqueo', 'HABILITACION_INDEPENDIENTE_NO_DISPONIBLE');
-        $this->postJson('/api/funcionarios-firmantes/habilitar', $input + ['password' => 'prohibida'])->assertUnprocessable();
-        $this->postJson('/api/funcionarios-firmantes/habilitar', ['id_persona_trabajador' => 999, 'confirmar' => true])->assertNotFound();
-        $this->assertDatabaseCount('certificado.firma', 0);
+        DB::table('gestion.persona_trabajador')->update(['habilitado_firma_certificados' => false]);
+        $this->actor(['ponentes-firmantes.editar']);
+        $this->postJson('/api/funcionarios-firmantes', ['id_persona_trabajador' => 10])->assertOk()
+            ->assertJsonPath('data.persistido', true)->assertJsonPath('data.funcionario.habilitado_firma_certificados', true);
+        $this->assertDatabaseHas('gestion.persona_trabajador', ['id_persona_trabajador' => 10, 'habilitado_firma_certificados' => true]);
         $this->assertDatabaseCount('certificado.certificado_firma', 0);
-        $this->assertDatabaseCount('acceso.rol_modulo_permiso', 1);
-        $this->assertDatabaseHas('certificado.certificado', ['fecha_emision' => null, 'estado' => 'PENDIENTE_FIRMA']);
+        $this->assertDatabaseCount('certificado.firma', 0);
+    }
+
+    public function test_worker_detail_shows_inactive_state_without_changing_history(): void
+    {
+        $this->prepareHumanResources();
+        $before = DB::table('certificado.certificado_firma')->get()->map(fn (object $row): array => (array) $row)->all();
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->update(['estado' => false]);
+        $this->getJson('/api/funcionarios-firmantes/10')->assertOk()
+            ->assertJsonPath('data.estado_laboral', 'No vigente')->assertJsonPath('data.disponible_asignacion', false);
+        $this->getJson('/api/funcionarios-firmantes/999')->assertNotFound();
+        $this->postJson(self::BASE.'/asignar', ['modalidad' => 'SECUENCIAL', 'confirmar' => true,
+            'firmantes' => [['id_persona_trabajador' => 10, 'orden_firma' => 1], ['id_persona_trabajador' => 11, 'orden_firma' => 2]]])
+            ->assertOk()->assertJsonPath('data.reintento', true);
+        self::assertSame($before, DB::table('certificado.certificado_firma')->get()->map(fn (object $row): array => (array) $row)->all());
+    }
+
+    public function test_worker_detail_requires_authentication_permission_and_labor_scope(): void
+    {
+        $this->getJson('/api/funcionarios-firmantes/10')->assertUnauthorized();
+        $this->enableRealAssignment();
+        $this->actor([]);
+        $this->getJson('/api/funcionarios-firmantes/10')->assertForbidden();
+        $this->actor(['ponentes-firmantes.editar'], false, 8);
+        $this->getJson('/api/funcionarios-firmantes/10')->assertNotFound();
+        $this->actor(['ponentes-firmantes.editar'], false, 10);
+        $this->getJson('/api/funcionarios-firmantes/10')->assertOk()
+            ->assertJsonPath('data.id_persona_trabajador', 10)->assertJsonPath('data.habilitacion_global', true);
+        $this->postJson('/api/funcionarios-firmantes', ['id_persona_trabajador' => 10,
+            'id_certificado_documento' => 1, 'orden_firma' => 1, 'modalidad' => 'PARALELA', 'confirmar' => true])->assertForbidden();
+        $this->assertDatabaseCount('certificado.certificado_firma', 0);
     }
 
     public function test_administrative_catalog_enforces_authentication_permissions_and_area_scope(): void
@@ -583,7 +936,8 @@ class CertificateSigningStageBTest extends TestCase
         $this->actor([]);
         $this->getJson('/api/funcionarios-firmantes')->assertForbidden();
         $this->actor(['emision.ver']);
-        $this->postJson('/api/funcionarios-firmantes/habilitar', ['id_persona_trabajador' => 10, 'confirmar' => true])->assertForbidden();
+        $this->postJson('/api/funcionarios-firmantes/habilitar', ['id_persona_trabajador' => 10, 'id_certificado_documento' => 1,
+            'orden_firma' => 1, 'modalidad' => 'SECUENCIAL', 'confirmar' => true])->assertForbidden();
         $this->actor(['emision.ver'], false);
         $this->getJson('/api/funcionarios-firmantes/trabajadores')->assertOk()->assertJsonCount(0, 'data.funcionarios');
         $this->getJson('/api/funcionarios-firmantes?id_area=1')->assertNotFound();
@@ -601,7 +955,8 @@ class CertificateSigningStageBTest extends TestCase
         $this->freezeTime();
         $this->enableRealAssignment();
         DB::table('gestion.persona_trabajador')->update([$field => $value]);
-        $this->getJson('/api/funcionarios-firmantes/trabajadores')->assertOk()->assertJsonCount(0, 'data.funcionarios');
+        $this->getJson('/api/funcionarios-firmantes/trabajadores')->assertOk()->assertJsonCount(1, 'data.funcionarios')
+            ->assertJsonPath('data.funcionarios.0.disponible_asignacion', false);
     }
 
     #[TestWith([1, 'PARALELA'])]
@@ -618,7 +973,7 @@ class CertificateSigningStageBTest extends TestCase
             $id = 10 + $index;
             DB::table('gestion.persona')->insert(['id_persona' => $id, 'nombres' => 'Trabajador '.$id, 'apellido_paterno' => 'Prueba']);
             DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => $id, 'id_persona' => $id,
-                'id_area' => 1, 'cargo' => 'Cargo '.$id, 'estado' => true, 'fecha_ingreso' => '2020-01-01']);
+                'id_area' => 1, 'cargo' => 'Cargo '.$id, 'estado' => true, 'habilitado_firma_certificados' => true, 'fecha_ingreso' => '2020-01-01']);
             DB::table('acceso.usuario')->insert(['id_usuario' => $id, 'id_persona' => $id, 'estado' => true]);
             DB::table('acceso.usuario_rol')->insert(['id_usuario' => $id, 'id_rol' => 10]);
             $signers[] = ['id_persona_trabajador' => $id, 'orden_firma' => $index + 1];
@@ -653,16 +1008,42 @@ class CertificateSigningStageBTest extends TestCase
         $this->assertDatabaseCount('certificado.certificado_firma', $count);
     }
 
-    public function test_worker_assignment_requires_schema_and_institutional_competence(): void
+    public function test_enabled_mayor_is_available_and_assignable_across_areas_without_pfx(): void
     {
         $this->enableRealAssignment();
-        $input = ['modalidad' => 'PARALELA', 'firmantes' => [['id_persona_trabajador' => 10, 'orden_firma' => 1]], 'confirmar' => true];
         DB::statement('ALTER TABLE certificado.certificado_firma ADD COLUMN id_persona_trabajador INTEGER');
-        DB::table('gestion.persona_trabajador')->update(['id_area' => 99]);
+        DB::table('certificado.firma')->delete();
+        DB::table('gestion.persona_trabajador')->update(['habilitado_firma_certificados' => false]);
+        DB::table('gestion.area')->insert(['id_area' => 2, 'nombre' => 'Alcaldia']);
+        DB::table('gestion.persona')->insert(['id_persona' => 3, 'nombres' => 'Juan', 'apellido_paterno' => 'Alcalde']);
+        DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 3, 'id_persona' => 3,
+            'id_area' => 2, 'cargo' => 'Alcalde', 'estado' => true, 'habilitado_firma_certificados' => true,
+            'fecha_ingreso' => '2026-10-27']);
+        $this->actor(['emision.ver', 'emision.editar'], false, 10);
+        $original = (array) DB::table('certificado.certificado_documento')->first();
+        $bytes = Storage::disk('local')->get($original['ruta_archivo']);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id_persona_trabajador', 3)->assertJsonPath('data.0.nombre', 'Juan Alcalde')
+            ->assertJsonPath('data.0.cargo', 'Alcalde')->assertJsonPath('data.0.area', 'Alcaldia');
+        $input = ['modalidad' => 'PARALELA', 'firmantes' => [['id_persona_trabajador' => 3, 'orden_firma' => 1]], 'confirmar' => true];
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 3)->update(['habilitado_firma_certificados' => false]);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertOk()->assertJsonCount(0, 'data');
         $this->postJson(self::BASE.'/asignar', $input)->assertUnprocessable();
-        $this->assertDatabaseCount('certificado.certificado_firma', 0);
-        DB::table('certificado.actividad_firma')->insert(['id_actividad' => 1, 'id_firma' => 10, 'orden_firma' => 1]);
-        $this->postJson(self::BASE.'/asignar', $input)->assertOk();
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 3)
+            ->update(['habilitado_firma_certificados' => true, 'estado' => false]);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertOk()->assertJsonCount(0, 'data');
+        $this->postJson(self::BASE.'/asignar', $input)->assertUnprocessable();
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 3)->update(['estado' => true]);
+        $this->postJson(self::BASE.'/asignar', $input)->assertOk()->assertJsonPath('data.persistido', true);
+        $this->assertDatabaseHas('certificado.certificado_firma', ['id_persona_trabajador' => 3, 'id_firma' => null, 'fecha_firma' => null]);
+        $this->assertDatabaseCount('certificado.firma', 0);
+        $this->assertDatabaseCount('certificado.actividad_firma', 0);
+        self::assertSame($bytes, Storage::disk('local')->get($original['ruta_archivo']));
+        self::assertSame($original['hash_certificado'], DB::table('certificado.certificado_documento')->value('hash_certificado'));
+        $this->actor(['emision.ver']);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertForbidden();
+        $this->actor(['emision.ver', 'emision.editar'], false, 3);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertNotFound();
     }
 
     public function test_worker_assignment_is_blocked_without_direct_worker_schema(): void
@@ -729,7 +1110,7 @@ class CertificateSigningStageBTest extends TestCase
         DB::table('gestion.persona')->insert(['id_persona' => 10, 'nombres' => 'Responsable de prueba',
             'apellido_paterno' => 'Apellido', 'apellido_materno' => 'Materno']);
         DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 10, 'id_persona' => 10,
-            'id_area' => 1, 'cargo' => 'Cargo de prueba', 'estado' => true, 'fecha_ingreso' => '2020-01-01']);
+            'id_area' => 1, 'cargo' => 'Cargo de prueba', 'estado' => true, 'habilitado_firma_certificados' => true, 'fecha_ingreso' => '2020-01-01']);
         DB::table('certificado.firma')->insert(['id_firma' => 10, 'id_persona_trabajador' => 10]);
         DB::table('acceso.usuario')->insert(['id_usuario' => 10, 'id_persona' => 10, 'estado' => true]);
         DB::table('acceso.rol')->insert(['id_rol' => 10, 'estado' => true]);
@@ -739,6 +1120,120 @@ class CertificateSigningStageBTest extends TestCase
         DB::table('acceso.rol_modulo')->insert(['id_modulo' => 10, 'id_rol' => 10]);
         DB::table('acceso.rol_modulo_permiso')->insert(['id_modulo' => 10, 'id_rol' => 10, 'id_permiso' => 10]);
         $this->actor();
+    }
+
+    public function test_global_authorization_does_not_follow_employment_credentials_or_signing_permissions(): void
+    {
+        $this->enableRealAssignment();
+        DB::table('gestion.persona_trabajador')->update(['habilitado_firma_certificados' => false]);
+        $this->getJson('/api/funcionarios-firmantes/10')->assertOk()
+            ->assertJsonPath('data.vigente', true)->assertJsonPath('data.elegible_laboralmente', true)
+            ->assertJsonPath('data.habilitado_firma_certificados', false)->assertJsonPath('data.disponible_asignacion', false);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertOk()->assertJsonCount(0, 'data');
+        DB::table('certificado.firma')->delete();
+        DB::statement('ALTER TABLE certificado.certificado_firma ADD COLUMN id_persona_trabajador INTEGER');
+        $this->postJson(self::BASE.'/asignar', ['modalidad' => 'SECUENCIAL', 'confirmar' => true,
+            'firmantes' => [['id_persona_trabajador' => 10, 'orden_firma' => 1]]])->assertUnprocessable();
+        $this->assertDatabaseCount('certificado.certificado_firma', 0);
+        $this->assertDatabaseHas('gestion.persona_trabajador', ['id_persona_trabajador' => 10, 'estado' => true]);
+    }
+
+    public function test_global_authorization_persists_enable_disable_reenable_and_idempotency_without_credentials(): void
+    {
+        $this->enableRealAssignment();
+        DB::table('certificado.firma')->delete();
+        DB::table('gestion.persona_trabajador')->update(['habilitado_firma_certificados' => false]);
+        $before = (array) DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->first();
+        $this->actor(['ponentes-firmantes.editar']);
+        $input = ['id_persona_trabajador' => 10];
+        $this->postJson('/api/funcionarios-firmantes/habilitar', $input)->assertOk()
+            ->assertJsonPath('data.persistido', true)->assertJsonPath('data.reintento', false)
+            ->assertJsonPath('data.funcionario.habilitado_firma_certificados', true);
+        self::assertTrue(Person_Worker::findOrFail(10)->habilitado_firma_certificados);
+        $this->postJson('/api/funcionarios-firmantes/habilitar', $input)->assertOk()->assertJsonPath('data.reintento', true);
+        $this->actor(['ponentes-firmantes.editar']);
+        $this->getJson('/api/funcionarios-firmantes/10')->assertOk()->assertJsonPath('data.habilitado_firma_certificados', true);
+        $this->deleteJson('/api/funcionarios-firmantes/10/habilitacion')->assertOk()
+            ->assertJsonPath('data.persistido', true)->assertJsonPath('data.funcionario.habilitado_firma_certificados', false);
+        self::assertFalse(Person_Worker::findOrFail(10)->habilitado_firma_certificados);
+        $this->deleteJson('/api/funcionarios-firmantes/10/habilitacion')->assertOk()->assertJsonPath('data.reintento', true);
+        $this->postJson('/api/funcionarios-firmantes/habilitar', $input)->assertOk()->assertJsonPath('data.reintento', false);
+        $after = (array) DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->first();
+        unset($before['habilitado_firma_certificados'], $after['habilitado_firma_certificados']);
+        self::assertSame($before, $after);
+        $this->assertDatabaseCount('gestion.persona_trabajador', 1);
+        $this->assertDatabaseCount('certificado.firma', 0);
+        $this->assertDatabaseCount('certificado.certificado_firma', 0);
+    }
+
+    public function test_global_authorization_changes_require_authentication_admin_permission_and_scope(): void
+    {
+        $input = ['id_persona_trabajador' => 10];
+        $this->postJson('/api/funcionarios-firmantes/habilitar', $input)->assertUnauthorized();
+        $this->deleteJson('/api/funcionarios-firmantes/10/habilitacion')->assertUnauthorized();
+        $this->enableRealAssignment();
+        $this->actor(['emision.ver', 'firmas.firmar']);
+        $this->postJson('/api/funcionarios-firmantes/habilitar', $input)->assertForbidden();
+        $this->deleteJson('/api/funcionarios-firmantes/10/habilitacion')->assertForbidden();
+        $this->actor(['ponentes-firmantes.editar'], false, 8);
+        $this->postJson('/api/funcionarios-firmantes/habilitar', $input)->assertNotFound();
+        $this->deleteJson('/api/funcionarios-firmantes/10/habilitacion')->assertNotFound();
+        $this->actor(['ponentes-firmantes.editar']);
+        $this->postJson('/api/funcionarios-firmantes/habilitar', ['id_persona_trabajador' => 999])->assertNotFound();
+        $this->postJson('/api/funcionarios-firmantes/habilitar', $input + ['password' => 'prohibido'])->assertUnprocessable();
+        $this->postJson('/api/funcionarios-firmantes/habilitar', ['id_persona_trabajador' => 'x'])->assertUnprocessable();
+        DB::table('gestion.persona_trabajador')->update(['estado' => false]);
+        $this->postJson('/api/funcionarios-firmantes/habilitar', $input)->assertConflict();
+        $this->deleteJson('/api/funcionarios-firmantes/10/habilitacion')->assertOk();
+        $this->assertDatabaseHas('gestion.persona_trabajador', ['id_persona_trabajador' => 10, 'estado' => false, 'habilitado_firma_certificados' => false]);
+    }
+
+    public function test_global_authorization_distinguishes_two_maria_perez_employments_and_filters_gerencia(): void
+    {
+        $this->enableRealAssignment();
+        DB::table('gestion.persona')->where('id_persona', 10)->update(['nombres' => 'Maria', 'apellido_paterno' => 'Perez']);
+        DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 12, 'id_persona' => 10,
+            'id_area' => 1, 'cargo' => 'Supervisora', 'estado' => true, 'fecha_ingreso' => '2020-01-01']);
+        $this->getJson('/api/funcionarios-firmantes')->assertOk()->assertJsonCount(2, 'data.funcionarios')
+            ->assertJsonPath('data.funcionarios.0.id_persona_trabajador', 10)
+            ->assertJsonPath('data.funcionarios.1.id_persona_trabajador', 12)
+            ->assertJsonPath('data.funcionarios.1.habilitado_firma_certificados', false);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id_persona_trabajador', 10);
+        $this->actor(['ponentes-firmantes.editar']);
+        $this->postJson('/api/funcionarios-firmantes/habilitar', ['id_persona_trabajador' => 12])->assertOk();
+        $this->deleteJson('/api/funcionarios-firmantes/10/habilitacion')->assertOk();
+        $this->actor(['emision.ver', 'emision.editar']);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id_persona_trabajador', 12);
+        $this->assertDatabaseCount('gestion.persona_trabajador', 2);
+    }
+
+    public function test_global_authorization_disable_preserves_historical_assignments_and_original_pdf(): void
+    {
+        $this->enableRealAssignment();
+        DB::statement('ALTER TABLE certificado.certificado_firma ADD COLUMN id_persona_trabajador INTEGER');
+        DB::table('certificado.firma')->delete();
+        DB::table('certificado.certificado_documento')->update(['modalidad_firma' => 'SECUENCIAL']);
+        DB::table('certificado.certificado_firma')->insert(['id_certificado_documento' => 1,
+            'id_persona_trabajador' => 10, 'id_firma' => null, 'fecha_firma' => null, 'orden_firma' => 1]);
+        $original = DB::table('certificado.certificado_documento')->first();
+        $bytes = Storage::disk('local')->get($original->ruta_archivo);
+        $this->actor(['ponentes-firmantes.editar']);
+        $this->deleteJson('/api/funcionarios-firmantes/10/habilitacion')->assertOk();
+        $this->actor(['emision.ver', 'emision.editar']);
+        $this->getJson(self::BASE.'/firmantes-disponibles')->assertOk()->assertJsonCount(0, 'data');
+        $this->getJson(self::BASE.'/progreso')->assertOk()->assertJsonCount(1, 'data.firmantes_asignados')
+            ->assertJsonPath('data.firmantes_asignados.0.id_persona_trabajador', 10)
+            ->assertJsonPath('data.firmantes_asignados.0.id_firma', null);
+        $this->postJson(self::BASE.'/asignar', ['modalidad' => 'PARALELA', 'confirmar' => true,
+            'firmantes' => [['id_persona_trabajador' => 10, 'orden_firma' => 1]]])->assertConflict();
+        $this->postJson(self::BASE.'/asignar', ['modalidad' => 'SECUENCIAL', 'confirmar' => true,
+            'firmantes' => [['id_persona_trabajador' => 10, 'orden_firma' => 1]]])->assertOk()->assertJsonPath('data.reintento', true);
+        $this->assertDatabaseCount('certificado.certificado_firma', 1);
+        self::assertSame((array) $original, (array) DB::table('certificado.certificado_documento')->first());
+        self::assertSame($bytes, Storage::disk('local')->get($original->ruta_archivo));
+        $this->assertDatabaseCount('certificado.firma', 0);
     }
 
     #[TestWith(['PARALELA'])]
@@ -798,7 +1293,7 @@ class CertificateSigningStageBTest extends TestCase
         foreach ([
             'gestion.area' => 'id_area INTEGER PRIMARY KEY, nombre TEXT',
             'gestion.persona' => 'id_persona INTEGER PRIMARY KEY, nombres TEXT, apellido_paterno TEXT, apellido_materno TEXT',
-            'gestion.persona_trabajador' => 'id_persona_trabajador INTEGER PRIMARY KEY, id_persona INTEGER, id_area INTEGER, cargo TEXT, estado BOOLEAN, fecha_ingreso DATE, fecha_fin DATE',
+            'gestion.persona_trabajador' => 'id_persona_trabajador INTEGER PRIMARY KEY, id_persona INTEGER, id_area INTEGER, cargo TEXT, estado BOOLEAN, habilitado_firma_certificados BOOLEAN NOT NULL DEFAULT FALSE, fecha_ingreso DATE, fecha_fin DATE',
             'gestion.persona_practicante' => 'id_persona_practicante INTEGER PRIMARY KEY, id_persona INTEGER',
             'gestion.practica' => 'id_practica INTEGER PRIMARY KEY, id_persona_practicante INTEGER, id_area INTEGER',
             'certificado.reconocimiento' => 'id_reconocimiento INTEGER PRIMARY KEY, id_persona_trabajador INTEGER',
@@ -1022,7 +1517,7 @@ class CertificateSigningStageBTest extends TestCase
         $this->actor();
         DB::table('gestion.persona')->insert(['id_persona' => 10, 'nombres' => 'Responsable', 'apellido_paterno' => 'Autorizado']);
         DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => 10, 'id_persona' => 10,
-            'id_area' => 1, 'cargo' => 'Cargo institucional', 'estado' => true, 'fecha_ingreso' => '2020-01-01']);
+            'id_area' => 1, 'cargo' => 'Cargo institucional', 'estado' => true, 'habilitado_firma_certificados' => true, 'fecha_ingreso' => '2020-01-01']);
         DB::table('certificado.firma')->insert(['id_firma' => 10, 'id_persona_trabajador' => 10,
             'ruta_archivo_pfx' => 'firmas/secreto.pfx', 'passphrase_cifrada' => 'secreto-cifrado']);
         DB::table('acceso.usuario')->insert(['id_usuario' => 10, 'id_persona' => 10, 'estado' => true]);

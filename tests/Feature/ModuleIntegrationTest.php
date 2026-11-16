@@ -105,9 +105,9 @@ class ModuleIntegrationTest extends TestCase
         }
     }
 
-    private function certificate(): array
+    private function annulledCertificate(): array
     {
-        return ['id_persona' => 1, 'id_tipo_certificado' => 1, 'id_participacion' => 1, 'fecha_emision' => '2026-01-01', 'estado' => 'Vigente', 'notificado' => false];
+        return ['id_persona' => 1, 'id_tipo_certificado' => 1, 'id_participacion' => 1, 'fecha_emision' => '2026-01-01', 'estado' => 'ANULADO', 'notificado' => false];
     }
 
     private function attendance(): array
@@ -173,7 +173,7 @@ class ModuleIntegrationTest extends TestCase
             $this->deleteJson($delete)->assertOk();
             $this->getJson($detail)->assertNotFound();
         }
-        $this->postJson('/api/certificados/create', $this->certificate())->assertCreated();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertCreated();
         $this->assertFalse(Schema::hasTable('persona'));
         $this->assertFalse(Schema::hasTable('participacion'));
     }
@@ -182,7 +182,7 @@ class ModuleIntegrationTest extends TestCase
     {
         $this->authorize();
         $this->postJson('/api/attendance/create', $this->attendance())->assertCreated();
-        $this->postJson('/api/certificados/create', $this->certificate())->assertCreated();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertCreated();
         foreach (['PUT', 'PATCH'] as $method) {
             $this->json($method, '/api/participation/1', ['id_persona' => 2])->assertConflict();
             $this->json($method, '/api/participation/1', ['id_actividad' => 2])->assertConflict();
@@ -217,7 +217,7 @@ class ModuleIntegrationTest extends TestCase
             $this->json($method, '/api/activity/1', ['fecha_inicio' => '2026-01-21'])->assertUnprocessable();
         }
         $this->patchJson('/api/activity/1', ['fecha_fin' => '2026-02-01'])->assertOk();
-        $this->postJson('/api/certificados/create', $this->certificate())->assertCreated();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertCreated();
         $this->patchJson('/api/activity/1', ['nombre' => 'Cambiar histórico'])->assertConflict();
     }
 
@@ -235,9 +235,9 @@ class ModuleIntegrationTest extends TestCase
     {
         $this->authorize();
         $this->postJson('/api/activity', ['id_area' => 99, 'id_tipo_actividad' => 1, 'nombre' => 'Inválida', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'ACTIVO'])->assertForbidden();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2]))->assertUnprocessable();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => null, 'id_practica' => 1]))->assertCreated();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2, 'id_participacion' => null, 'id_practica' => 1]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_persona' => 2]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_participacion' => null, 'id_practica' => 1]))->assertCreated();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_persona' => 2, 'id_participacion' => null, 'id_practica' => 1]))->assertUnprocessable();
     }
 
     public function test_eloquent_relations_resolve_the_shared_records(): void
@@ -250,7 +250,7 @@ class ModuleIntegrationTest extends TestCase
         $this->assertCount(0, $activity->signatures);
         $this->authorize();
         $this->postJson('/api/attendance/create', $this->attendance())->assertCreated();
-        $this->postJson('/api/certificados/create', $this->certificate())->assertCreated();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertCreated();
         $participation = Participation::findOrFail(1);
         $this->assertSame('Asistente', $participation->participationType->nombre);
         $this->assertCount(1, $participation->attendances);
@@ -316,7 +316,7 @@ class ModuleIntegrationTest extends TestCase
         $this->assertTrue($practitioner['success']);
         $practice = PracticeData::createPractice(['id_persona_practicante' => $practitioner['data']->id_persona_practicante, 'id_institucion' => $institution, 'id_area' => $area, 'carrera' => 'Sistemas', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'FINALIZADO']);
         $this->assertTrue($practice['success']);
-        $payload = array_replace($this->certificate(), ['id_persona' => $person, 'id_participacion' => null, 'id_practica' => $practice['data']->id_practica]);
+        $payload = array_replace($this->annulledCertificate(), ['id_persona' => $person, 'id_participacion' => null, 'id_practica' => $practice['data']->id_practica]);
         $this->postJson('/api/certificados/create', $payload)->assertCreated()->assertJsonPath('data.id_persona', $person);
         $this->postJson('/api/certificados/create', array_replace($payload, ['id_persona' => 2]))->assertUnprocessable();
         $this->assertSame($person, Persona::findOrFail($person)->id_persona);
@@ -331,7 +331,7 @@ class ModuleIntegrationTest extends TestCase
         $worker = Person_WorkerData::createPersonWorker(['id_persona' => $person, 'id_area' => 1, 'cargo' => 'Cargo de prueba', 'fecha_ingreso' => '2026-01-01', 'estado' => true]);
         $this->assertTrue($worker['success']);
         $recognition = $this->postJson('/api/reconocimientos/create', ['id_persona_trabajador' => $worker['data']->id_persona_trabajador, 'titulo' => 'Mérito', 'descripcion' => 'Prueba', 'motivo' => 'Prueba', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO'])->assertCreated()->json('data.id_reconocimiento');
-        $payload = array_replace($this->certificate(), ['id_persona' => $person, 'id_participacion' => null, 'id_reconocimiento' => $recognition]);
+        $payload = array_replace($this->annulledCertificate(), ['id_persona' => $person, 'id_participacion' => null, 'id_reconocimiento' => $recognition]);
         $this->postJson('/api/certificados/create', $payload)->assertCreated()->assertJsonPath('data.id_persona', $person);
         $this->postJson('/api/certificados/create', array_replace($payload, ['id_persona' => 2]))->assertUnprocessable();
     }

@@ -6,16 +6,26 @@ use App\Http\Controllers\Controller;
 use App\Http\Data\ActivityRequests\ActivityRequestData;
 use App\Models\Activity\Activity;
 use App\Models\ActivitySession\ActivitySession;
+use App\Models\ActivitySpeaker\ActivitySpeaker;
+use App\Models\ActivityType\ActivityType;
 use App\Models\Certificate\Certificate;
 use App\Models\CertificateDocument\CertificateDocument;
+use App\Models\CertificateType\CertificateType;
 use App\Models\Participation\Participation;
+use App\Models\PersonSpeaker\PersonaPonente;
+use App\Models\Practice\Practice;
+use App\Models\Recognition\Recognition;
 use App\Services\CertificateManagement;
+use App\Services\CertificateOrigins;
 use App\Services\CertificationReadiness;
+use App\Services\RequestReadMemo;
 use App\Services\SessionCertificatePreparation;
+use App\Services\SessionSpeakers;
 use App\Traits\ApiResponse;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
@@ -28,6 +38,212 @@ class CertificationReadinessController extends Controller
     use ApiResponse;
 
     public function __construct(private CertificationReadiness $readiness) {}
+
+    public function originCatalogs(CertificateOrigins $origins): JsonResponse
+    {
+        return $this->respond(function () use ($origins): array {
+            foreach ([Certificate::class, ActivityType::class, CertificateType::class] as $model) {
+                abort_if(Gate::denies('viewAny', $model), 403, 'No autorizado para consultar los catálogos de certificación.');
+            }
+
+            return $origins->catalogs();
+        });
+    }
+
+    public function manageSessionSpeakers(Request $request, int $activity, int $id, SessionSpeakers $speakers): JsonResponse
+    {
+        return $this->respond(function () use ($request, $activity, $id, $speakers): array {
+            abort_if(Gate::denies('viewAny', ActivitySpeaker::class), 403, 'No autorizado para consultar ponentes.');
+            if ($request->isMethod('POST')) {
+                abort_if(Gate::denies('create', ActivitySpeaker::class), 403, 'No autorizado para vincular ponentes.');
+            }
+            $session = $this->session($request, $id, 'view');
+            abort_unless((int) $session->id_actividad === $activity, 409, 'La sesión no pertenece a la actividad.');
+            $speakers->assertSchema();
+            if ($request->isMethod('GET')) {
+                abort_if(Gate::denies('viewAny', PersonaPonente::class), 403, 'No autorizado para consultar personas ponentes.');
+
+                return ['id_actividad' => $activity, 'id_sesion' => $id,
+                    'ponentes_disponibles' => DB::table('gestion.persona_ponente as pp')
+                        ->join('gestion.persona as p', 'p.id_persona', '=', 'pp.id_persona')->orderBy('pp.id_persona_ponente')
+                        ->get(['pp.id_persona_ponente', 'pp.id_persona', 'p.nombres', 'p.apellido_paterno', 'p.apellido_materno']),
+                    'vinculos' => $speakers->assigned($activity, $id)];
+            }
+            if ($request->isMethod('POST')) {
+                abort_if(array_diff(array_keys($request->all()), ['id_persona_ponente']) !== [], 422, 'Campos no admitidos.');
+                $input = Validator::make($request->all(), ['id_persona_ponente' => 'required|integer|min:1'])->validate();
+
+                return ['vinculo' => $speakers->link($activity, $id, $input['id_persona_ponente'])];
+            }
+            abort_if(array_diff(array_keys($request->all()), ['id_actividad_ponente']) !== [], 422, 'Campos no admitidos.');
+            $input = Validator::make($request->all(), ['id_actividad_ponente' => 'required|integer|min:1'])->validate();
+            $assignment = ActivitySpeaker::find($input['id_actividad_ponente']);
+            abort_unless($assignment, 404, 'Vínculo no encontrado.');
+            abort_if(Gate::denies('delete', $assignment), 403, 'No autorizado para desvincular ponentes.');
+            $speakers->unlink($activity, $id, $input['id_actividad_ponente']);
+
+            return ['desvinculado' => true];
+        });
+    }
+
+    public function sessionSpeakers(Request $request, int $id, CertificateOrigins $origins): JsonResponse
+    {
+        return $this->respond(function () use ($request, $id, $origins): array {
+            abort_if(Gate::denies('viewAny', Certificate::class) || Gate::denies('viewAny', ActivitySpeaker::class),
+                403, 'No autorizado para consultar ponentes de certificación.');
+            $session = $this->session($request, $id, 'view');
+
+            $data = $origins->sessionSpeakers($id, (int) $session->id_actividad);
+            $data['modalidad_reconocimiento'] = 'sesion';
+            foreach ($data['ponentes_sesion'] ?? [] as $speaker) {
+                $speaker->reconocimiento = $this->activitySpeakerEvaluation($origins, (int) $speaker->id_actividad_ponente, true, $speaker->reconocimiento);
+            }
+            if ($data['ponentes_sesion'] !== null) {
+                $data['puede_preparar'] = $data['ponentes_sesion']->contains(fn (object $speaker): bool => $speaker->reconocimiento['puede_preparar']);
+                $data['puede_generar_pdf'] = $data['puede_preparar'];
+            }
+            foreach ($data['ponentes_actividad'] as $speaker) {
+                $speaker->reconocimiento_por_actividad = $this->activitySpeakerEvaluation($origins, (int) $speaker->id_actividad_ponente);
+            }
+
+            return $data;
+        });
+    }
+
+    public function activitySpeakers(Request $request, int $id, CertificateOrigins $origins): JsonResponse
+    {
+        return $this->respond(function () use ($request, $id, $origins): array {
+            abort_if(Gate::denies('viewAny', Activity::class) || Gate::denies('viewAny', ActivitySpeaker::class)
+                || Gate::denies('viewAny', Certificate::class), 403, 'No autorizado.');
+            $activity = Activity::find($id);
+            abort_unless($activity, 404, 'Actividad no encontrada.');
+            abort_if(Gate::denies('view', $activity), 403, 'No autorizado.');
+            $this->checkArea($request, (int) $activity->id_area);
+            $rows = $origins->sessionSpeakers(null, $id)['ponentes_actividad'];
+
+            return ['modalidad_reconocimiento' => 'actividad', 'id_actividad' => $id, 'id_sesion' => null,
+                'ponentes' => $rows->map(fn (object $row): array => [...(array) $row,
+                    'reconocimiento' => $this->activitySpeakerEvaluation($origins, (int) $row->id_actividad_ponente)])->all()];
+        });
+    }
+
+    /** @return array<string, mixed> */
+    private function activitySpeakerEvaluation(CertificateOrigins $origins, int $id, bool $bySession = false, ?array $evaluation = null): array
+    {
+        $data = $evaluation ?? $origins->activityRecognition($id, $bySession);
+        $allowed = Gate::allows('create', Certificate::class) && Gate::allows('create', CertificateDocument::class)
+            && Gate::allows('create', Recognition::class);
+        if ($data['puede_preparar'] && ! $allowed) {
+            $data['motivos_bloqueo'][] = 'Se requieren permisos efectivos para crear certificados, documentos y reconocimientos.';
+        }
+        $data['puede_preparar'] = $data['puede_preparar'] && $allowed;
+        $data['puede_generar_pdf'] = $data['puede_preparar'];
+
+        return $data;
+    }
+
+    public function practiceReadiness(Request $request, int $id, CertificateOrigins $origins): JsonResponse
+    {
+        return $this->respond(function () use ($request, $id, $origins): array {
+            abort_if(Gate::denies('viewAny', Certificate::class) || Gate::denies('viewAny', Practice::class),
+                403, 'No autorizado para consultar prácticas de certificación.');
+            $practice = Practice::find($id);
+            abort_unless($practice, 404, 'Práctica no encontrada.');
+            abort_if(Gate::denies('view', $practice), 403, 'No autorizado para consultar esta práctica.');
+            $this->checkArea($request, (int) $practice->id_area);
+
+            $data = $origins->practice($id);
+            $this->applyPreparationPermission($data);
+            $data['puede_generar_pdf'] = $data['puede_preparar'] && Gate::allows('create', CertificateDocument::class);
+            $data['puede_preparar'] = $data['puede_generar_pdf'];
+
+            return $data;
+        });
+    }
+
+    public function recognitionReadiness(Request $request, int $id, CertificateOrigins $origins): JsonResponse
+    {
+        return $this->respond(function () use ($request, $id, $origins): array {
+            abort_if(Gate::denies('viewAny', Certificate::class), 403, 'No autorizado.');
+            $origins->authorize('reconocimiento', $id, $request->user());
+            $data = $origins->recognition($id);
+            $this->applyPreparationPermission($data);
+            $data['puede_generar_pdf'] = $data['puede_preparar'] && Gate::allows('create', CertificateDocument::class);
+            $data['puede_preparar'] = $data['puede_generar_pdf'];
+
+            return $data;
+        });
+    }
+
+    public function prepareOrigin(Request $request, string $origen, int $id, CertificateManagement $management): JsonResponse
+    {
+        return $this->respond(function () use ($request, $origen, $id, $management): array {
+            if ($request->isMethod('GET')) {
+                abort_unless($request->input('accion') === 'consultar_preparacion', 422, 'GET sólo permite consultar la preparación.');
+            }
+            $rules = ['accion' => 'required|in:consultar_preparacion,revisar_documento,confirmar_preparacion',
+                'token_revision' => 'required_if:accion,confirmar_preparacion|prohibited_if:accion,revisar_documento|string|regex:/^[a-f0-9]{64}$/D',
+                'confirmar' => $request->input('accion') === 'confirmar_preparacion' ? 'required|accepted' : 'prohibited'];
+            if (in_array($origen, ['ponente_actividad', 'ponente_sesion'], true)) {
+                $rules['modalidad_reconocimiento'] = 'required|in:actividad,sesion';
+                $rules['id_sesion'] = 'required_if:modalidad_reconocimiento,sesion|prohibited_if:modalidad_reconocimiento,actividad|integer|min:1';
+            }
+            if ($origen === 'ponente_sesion') {
+                $hasText = array_key_exists('mensaje', $request->all()) || array_key_exists('motivo', $request->all());
+                foreach (['mensaje' => 1200, 'motivo' => 500] as $field => $limit) {
+                    $rules[$field] = [$hasText ? 'required' : 'sometimes', 'string', 'max:'.$limit,
+                        function (string $attribute, mixed $value, \Closure $fail): void {
+                            if (is_string($value) && (preg_match('/[^\p{Z}\s\p{Cf}]/u', $value) !== 1
+                                || preg_match('/<[^>]*>|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x{202A}-\x{202E}\x{2066}-\x{2069}]/u', $value))) {
+                                $fail('El texto debe ser texto plano no vacío, sin HTML ni caracteres de control.');
+                            }
+                        }];
+                }
+            }
+            abort_if(array_diff(array_keys($request->all()), array_keys($rules)) !== [], 422, 'La acción contiene campos no admitidos.');
+            $input = Validator::make($request->all(), $rules)->validate();
+            if ($input['accion'] === 'consultar_preparacion') {
+                abort_unless($origen === 'ponente_sesion' && $input['modalidad_reconocimiento'] === 'sesion', 422,
+                    'La consulta corresponde a reconocimientos por sesión.');
+                abort_if(isset($input['token_revision']) || isset($input['mensaje']) || isset($input['motivo']), 422,
+                    'La consulta no admite revisión ni cambios de texto.');
+                $origins = app(CertificateOrigins::class);
+                $origins->authorize($origen, $id, $request->user());
+                $assignment = $origins->assignment($id);
+                $this->session($request, $input['id_sesion'], 'view');
+                abort_unless((int) $assignment->id_actividad_sesion === (int) $input['id_sesion'], 409,
+                    'El vínculo no acredita esta sesión.');
+
+                return $management->consultSessionRecognition($id, $request->user());
+            }
+            if ($origen === 'ponente_sesion') {
+                abort_unless(Gate::allows('create', Certificate::class) && Gate::allows('create', CertificateDocument::class)
+                    && Gate::allows('create', Recognition::class), 403, 'No autorizado para preparar reconocimientos.');
+                abort_unless($input['modalidad_reconocimiento'] === 'sesion', 422, 'Esta ruta exige modalidad sesion.');
+                app(CertificateOrigins::class)->authorize($origen, $id, $request->user());
+                $assignment = app(CertificateOrigins::class)->assignment($id);
+                $this->session($request, $input['id_sesion'], 'view');
+                abort_unless((int) $assignment->id_actividad_sesion === (int) $input['id_sesion'], 409, 'El vínculo no acredita esta sesión.');
+            }
+            if ($origen === 'ponente_actividad' && $input['modalidad_reconocimiento'] === 'sesion') {
+                abort_unless(Gate::allows('create', Certificate::class) && Gate::allows('create', CertificateDocument::class)
+                    && Gate::allows('create', Recognition::class), 403, 'No autorizado para preparar reconocimientos.');
+                app(CertificateOrigins::class)->authorize($origen, $id, $request->user());
+                $session = ActivitySession::find($input['id_sesion']);
+                abort_unless($session, 404, 'Sesión no encontrada.');
+                $assignment = app(CertificateOrigins::class)->assignment($id);
+                abort_unless((int) $session->id_actividad === (int) $assignment->id_actividad, 409, 'La sesión no pertenece a la actividad del ponente.');
+                abort(409, 'Falta una referencia persistente del ponente a actividad_sesion; no se convertirá el reconocimiento por sesión en uno por actividad.');
+            }
+
+            $text = $origen === 'ponente_sesion' && isset($input['mensaje'])
+                ? ['mensaje' => $input['mensaje'], 'motivo' => $input['motivo']] : null;
+
+            return $input['accion'] === 'revisar_documento'
+                ? $management->reviewOrigin($origen, $id, $request->user(), $text)
+                : $management->confirmOrigin($origen, $id, $input['token_revision'], $request->user(), $text);
+        })->header('Cache-Control', 'private, no-store');
+    }
 
     public function pending(Request $request): JsonResponse
     {
@@ -110,6 +326,12 @@ class CertificationReadinessController extends Controller
 
     public function prepare(Request $request, int $id): JsonResponse
     {
+        $executionLimit = (int) ini_get('max_execution_time');
+        $preparationLimit = max(30, min(300, (int) config('certification.preparation.execution_timeout_seconds', 120)));
+        if ($executionLimit > 0 && $executionLimit < $preparationLimit) {
+            set_time_limit($preparationLimit);
+        }
+
         return $this->respond(function () use ($request, $id): array {
             $session = $this->session($request, $id, 'view');
             $this->authorizeBeneficiaries();
@@ -141,6 +363,15 @@ class CertificationReadinessController extends Controller
                 $this->validateContext($input, (int) $session->id_actividad, $id, 'sesion');
                 $service = app(SessionCertificatePreparation::class);
                 $typeId = $service->resolveType(isset($input['id_tipo_certificado']) ? (int) $input['id_tipo_certificado'] : null);
+                if (in_array($input['accion'], ['vista_previa', 'enviar_gerencia'], true)
+                    && Gate::allows('create', CertificateDocument::class)) {
+                    $management = app(CertificateManagement::class);
+                    $existing = $management->recoverPreparation($id, (int) $input['id_participacion'], $typeId, $request->user());
+                    if ($existing !== null) {
+                        return ['modo' => 'administrativo', 'accion' => $input['accion'], ...($input['accion'] === 'enviar_gerencia'
+                            ? $management->remit((int) $existing['id_certificado_documento'], $request->user(), $id) : $existing)];
+                    }
+                }
                 if ($input['accion'] === 'vista_previa') {
                     $data = $service->preview($id, (int) $input['id_participacion'], $typeId, $this->areas($request), $input['mensaje'] ?? null, ($input['formato'] ?? 'html') === 'pdf');
                     $data['puede_emitir_demostracion'] = $data['puede_emitir_demostracion'] && Gate::allows('create', CertificateDocument::class);
@@ -203,7 +434,9 @@ class CertificationReadinessController extends Controller
     private function session(Request $request, int $id, string $ability): ActivitySession
     {
         abort_if(Gate::denies('viewAny', ActivitySession::class), 403, 'No autorizado.');
-        $session = ActivitySession::with('activity')->find($id);
+        $session = RequestReadMemo::remember(ActivitySession::class.'.'.$id, fn (): ?ActivitySession => ActivitySession::find($id));
+        $session?->setRelation('activity', RequestReadMemo::remember(Activity::class.'.'.$session->id_actividad,
+            fn (): ?Activity => Activity::find($session->id_actividad)));
         abort_unless($session, 404, 'Sesión no encontrada.');
         abort_if(Gate::denies($ability, $session), 403, 'No autorizado.');
         $this->checkArea($request, (int) $session->activity?->id_area);
@@ -333,10 +566,21 @@ class CertificationReadinessController extends Controller
         } catch (HttpException $exception) {
             return $this->error($exception->getMessage(), $exception->getStatusCode());
         } catch (QueryException $exception) {
+            if ((string) $exception->getCode() === '55P03') {
+                return $this->error('El origen está ocupado por otra operación; vuelva a consultar.', 409);
+            }
+            if (str_starts_with((string) $exception->getCode(), '08') || (string) $exception->getCode() === '57014') {
+                return $this->error('La base de datos no está disponible temporalmente; vuelva a intentar.', 503);
+            }
             $conflict = in_array(substr((string) $exception->getCode(), 0, 2), ['23', '40'], true);
+            if (! $conflict) {
+                report($exception);
+            }
 
             return $this->error($conflict ? 'Conflicto de integridad o concurrencia; vuelva a consultar el recurso.' : 'No se pudo consultar el módulo de certificación.', $conflict ? 409 : 500);
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            report($exception);
+
             return $this->error('No se pudo completar la operación de certificación.', 500);
         }
     }

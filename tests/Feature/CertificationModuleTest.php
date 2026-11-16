@@ -73,9 +73,9 @@ class CertificationModuleTest extends TestCase
         }
     }
 
-    private function certificate(): array
+    private function annulledCertificate(): array
     {
-        return ['id_persona' => 1, 'id_tipo_certificado' => 1, 'id_participacion' => 1, 'fecha_emision' => '2026-01-01', 'estado' => 'Vigente', 'notificado' => false];
+        return ['id_persona' => 1, 'id_tipo_certificado' => 1, 'id_participacion' => 1, 'fecha_emision' => '2026-01-01', 'estado' => 'ANULADO', 'notificado' => false];
     }
 
     private function seedDocument(): void
@@ -150,12 +150,12 @@ class CertificationModuleTest extends TestCase
     public function test_certificate_validates_origins_foreign_keys_notifications_and_history(): void
     {
         $this->administrator();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 99]))->assertUnprocessable();
-        $this->postJson('/api/certificados/create', $this->certificate() + ['id_participacion' => 1, 'id_practica' => 1])->assertUnprocessable();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => null, 'id_practica' => 1]))->assertUnprocessable();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['notificado' => true]))->assertUnprocessable();
-        $this->postJson('/api/certificados/create', $this->certificate())->assertCreated();
-        $this->postJson('/api/certificados/create', $this->certificate())->assertConflict();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_persona' => 99]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate() + ['id_participacion' => 1, 'id_practica' => 1])->assertUnprocessable();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_participacion' => null, 'id_practica' => 1]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['notificado' => true]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertCreated();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertConflict();
         $this->patchJson('/api/certificados/update/1', ['fecha_emision' => '2026-01-01'])->assertOk();
         $this->patchJson('/api/certificados/update/1', ['notificado' => true, 'fecha_notificacion' => '2025-12-31'])->assertUnprocessable();
         $this->deleteJson('/api/tipos-certificado/delete/1')->assertConflict();
@@ -164,28 +164,33 @@ class CertificationModuleTest extends TestCase
         $this->patchJson('/api/certificados/update/1', ['fecha_emision' => '2026-02-01'])->assertConflict();
     }
 
-    #[TestWith(['fecha_emision', null])]
+    #[TestWith(['fecha_emision', 'invalid-date'])]
     #[TestWith(['estado', true])]
     #[TestWith(['estado', false])]
     #[TestWith(['id_participacion', null])]
     public function test_certificate_rejects_values_incompatible_with_the_real_schema(string $field, mixed $value): void
     {
         $this->administrator();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), [$field => $value]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), [$field => $value]))->assertUnprocessable();
         $this->assertDatabaseCount('certificado.certificado', 0);
     }
 
-    public function test_certificate_keeps_textual_state_and_requires_an_explicit_issue_date(): void
+    public function test_certificate_uses_current_states_and_allows_no_issue_date_without_issuing(): void
     {
         $this->administrator();
-        $withoutDate = $this->certificate();
+        $withoutDate = $this->annulledCertificate();
         unset($withoutDate['fecha_emision']);
-        $this->postJson('/api/certificados/create', $withoutDate)->assertUnprocessable()->assertJsonValidationErrors('fecha_emision', 'data');
-        $this->assertDatabaseCount('certificado.certificado', 0);
-        $this->postJson('/api/certificados/create', $this->certificate())->assertCreated()
-            ->assertJsonPath('data.estado', 'Vigente')->assertJsonPath('data.fecha_emision', '2026-01-01');
-        $this->patchJson('/api/certificados/update/1', ['estado' => 'Revocado'])->assertOk()->assertJsonPath('data.estado', 'Revocado');
-        self::assertSame('Revocado', Certificate::findOrFail(1)->estado);
+        $this->postJson('/api/certificados/create', $withoutDate)->assertCreated()
+            ->assertJsonPath('data.estado', 'ANULADO')->assertJsonPath('data.fecha_emision', null);
+        foreach (['Vigente', 'Revocado'] as $state) {
+            $this->patchJson('/api/certificados/update/1', ['estado' => $state])->assertUnprocessable()->assertJsonValidationErrors('estado', 'data');
+        }
+        foreach (['PREPARADO', 'PENDIENTE_FIRMA', 'FIRMADO', 'EMITIDO'] as $state) {
+            $this->postJson('/api/certificados/create', array_replace($withoutDate, ['estado' => $state]))->assertConflict();
+        }
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        self::assertSame('ANULADO', Certificate::findOrFail(1)->estado);
+        self::assertNull(Certificate::findOrFail(1)->fecha_emision);
     }
 
     public function test_recognition_crud_and_worker_validation(): void
@@ -202,7 +207,7 @@ class CertificationModuleTest extends TestCase
     public function test_documents_reject_client_hash_signed_state_and_invalid_files(): void
     {
         $this->administrator();
-        CertificateData::store($this->certificate());
+        self::assertTrue(CertificateData::store($this->annulledCertificate())['success']);
         $payload = ['id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'ruta_archivo' => 'certificados/missing.pdf', 'estado' => 'Vigente', 'fecha_generacion' => '2026-01-01'];
         $this->postJson('/api/certificados-documentos/create', $payload + ['hash_certificado' => str_repeat('a', 64)])->assertUnprocessable();
         $this->postJson('/api/certificados-documentos/create', array_replace($payload, ['estado' => 'FIRMADO']))->assertUnprocessable();
@@ -215,7 +220,7 @@ class CertificationModuleTest extends TestCase
     public function test_hash_matches_document_bytes_and_evidence_cannot_be_deleted(): void
     {
         $this->administrator();
-        CertificateData::store($this->certificate());
+        self::assertTrue(CertificateData::store($this->annulledCertificate())['success']);
         $pdf = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n";
         Storage::disk('local')->put('certificados/fixture.pdf', $pdf);
         $payload = ['id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'ruta_archivo' => 'certificados/fixture.pdf', 'estado' => 'Vigente', 'fecha_generacion' => '2026-01-01'];
@@ -319,9 +324,9 @@ class CertificationModuleTest extends TestCase
     public function test_participation_requires_the_same_beneficiary(): void
     {
         $this->administrator();
-        $this->postJson('/api/certificados/create', $this->certificate() + ['id_participacion' => 1])->assertCreated();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2, 'id_participacion' => 1]))->assertUnprocessable()->assertJsonValidationErrors('id_participacion', 'data');
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => 99]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate() + ['id_participacion' => 1])->assertCreated();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_persona' => 2, 'id_participacion' => 1]))->assertUnprocessable()->assertJsonValidationErrors('id_participacion', 'data');
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_participacion' => 99]))->assertUnprocessable();
     }
 
     #[TestWith(['id_participacion', 1])]
@@ -332,10 +337,10 @@ class CertificationModuleTest extends TestCase
         $this->administrator();
         DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1]);
         DB::table('certificado.tipo_certificado')->insert(['id_tipo_certificado' => 2, 'nombre_tipo' => 'Otro tipo', 'estado' => 'ACTIVO']);
-        $payload = array_replace($this->certificate(), ['id_persona' => $person, 'id_participacion' => null, $origin => 1]);
+        $payload = array_replace($this->annulledCertificate(), ['id_persona' => $person, 'id_participacion' => null, $origin => 1]);
         $this->postJson('/api/certificados/create', $payload)->assertCreated();
 
-        $this->postJson('/api/certificados/create', array_replace($payload, ['fecha_emision' => '2026-02-01', 'estado' => 'Anulado']))->assertConflict();
+        $this->postJson('/api/certificados/create', array_replace($payload, ['fecha_emision' => '2026-02-01', 'estado' => 'ANULADO']))->assertConflict();
         $this->postJson('/api/certificados/create', array_replace($payload, ['id_tipo_certificado' => 2]))->assertCreated();
         $this->patchJson('/api/certificados/update/2', ['id_tipo_certificado' => 1])->assertConflict();
         $this->assertDatabaseCount('certificado.certificado', 2);
@@ -351,7 +356,7 @@ class CertificationModuleTest extends TestCase
         DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1]);
 
         foreach ([['id_participacion' => 1], ['id_participacion' => 2], ['id_participacion' => null, 'id_practica' => 2], ['id_participacion' => null, 'id_reconocimiento' => 1]] as $origin) {
-            $this->postJson('/api/certificados/create', array_replace($this->certificate(), $origin))->assertCreated();
+            $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), $origin))->assertCreated();
         }
         $this->patchJson('/api/certificados/update/2', ['id_participacion' => 1])->assertConflict();
         $this->assertDatabaseCount('certificado.certificado', 4);
@@ -363,12 +368,12 @@ class CertificationModuleTest extends TestCase
         Schema::table('certificado.certificado', function (Blueprint $table) {
             $table->integer('id_actividad_sesion')->nullable();
         });
-        DB::table('certificado.certificado')->insert($this->certificate() + ['id_actividad_sesion' => 47]);
+        DB::table('certificado.certificado')->insert($this->annulledCertificate() + ['id_actividad_sesion' => 47]);
 
-        $this->postJson('/api/certificados/create', $this->certificate())->assertCreated();
-        $this->postJson('/api/certificados/create', $this->certificate())->assertConflict();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertCreated();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertConflict();
         $this->patchJson('/api/certificados/update/1', ['notificado' => false])->assertOk();
-        $this->postJson('/api/certificados/create', $this->certificate() + ['id_actividad_sesion' => 48])->assertUnprocessable();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate() + ['id_actividad_sesion' => 48])->assertUnprocessable();
         $this->assertDatabaseCount('certificado.certificado', 2);
         $this->assertDatabaseHas('certificado.certificado', ['id_certificado' => 1, 'id_actividad_sesion' => 47]);
     }
@@ -379,7 +384,7 @@ class CertificationModuleTest extends TestCase
     {
         $this->administrator();
         if ($update) {
-            $this->postJson('/api/certificados/create', $this->certificate())->assertCreated();
+            $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertCreated();
         }
         $attempts = 0;
         $prefix = $update ? 'update "certificado"."certificado"' : 'insert into "certificado"."certificado"';
@@ -390,43 +395,43 @@ class CertificationModuleTest extends TestCase
         });
 
         if ($update) {
-            $this->patchJson('/api/certificados/update/1', ['estado' => 'Anulado'])->assertOk()->assertJsonPath('data.estado', 'Anulado');
+            $this->patchJson('/api/certificados/update/1', ['fecha_emision' => '2026-02-01'])->assertOk()->assertJsonPath('data.fecha_emision', '2026-02-01');
         } else {
-            $this->postJson('/api/certificados/create', $this->certificate())->assertCreated();
+            $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertCreated();
         }
         self::assertSame(2, $attempts);
         self::assertSame(0, DB::transactionLevel());
-        $this->postJson('/api/certificados/create', $this->certificate())->assertConflict();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate())->assertConflict();
         $this->assertDatabaseCount('certificado.certificado', 1);
     }
 
     public function test_practice_uses_the_practitioner_beneficiary(): void
     {
         $this->administrator();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2, 'id_participacion' => null, 'id_practica' => 1]))->assertCreated();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => null, 'id_practica' => 1]))->assertUnprocessable()->assertJsonValidationErrors('id_practica', 'data');
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => null, 'id_practica' => 99]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_persona' => 2, 'id_participacion' => null, 'id_practica' => 1]))->assertCreated();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_participacion' => null, 'id_practica' => 1]))->assertUnprocessable()->assertJsonValidationErrors('id_practica', 'data');
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_participacion' => null, 'id_practica' => 99]))->assertUnprocessable();
         DB::table('gestion.practica')->insert(['id_practica' => 2, 'id_persona_practicante' => 99]);
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => null, 'id_practica' => 2]))->assertUnprocessable()->assertJsonValidationErrors('id_practica', 'data');
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_participacion' => null, 'id_practica' => 2]))->assertUnprocessable()->assertJsonValidationErrors('id_practica', 'data');
     }
 
     public function test_recognition_uses_the_worker_beneficiary(): void
     {
         $this->administrator();
         DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1]);
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => null, 'id_reconocimiento' => 1]))->assertCreated();
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_persona' => 2, 'id_participacion' => null, 'id_reconocimiento' => 1]))->assertUnprocessable()->assertJsonValidationErrors('id_reconocimiento', 'data');
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_participacion' => null, 'id_reconocimiento' => 1]))->assertCreated();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_persona' => 2, 'id_participacion' => null, 'id_reconocimiento' => 1]))->assertUnprocessable()->assertJsonValidationErrors('id_reconocimiento', 'data');
         DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 2, 'id_persona_trabajador' => 99]);
-        $this->postJson('/api/certificados/create', array_replace($this->certificate(), ['id_participacion' => null, 'id_reconocimiento' => 2]))->assertUnprocessable();
+        $this->postJson('/api/certificados/create', array_replace($this->annulledCertificate(), ['id_participacion' => null, 'id_reconocimiento' => 2]))->assertUnprocessable();
     }
 
     public function test_updates_revalidate_origins_and_allow_clearing_an_optional_origin(): void
     {
         $this->administrator();
-        $this->postJson('/api/certificados/create', $this->certificate() + ['id_participacion' => 1])->assertCreated();
+        $this->postJson('/api/certificados/create', $this->annulledCertificate() + ['id_participacion' => 1])->assertCreated();
         $this->patchJson('/api/certificados/update/1', ['id_practica' => 1])->assertUnprocessable();
         $this->patchJson('/api/certificados/update/1', ['id_persona' => 2])->assertUnprocessable();
-        $this->putJson('/api/certificados/update/1', array_replace($this->certificate(), ['id_persona' => 2, 'id_participacion' => 1]))->assertUnprocessable();
+        $this->putJson('/api/certificados/update/1', array_replace($this->annulledCertificate(), ['id_persona' => 2, 'id_participacion' => 1]))->assertUnprocessable();
         $this->assertSame([], $this->updateColumns(fn () => $this->patchJson('/api/certificados/update/1', ['id_participacion' => null])->assertUnprocessable(), 'certificado.certificado'));
         $this->assertSame(['id_persona', 'id_participacion', 'id_practica'], $this->updateColumns(fn () => $this->patchJson('/api/certificados/update/1', ['id_persona' => 2, 'id_participacion' => null, 'id_practica' => 1])->assertOk(), 'certificado.certificado'));
         $this->assertDatabaseHas('certificado.certificado', ['id_persona' => 2, 'id_participacion' => null, 'id_practica' => 1]);
@@ -436,7 +441,7 @@ class CertificationModuleTest extends TestCase
     public function test_document_hash_updates_are_computed_by_the_server(): void
     {
         $this->administrator();
-        CertificateData::store($this->certificate());
+        self::assertTrue(CertificateData::store($this->annulledCertificate())['success']);
         $this->seedDocument();
         Storage::disk('local')->put('certificados/private.pdf', '%PDF-1.4 updated fixture');
         $this->patchJson('/api/certificados-documentos/update/1', ['hash_certificado' => str_repeat('b', 64)])->assertUnprocessable();
@@ -449,7 +454,7 @@ class CertificationModuleTest extends TestCase
         $this->administrator();
         DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1]);
         Schema::drop($table);
-        $payload = $prefix === 'certificados' ? array_replace($this->certificate(),
+        $payload = $prefix === 'certificados' ? array_replace($this->annulledCertificate(),
             isset($extra['id_practica']) || isset($extra['id_reconocimiento']) ? ['id_participacion' => null] : [], $extra) : $extra;
         $this->postJson("/api/$prefix/create", $payload)->assertStatus(503);
         $this->assertSame(0, DB::table('certificado.certificado')->count());
@@ -492,7 +497,10 @@ class CertificationModuleTest extends TestCase
     public function test_put_and_patch_only_write_changed_authorized_columns(): void
     {
         $this->administrator();
-        CertificateData::store($this->certificate());
+        $notificationCertificate = array_replace($this->annulledCertificate(), [
+            'notificado' => true, 'fecha_notificacion' => '2026-01-01 12:00:00',
+        ]);
+        self::assertTrue(CertificateData::store($notificationCertificate)['success']);
         DB::table('certificado.reconocimiento')->insert(['id_reconocimiento' => 1, 'id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']);
         DB::table('certificado.firma')->insert(['id_firma' => 1, 'id_persona_trabajador' => 1]);
         DB::table('certificado.actividad_firma')->insert(['id_actividad_firma' => 1, 'id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]);
@@ -500,7 +508,7 @@ class CertificationModuleTest extends TestCase
         Storage::disk('local')->put('certificados/private.pdf', '%PDF-1.4 fixture');
         $cases = [
             ['tipos-certificado', 'certificado.tipo_certificado', 'estado', 'INACTIVO', 'ACTIVO', ['nombre_tipo' => 'Asistencia', 'estado' => 'ACTIVO']],
-            ['certificados', 'certificado.certificado', 'estado', 'Anulado', 'Vigente', $this->certificate()],
+            ['certificados', 'certificado.certificado', 'fecha_notificacion', '2026-01-02 12:00:00', '2026-01-01 12:00:00', $notificationCertificate],
             ['reconocimientos', 'certificado.reconocimiento', 'titulo', 'Otro título', 'Título', ['id_persona_trabajador' => 1, 'titulo' => 'Título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']],
             ['actividades-firmas', 'certificado.actividad_firma', 'orden_firma', 2, 1, ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]],
             ['certificados-documentos', 'certificado.certificado_documento', 'estado', 'Anulado', 'Vigente', ['id_certificado' => 1, 'codigo_verificacion' => 'TEST-1', 'ruta_archivo' => 'certificados/private.pdf', 'estado' => 'Vigente', 'fecha_generacion' => '2026-01-01']],
@@ -519,7 +527,7 @@ class CertificationModuleTest extends TestCase
     public function test_historical_updates_emit_no_update_sql(): void
     {
         $this->administrator();
-        CertificateData::store($this->certificate());
+        self::assertTrue(CertificateData::store($this->annulledCertificate())['success']);
         $this->seedDocument();
         DB::table('certificado.firma')->insert(['id_firma' => 1, 'id_persona_trabajador' => 1]);
         DB::table('certificado.actividad_firma')->insert(['id_actividad_firma' => 1, 'id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 1]);
@@ -530,7 +538,7 @@ class CertificationModuleTest extends TestCase
         foreach (['PUT', 'PATCH'] as $method) {
             $cases = [
                 ['tipos-certificado', 'certificado.tipo_certificado', ['nombre_tipo' => 'Otro nombre', 'estado' => 'ACTIVO']],
-                ['certificados', 'certificado.certificado', array_replace($this->certificate(), ['id_reconocimiento' => null, 'fecha_emision' => '2026-02-01'])],
+                ['certificados', 'certificado.certificado', array_replace($this->annulledCertificate(), ['id_reconocimiento' => null, 'fecha_emision' => '2026-02-01'])],
                 ['reconocimientos', 'certificado.reconocimiento', ['id_persona_trabajador' => 1, 'titulo' => 'Otro título', 'descripcion' => 'Descripción', 'motivo' => 'Motivo', 'fecha_reconocimiento' => '2026-01-01', 'estado' => 'ACTIVO']],
                 ['firmas', 'certificado.firma', ['id_persona_trabajador' => 1, 'ruta_archivo_pfx' => 'firmas/fixture.pfx', 'passphrase' => 'test-only', 'fecha_firma' => '2026-01-01']],
                 ['actividades-firmas', 'certificado.actividad_firma', ['id_actividad' => 1, 'id_firma' => 1, 'orden_firma' => 2]],

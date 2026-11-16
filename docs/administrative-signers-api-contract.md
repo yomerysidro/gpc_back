@@ -1,86 +1,87 @@
-# Registro administrativo de funcionarios sin PFX
+# Habilitacion administrativa persistente de firmantes municipales
 
-Contrato vigente: 2026-11-11. Prefijo `/api`, JWT en cookie `access_token`; envoltorio `success`, `message`, `data`. No se modificó Angular.
+La autorizacion se guarda exclusivamente en
+ gestion.persona_trabajador.habilitado_firma_certificados (BOOLEAN NOT NULL DEFAULT FALSE),
+columna existente en PostgreSQL. No se crean tablas, columnas ni migraciones.
+El estado laboral y la habilitacion son decisiones diferentes; una firma digital autentica
+requiere un procedimiento y credenciales distintos.
 
-## Persistencia real y separación de conceptos
+## Consulta administrativa
 
-La migración aplicada permite guardar responsables por documento en `certificado.certificado_firma`: trabajador real, orden, `id_firma=NULL` y `fecha_firma=NULL`. La modalidad se guarda en `certificado.certificado_documento.modalidad_firma`.
+- GET /api/funcionarios-firmantes y /trabajadores: trabajadores del ambito, incluso no vigentes.
+- GET /api/funcionarios-firmantes/{id_persona_trabajador}: detalle laboral y habilitacion.
+- Filtro opcional id_area: restringe el ambito; nunca lo amplia.
 
-**No existe un catálogo independiente de habilitaciones.** El modelo permitido es una habilitación documental: seleccionar un trabajador y autorizarlo como responsable de un documento pendiente. No se crean tablas, no se modifican trabajadores y no se utilizan `firma`, PFX ni contraseñas para representar esta habilitación.
+Cada trabajador devuelve id_persona_trabajador, nombre real, cargo, area, id_area,
+ estado_laboral, vigente, elegible_laboralmente y habilitado_firma_certificados (booleano).
+No se fusionan personas o vinculos con el mismo nombre. La identidad es siempre el ID laboral.
+El modelo Person_Worker convierte habilitado_firma_certificados a booleano sin permitir su
+asignacion masiva mediante los formularios laborales comunes.
 
-`gestion.persona_trabajador` aporta vínculo laboral, cargo e ID de área; `gestion.persona` aporta nombres/apellidos y `gestion.area` el nombre del área. Se exige vínculo activo, fecha de ingreso no futura, cese no vencido y nombre, apellido paterno y cargo no vacíos.
+Los campos de compatibilidad habilitado y habilitacion_global reflejan la columna real.
+disponible_asignacion exige habilitacion mas elegibilidad laboral. La habilitacion permite
+ser responsable de cualquier certificado, sin limitar por el area laboral del firmante. origen_habilitacion identifica la columna de Gestion. No se interpretan
+las asignaciones documentales ni las credenciales como autorizacion administrativa.
 
-La autorización para **asignar** pertenece al usuario gestor del documento. El trabajador seleccionado no necesita cuenta de usuario ni `firmas.firmar`. Su selección explícita por un gestor autorizado constituye la habilitación para ese documento, sin otorgar facultad criptográfica.
+habilitacion_administrativa.disponible y registro_independiente_disponible son true cuando
+el backend reconoce la columna; catalogo_independiente:false indica que no hay otra tabla.
+requiere_pfx y requiere_password son false. credencial_verificada:false y
+credencial_valida:null no acreditan ninguna firma criptografica.
 
-## Permisos y ámbitos
+## Habilitar y deshabilitar
 
-- Consulta: `emision.ver`.
-- Habilitación por documento, asignación y revisión de PDF: también `emision.editar` y ámbito del documento.
-- Solicitud de catálogo independiente, actualmente bloqueada: `ponentes-firmantes.editar` además de consulta.
-- Firma criptográfica: `firmas.firmar`, separado y reservado para una futura operación real. Mantener bloqueada mientras no haya credenciales y motor verificados.
-- Emisión oficial: bloqueada; asignar no cambia estado a FIRMADO/EMITIDO ni fecha_emision.
+POST /api/funcionarios-firmantes/habilitar recibe {"id_persona_trabajador":2}.
+confirmar:true es opcional y se conserva por compatibilidad. POST /api/funcionarios-firmantes
+sin id_certificado_documento utiliza la misma operacion administrativa.
+DELETE /api/funcionarios-firmantes/{id_persona_trabajador}/habilitacion deshabilita.
 
-Los no administradores se limitan a áreas de sus vínculos laborales vigentes. El área enviada como filtro no amplía ese ámbito. La competencia del trabajador se limita al área documental o a una configuración por actividad ya existente y legítima.
+Ambas operaciones exigen JWT, usuario activo, ponentes-firmantes.editar y ambito autorizado.
+Habilitar exige vinculo vigente, identidad y cargo validos. Se puede deshabilitar un vinculo
+inactivo. No se requieren cuenta del trabajador, firmas.firmar, PFX, contrasena ni documento.
+No se modifica estado, cargo, area, persona, permisos ni asignaciones documentales.
 
-El rol real `Gerencial` (ID 3) tiene asignados explícitamente los permisos existentes `emision.ver` y `emision.editar`, con su vínculo al módulo en `acceso.rol_modulo` y las dos concesiones en `acceso.rol_modulo_permiso`. No se modificaron otros roles ni se otorgaron permisos de crear/eliminar certificados, gestionar credenciales o `firmas.firmar`. No se amplían sus ámbitos: los documentos de otras áreas siguen devolviendo 404. Sus permisos de solicitudes no se convierten automáticamente en permisos de certificados.
+La transaccion bloquea el vinculo laboral y actualiza solamente habilitado_firma_certificados.
+La respuesta 200 incluye completada:true, persistido:true y funcionario actualizado.
+reintento:true indica que ya estaba en el estado solicitado: no se repite la escritura.
+Otra consulta o una nueva sesion autenticada recupera la columna guardada en la base.
+401: sin JWT; 403: sin permiso; 404: inexistente o fuera del ambito; 409: habilitacion de un
+vinculo no elegible; 422: datos invalidos, campos personales, rutas, PFX o contrasenas.
 
-## Trabajadores y habilitados
+## Gerencia y flujo documental
 
-| Método y ruta | Resultado |
-| --- | --- |
-| `GET /funcionarios-firmantes/trabajadores` | Todos los trabajadores vigentes disponibles dentro del ámbito |
-| `GET /funcionarios-firmantes` | Trabajadores que ya tienen una habilitación documental persistida en documento Vigente con certificado PREPARADO o PENDIENTE_FIRMA |
-| `POST /funcionarios-firmantes/habilitar` | Guarda una habilitación para un documento real; no crea catálogo independiente |
+La consulta bajo /api/certificados-documentos/{id}/firma/firmantes-disponibles requiere
+habilitado_firma_certificados=TRUE, estado=TRUE, fechas laborales vigentes, identidad/cargo
+completos. La habilitacion administrativa tiene alcance institucional: el area laboral del
+firmante no restringe los certificados en que puede figurar como responsable. No se requiere
+fila en certificado.firma, PFX ni configuracion en actividad_firma. Se mantienen los permisos
+y el ambito del usuario que consulta o gestiona el documento. Los permisos de emision y
+administracion de firmantes siguen separados.
 
-Los GET admiten únicamente `id_area`, entero positivo opcional. Devuelven `data.funcionarios`, sin duplicar al trabajador por varios documentos o roles:
+El endpoint de asignacion valida de nuevo la habilitacion dentro de la transaccion,
+bloqueando los vinculos y releyendo su estado para coordinarse con una deshabilitacion.
+Una lista visual antigua no permite guardar un responsable ya deshabilitado.
+Los planes nuevos con trabajadores no autorizados se rechazan con 422 sin guardar filas.
 
-```ts
-interface FuncionarioFirmante {
-  id_persona_trabajador: number;
-  id_persona: number;
-  id_area: number | null;
-  area: string | null;
-  nombre: string;
-  cargo: string;
-  vigente: boolean;
-  disponible_asignacion: boolean;
-  habilitado: boolean;
-  origen_habilitacion: 'asignacion_documental';
-  id_firma: number | null;
-  credencial_registrada: boolean;
-  credencial_verificada: false;
-  credencial_valida: null;
-}
-```
+La asignacion utiliza id_persona_trabajador, orden_firma, id_firma=NULL y fecha_firma=NULL.
+Se mantienen modalidad PARALELA/SECUENCIAL, orden consecutivo, vista previa, revision y
+confirmacion del PDF, hashes, QR y condiciones de disponibilidad para RR. HH.
+Habilitar no firma un PDF, no crea un certificado ni concede permiso de firma criptografica.
 
-`habilitado` refleja una asignación documental vigente real; no significa autorización para firmar criptográficamente. Un trabajador disponible puede tener habilitado=false hasta que se guarde su primera asignación. La cuenta del gestor debe conservar sus permisos para gestionar el documento.
+Los responsables historicos se leen desde certificado.certificado_firma aunque sean
+posteriormente deshabilitados. Repetir exactamente un plan ya guardado sigue siendo
+idempotente; otro plan devuelve 409 sin reemplazarlo. La baja no modifica ni elimina PDF,
+documentos, certificados o asignaciones existentes. Las revisiones nuevas requieren las
+validaciones actuales; no se reemplaza silenciosamente un documento confirmado.
 
-Los GET también devuelven `catalogo_independiente:false`, `registro_independiente_disponible:false`, `requiere_pfx:false`, `requiere_password:false` y `origen:relaciones_laborales_y_permisos_existentes` (campo conservado por compatibilidad; la habilitación se determina por asignación documental).
+POST /api/funcionarios-firmantes con id_certificado_documento conserva el atajo documental
+explicito: requiere modalidad, orden_firma y confirmar:true y devuelve
+ tipo_registro:asignacion_documental. No concede habilitacion global. Para varios responsables
+se usa /firma/asignar con el plan completo.
 
-## Habilitar administrativamente
+## Verificacion
 
-```json
-{
-  "id_persona_trabajador": 2,
-  "id_certificado_documento": 2,
-  "orden_firma": 1,
-  "modalidad": "SECUENCIAL",
-  "confirmar": true
-}
-```
-
-Usar exclusivamente IDs consultados en el entorno real. El endpoint reutiliza la asignación de Etapa B y devuelve 200, `completada:true`, `persistido:true`, `tipo_registro:habilitacion_documental`, `catalogo_independiente:false` y el progreso del documento. Repetir el mismo plan devuelve `reintento:true`; no lo duplica. Este atajo configura un único responsable; para varios usar `/firma/asignar` con el plan completo. No agrega ni reemplaza silenciosamente un plan existente.
-
-Si se envía solo trabajador y confirmación, sigue respondiendo **409**, `persistido:false`, `HABILITACION_INDEPENDIENTE_NO_DISPONIBLE`: no hay dónde guardar un registro global. Angular debe solicitar documento/orden/modalidad o utilizar directamente la asignación. No mostrar éxito para esta respuesta.
-
-Campos PFX, password, rutas, nombres, cargos, fechas o estados del cliente se rechazan. Nombre y cargo se consultan en RR.HH.
-
-## Asignación y consulta por documento
-
-Ver [certificate-stage-b-api-contract.md](certificate-stage-b-api-contract.md) para modalidad, varios responsables, orden, consulta y revisión del PDF. La asignación prepara una revisión pendiente de confirmación con los firmantes persistidos, conservando certificado, documento, código/QR y texto aprobado. Las revisiones se almacenan en archivos privados autenticados; no generan otro certificado, fila documental ni código ni modifican el original. Tras confirmar, la misma URL privada sirve la versión vigente.
-
-`credencial_registrada` solo informa existencia de datos en la tabla de credenciales. `credencial_valida:null` indica que no se ha verificado criptográficamente: no mostrar “credencial válida”. Nunca se exponen contraseña ni ruta del PFX. La carga segura de PFX/P12 legítimos permanece separada.
-
-## Verificación real
-
-El resultado de la prueba controlada contra `certificados_morales` está en [administrative-signers-live-check.json](administrative-signers-live-check.json). Se usa JWT con una cuenta real, se guarda una habilitación documental, se recupera desde PostgreSQL y se revierte la transacción. El archivo conserva los valores comprobados, el resultado de Gerencia y el hash original. No se ejecutan migraciones ni se crean bases/tablas.
+Las pruebas focalizadas cubren persistencia, cast booleano, estados laborales, reconsulta,
+alta/baja/rehabilitacion idempotentes, homonimos, permisos/ambitos, exclusion en Gerencia,
+rechazo de asignaciones por API, conservacion de historicos y flujo sin PFX. Las fixtures
+usan la columna existente en SQLite aislado; no habilitan trabajadores en PostgreSQL.
+La comprobacion real autorizada consulta metadatos y el servicio de lectura sin escrituras.

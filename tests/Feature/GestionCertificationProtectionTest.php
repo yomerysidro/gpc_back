@@ -101,10 +101,10 @@ class GestionCertificationProtectionTest extends TestCase
         return ['id_persona_practicante' => $practitioner, 'id_area' => 1, 'id_institucion' => 1, 'carrera' => 'Sistemas', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-31', 'estado' => 'FINALIZADO'];
     }
 
-    public function test_all_fifty_gestion_routes_require_authentication_and_policies(): void
+    public function test_all_gestion_routes_require_authentication_and_policies(): void
     {
         $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => in_array(explode('/', $route->uri())[1] ?? '', array_keys(self::MODELS), true)));
-        $this->assertCount(50, $routes);
+        $this->assertCount(51, $routes);
         foreach ($routes as $route) {
             $this->json($route->methods()[0], '/'.preg_replace('/\{[^}]+\}/', '1', $route->uri()))->assertUnauthorized();
         }

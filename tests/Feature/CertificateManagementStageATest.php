@@ -61,6 +61,8 @@ class CertificateManagementStageATest extends TestCase
     public function test_new_prepared_pdf_and_pending_plan_use_selected_workers_without_credentials(string $mode): void
     {
         $this->administrativeWorkers();
+        DB::table('gestion.area')->insert(['id_area' => 2, 'nombre' => 'Alcaldia']);
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 11)->update(['id_area' => 2]);
         $input = ['accion' => 'revisar_documento', 'id_participacion' => 1, 'id_tipo_certificado' => 1,
             'mensaje' => 'Mensaje aprobado.', 'modalidad_firma' => $mode,
             'firmantes' => [['id_persona_trabajador' => 11, 'orden_firma' => 2], ['id_persona_trabajador' => 10, 'orden_firma' => 1]]];
@@ -102,8 +104,8 @@ class CertificateManagementStageATest extends TestCase
     #[TestWith(['missing_mode', 422])]
     #[TestWith(['duplicate', 422])]
     #[TestWith(['order_gap', 422])]
-    #[TestWith(['outside_area', 422])]
     #[TestWith(['inactive_worker', 422])]
+    #[TestWith(['disabled_worker', 422])]
     #[TestWith(['missing_schema', 409])]
     public function test_selected_worker_review_rejects_invalid_plans_without_persistence(string $condition, int $status): void
     {
@@ -115,8 +117,8 @@ class CertificateManagementStageATest extends TestCase
             'missing_mode' => $input = array_diff_key($input, ['modalidad_firma' => true]),
             'duplicate' => $input['firmantes'][] = ['id_persona_trabajador' => 10, 'orden_firma' => 2],
             'order_gap' => $input['firmantes'][0]['orden_firma'] = 2,
-            'outside_area' => DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->update(['id_area' => 99]),
             'inactive_worker' => DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->update(['estado' => false]),
+            'disabled_worker' => DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->update(['habilitado_firma_certificados' => false]),
             'missing_schema' => DB::statement('ALTER TABLE certificado.certificado_documento DROP COLUMN modalidad_firma'),
         };
 
@@ -141,7 +143,7 @@ class CertificateManagementStageATest extends TestCase
         foreach ([
             'gestion.area' => 'id_area INTEGER PRIMARY KEY, nombre TEXT',
             'gestion.persona' => 'id_persona INTEGER PRIMARY KEY, nombres TEXT, apellido_paterno TEXT, apellido_materno TEXT',
-            'gestion.persona_trabajador' => 'id_persona_trabajador INTEGER PRIMARY KEY, id_persona INTEGER, id_area INTEGER, cargo TEXT, estado BOOLEAN, fecha_ingreso DATE, fecha_fin DATE',
+            'gestion.persona_trabajador' => 'id_persona_trabajador INTEGER PRIMARY KEY, id_persona INTEGER, id_area INTEGER, cargo TEXT, estado BOOLEAN, habilitado_firma_certificados BOOLEAN NOT NULL DEFAULT FALSE, fecha_ingreso DATE, fecha_fin DATE',
             'certificado.actividad' => 'id_actividad INTEGER PRIMARY KEY, id_area INTEGER, nombre TEXT, estado TEXT',
             'certificado.actividad_sesion' => 'id_actividad_sesion INTEGER PRIMARY KEY, id_actividad INTEGER, nombre TEXT, estado TEXT, fecha DATE, lugar TEXT',
             'certificado.participacion' => 'id_participacion INTEGER PRIMARY KEY, id_actividad INTEGER, id_persona INTEGER, estado TEXT',
@@ -212,7 +214,7 @@ class CertificateManagementStageATest extends TestCase
         foreach ($signerCount === 0 ? [] : range(10, 9 + $signerCount) as $id) {
             DB::table('gestion.persona')->insert(['id_persona' => $id, 'nombres' => 'Responsable '.$id]);
             DB::table('gestion.persona_trabajador')->insert(['id_persona_trabajador' => $id, 'id_persona' => $id, 'id_area' => 1,
-                'cargo' => 'Cargo real '.$id, 'estado' => true, 'fecha_ingreso' => '2020-01-01']);
+                'cargo' => 'Cargo real '.$id, 'estado' => true, 'habilitado_firma_certificados' => true, 'fecha_ingreso' => '2020-01-01']);
             DB::table('certificado.firma')->insert(['id_firma' => $id, 'id_persona_trabajador' => $id]);
             DB::table('certificado.actividad_firma')->insert(['id_actividad_firma' => $id, 'id_actividad' => 1, 'id_firma' => $id, 'orden_firma' => $id - 9]);
         }
@@ -272,7 +274,7 @@ class CertificateManagementStageATest extends TestCase
         $this->getJson('/api/certificados/verificar/'.$prepared['codigo_verificacion'])->assertOk()
             ->assertJsonPath('data.estado_certificado', 'PREPARADO')
             ->assertJsonPath('data.emision_oficial_verificada', false)->assertJsonPath('data.puede_ver_documento', false);
-        $this->getJson('/api/certificados/verificar/'.$prepared['codigo_verificacion'].'?archivo=1')->assertConflict();
+        $this->getJson('/api/certificados/verificar/'.$prepared['codigo_verificacion'].'?archivo=1')->assertForbidden();
         $this->patchJson('/api/certificados/update/'.$prepared['id_certificado'], ['estado' => 'EMITIDO'])->assertConflict();
         $this->patchJson('/api/certificados-documentos/update/'.$id, ['estado' => 'Anulado'])->assertConflict();
         $this->postJson(self::URL, $confirmation)->assertOk()->assertJsonPath('data.id_certificado_documento', $id)
@@ -284,8 +286,8 @@ class CertificateManagementStageATest extends TestCase
             ->assertJsonPath('data.estado_flujo', 'PENDIENTE_FIRMA')->assertJsonPath('data.reintento', false);
         $this->postJson('/api/certificados-documentos/'.$id.'/enviar-gerencia', $payload)->assertOk()->assertJsonPath('data.reintento', true);
         $this->getJson('/api/certificados-documentos/detail/'.$id)->assertOk()->assertJsonPath('data.id_sesion', 1)
-            ->assertJsonPath('data.origen', 'sesion')->assertJsonPath('data.firmas.pendientes', $count)->assertJsonPath('data.fecha_emision', null)
-            ->assertJsonPath('data.asignacion_firmantes_pendiente', $count === 0)
+            ->assertJsonPath('data.origen', 'sesion')->assertJsonPath('data.firmas.pendientes', 0)->assertJsonPath('data.fecha_emision', null)
+            ->assertJsonPath('data.asignacion_firmantes_pendiente', true)
             ->assertJsonPath('data.facultades.firmar', false)->assertJsonPath('data.facultades.entregar', false);
         $download = $this->get('/api/certificados-documentos/'.$id.'/archivo')->assertOk();
         self::assertSame($pdf, file_get_contents($download->baseResponse->getFile()->getPathname()));
@@ -372,7 +374,7 @@ class CertificateManagementStageATest extends TestCase
         Storage::disk('local')->put($path, $original);
         $this->postJson(self::URL, $payload)->assertCreated();
         $second = $this->review();
-        $this->postJson(self::URL, ['accion' => 'confirmar_preparacion', 'token_revision' => $second['token_revision'], 'confirmar' => true])->assertConflict();
+        $this->postJson(self::URL, ['accion' => 'confirmar_preparacion', 'token_revision' => $second['token_revision'], 'confirmar' => true])->assertOk()->assertJsonPath('data.creado', false);
 
         $this->assertDatabaseCount('certificado.certificado', 1);
         $this->assertDatabaseCount('certificado.certificado_documento', 1);
@@ -424,6 +426,104 @@ class CertificateManagementStageATest extends TestCase
         ])->assertOk()->json('data');
     }
 
+    #[TestWith(['confirmar_preparacion'])]
+    #[TestWith(['enviar_gerencia'])]
+    public function test_minimal_preparation_recovers_and_sends_the_same_document_without_selecting_signers(string $action): void
+    {
+        $this->minimalSessionSchema();
+        $this->seedCertificateContext();
+        DB::table('gestion.persona_trabajador')->update(['estado' => false, 'habilitado_firma_certificados' => false]);
+        $this->actor();
+        $input = ['accion' => 'revisar_documento', 'id_participacion' => 1, 'id_tipo_certificado' => 1, 'mensaje' => 'Texto aprobado.'];
+        $review = $this->postJson(self::URL, $input)->assertOk()->assertJsonCount(0, 'data.firmantes')->json('data');
+        $confirm = ['accion' => $action, 'token_revision' => $review['token_revision'], 'confirmar' => true];
+        $prepared = $this->postJson(self::URL, $confirm)->assertCreated()->assertJsonPath('data.preparacion_persistida', true)->json('data');
+        $id = $prepared['id_certificado_documento'];
+        $original = (array) DB::table('certificado.certificado_documento')->where('id_certificado_documento', $id)->first();
+        $pdf = Storage::disk('local')->get($original['ruta_archivo']);
+        $this->postJson(self::URL, $confirm)->assertOk()->assertJsonPath('data.id_certificado_documento', $id)
+            ->assertJsonPath('data.reintento', true);
+        $again = $this->postJson(self::URL, $input)->assertOk()->assertJsonPath('data.creado', false)
+            ->assertJsonPath('data.id_certificado_documento', $id)->assertJsonPath('data.mensaje_aprobado', 'Texto aprobado.')->json('data');
+        self::assertSame($pdf, base64_decode($again['vista_previa_pdf']['contenido_base64'], true));
+        $this->postJson(self::URL, ['accion' => 'confirmar_preparacion', 'token_revision' => $again['token_revision'], 'confirmar' => true])
+            ->assertOk()->assertJsonPath('data.id_certificado_documento', $id)->assertJsonPath('data.creado', false);
+        $send = ['accion' => 'enviar_gerencia', 'id_certificado_documento' => $id, 'confirmar' => true];
+        $this->postJson(self::URL, $send)->assertOk()->assertJsonPath('data.enviado', true)->assertJsonPath('data.estado_flujo', 'PENDIENTE_FIRMA');
+        $this->postJson(self::URL, $send)->assertOk()->assertJsonPath('data.reintento', true);
+        $this->getJson('/api/certificados-documentos/detail/'.$id)->assertOk()->assertJsonPath('data.estado_certificado', 'PENDIENTE_FIRMA');
+        self::assertSame($original, (array) DB::table('certificado.certificado_documento')->where('id_certificado_documento', $id)->first());
+        self::assertSame($pdf, Storage::disk('local')->get($original['ruta_archivo']));
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+        $this->assertDatabaseCount('certificado.certificado_firma', 0);
+    }
+
+    public function test_minimal_pending_review_recovers_an_identical_pdf_reserved_before_a_failed_save(): void
+    {
+        $this->minimalSessionSchema();
+        $this->seedCertificateContext(0);
+        $this->actor();
+        $input = ['accion' => 'revisar_documento', 'id_participacion' => 1, 'id_tipo_certificado' => 1, 'mensaje' => 'Texto recuperable.'];
+        $first = $this->postJson(self::URL, $input)->assertOk()->json('data');
+        $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get('certificados/revisiones/'.hash('sha256', $first['token_revision']).'.manifest')), true);
+        $pdf = base64_decode($first['vista_previa_pdf']['contenido_base64'], true);
+        $path = 'certificados/preparados/'.$manifest['code'].'.pdf';
+        Storage::disk('local')->put($path, $pdf);
+        $this->travel(31)->minutes();
+        $this->postJson(self::URL, ['accion' => 'confirmar_preparacion', 'token_revision' => $first['token_revision'], 'confirmar' => true])->assertConflict();
+        $next = $this->postJson(self::URL, $input)->assertOk()->assertJsonPath('data.revision_reutilizada', true)->json('data');
+        self::assertSame($first['hash_pdf'], $next['hash_pdf']);
+        self::assertSame($pdf, base64_decode($next['vista_previa_pdf']['contenido_base64'], true));
+        $saved = $this->postJson(self::URL, ['accion' => 'confirmar_preparacion', 'token_revision' => $next['token_revision'], 'confirmar' => true])
+            ->assertCreated()->json('data');
+        self::assertSame($manifest['code'], $saved['codigo_verificacion']);
+        self::assertSame($path, DB::table('certificado.certificado_documento')->value('ruta_archivo'));
+        self::assertSame($pdf, Storage::disk('local')->get($path));
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+    }
+
+    #[TestWith(['documento_anulado'])]
+    #[TestWith(['certificado_emitido'])]
+    public function test_preparation_recovery_rejects_real_incompatible_states_without_creating_another_certificate(string $condition): void
+    {
+        $this->minimalSessionSchema();
+        $this->seedCertificateContext(0);
+        $this->actor();
+        $input = ['accion' => 'revisar_documento', 'id_participacion' => 1, 'id_tipo_certificado' => 1, 'mensaje' => 'Texto aprobado.'];
+        $review = $this->postJson(self::URL, $input)->assertOk()->json('data');
+        $confirm = ['accion' => 'confirmar_preparacion', 'token_revision' => $review['token_revision'], 'confirmar' => true];
+        $this->postJson(self::URL, $confirm)->assertCreated();
+        $document = DB::table('certificado.certificado_documento')->first();
+        $pdf = Storage::disk('local')->get($document->ruta_archivo);
+        if ($condition === 'documento_anulado') {
+            DB::table('certificado.certificado_documento')->update(['estado' => 'Anulado']);
+        } else {
+            DB::table('certificado.certificado')->update(['estado' => 'EMITIDO', 'fecha_emision' => today()->toDateString()]);
+        }
+        $this->postJson(self::URL, $confirm)->assertConflict();
+        $this->postJson(self::URL, $input)->assertConflict();
+        self::assertSame($pdf, Storage::disk('local')->get($document->ruta_archivo));
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+    }
+
+    public function test_disabling_an_activity_signer_after_review_prevents_new_documental_persistence(): void
+    {
+        $this->seedCertificateContext();
+        $this->actor();
+        $review = $this->review();
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)
+            ->update(['habilitado_firma_certificados' => false]);
+
+        $this->postJson(self::URL, ['accion' => 'enviar_gerencia', 'token_revision' => $review['token_revision'],
+            'confirmar' => true])->assertUnprocessable();
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->assertDatabaseCount('certificado.certificado_documento', 0);
+        $this->assertDatabaseCount('certificado.certificado_firma', 0);
+    }
+
     /** @return array<string, mixed> */
     private function send(string $token): array
     {
@@ -471,7 +571,7 @@ class CertificateManagementStageATest extends TestCase
         $this->getJson('/api/certificados-documentos/'.$document->id_certificado_documento.'/historial')->assertOk()->assertJsonCount(2, 'data');
         $this->getJson('/api/certificados/verificar/'.$document->codigo_verificacion)->assertOk()
             ->assertJsonPath('data.puede_ver_documento', false)->assertJsonPath('data.firma_verificada', false);
-        $this->getJson('/api/certificados/verificar/'.$document->codigo_verificacion.'?archivo=1')->assertConflict();
+        $this->getJson('/api/certificados/verificar/'.$document->codigo_verificacion.'?archivo=1')->assertForbidden();
         $this->get('/api/certificados/verificar/'.$document->codigo_verificacion, ['Accept' => 'text/html'])->assertOk();
     }
 
@@ -533,9 +633,11 @@ class CertificateManagementStageATest extends TestCase
         $this->actor();
         $first = $this->review();
         $second = $this->review();
-        $this->send($first['token_revision']);
+        $saved = $this->send($first['token_revision']);
 
-        $this->postJson(self::URL, ['accion' => 'enviar_gerencia', 'token_revision' => $second['token_revision'], 'confirmar' => true])->assertConflict();
+        $this->postJson(self::URL, ['accion' => 'enviar_gerencia', 'token_revision' => $second['token_revision'], 'confirmar' => true])
+            ->assertOk()->assertJsonPath('data.creado', false)->assertJsonPath('data.reintento', true)
+            ->assertJsonPath('data.id_certificado_documento', $saved['id_certificado_documento']);
 
         $this->assertDatabaseCount('certificado.certificado', 1);
         $this->assertDatabaseCount('certificado.certificado_documento', 1);

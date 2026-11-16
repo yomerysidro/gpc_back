@@ -5,10 +5,24 @@ $sessionTypes = trim((string) env('CERTIFICATION_DEVELOPMENT_SESSION_TYPE_IDS', 
 $preparationTypes = trim((string) env('CERTIFICATION_PREPARATION_SESSION_TYPE_IDS', ''));
 
 return [
+    'origins' => [
+        'reconocimiento' => [
+            'reference' => env('CERTIFICATION_RECOGNITION_POLICY_REFERENCE'),
+            'eligible_states' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_RECOGNITION_APPROVED_STATES', '')))),
+            'type_name' => 'Reconocimiento',
+        ],
+        'practica' => [
+            'reference' => env('CERTIFICATION_PRACTICE_POLICY_REFERENCE'),
+            'eligible_states' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_PRACTICE_APPROVED_STATES', '')))),
+            'supervisor_states' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_PRACTICE_SUPERVISOR_STATES', '')))),
+            'type_name' => 'Prácticas',
+        ],
+    ],
     'stage_b' => [
         'demo_enabled' => (bool) env('CERTIFICATION_STAGE_B_DEMO_ENABLED', false),
     ],
     'preparation' => [
+        'execution_timeout_seconds' => 120,
         'session_type_ids' => preg_match('/^[1-9][0-9]*(,[1-9][0-9]*)*$/D', $preparationTypes)
             ? array_map('intval', explode(',', $preparationTypes)) : [],
     ],
@@ -16,6 +30,10 @@ return [
         'verification_base_url' => env('CERTIFICATION_PUBLIC_VERIFICATION_BASE_URL'),
         'allow_http_lan' => (bool) env('CERTIFICATION_ALLOW_HTTP_LAN_VERIFICATION', false),
         'public_beneficiary_name' => (bool) env('CERTIFICATION_PUBLIC_BENEFICIARY_NAME', false),
+    ],
+    'public_lookup' => [
+        'pdf_policy_reference' => env('CERTIFICATION_PUBLIC_PDF_POLICY_REFERENCE'),
+        'pdf_codes' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_PUBLIC_PDF_CODES', '')))),
     ],
     // Configure only from an approved institutional policy, never from HTTP input.
     'development_closure_enabled' => $developmentClosureEnabled,

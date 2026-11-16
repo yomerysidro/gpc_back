@@ -4,18 +4,20 @@ namespace App\Services;
 
 use App\Http\Data\ActivityRequests\ActivityRequestData;
 use App\Models\User\User;
+use App\Services\RequestSchema as Schema;
 use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
 use BaconQrCode\Writer;
 use Dompdf\Dompdf;
+use Dompdf\Image\Cache;
 use Dompdf\Options;
 use Illuminate\Database\LostConnectionDetector;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Throwable;
@@ -174,12 +176,14 @@ class CertificateDocumentGenerator
     {
         abort_unless(class_exists(Dompdf::class), 409, 'El generador PDF no está disponible.');
         gc_collect_cycles();
+        $temporaryDirectory = storage_path('framework/cache/pdf-'.bin2hex(random_bytes(16)));
+        abort_unless(File::makeDirectory($temporaryDirectory, 0700), 503, 'No se pudo reservar el directorio temporal del PDF.');
         $options = new Options;
         $options->set('isRemoteEnabled', false);
         $options->set('isPhpEnabled', false);
         $options->set('isJavascriptEnabled', false);
         $options->set('defaultFont', 'DejaVu Sans');
-        $options->set('tempDir', storage_path('framework/cache'));
+        $options->set('tempDir', $temporaryDirectory);
         $options->set('fontCache', storage_path('framework/cache'));
         $pdf = new Dompdf($options);
         try {
@@ -193,6 +197,8 @@ class CertificateDocumentGenerator
             return $content;
         } finally {
             unset($pdf);
+            Cache::clear();
+            File::deleteDirectory($temporaryDirectory);
             gc_collect_cycles();
         }
     }
@@ -203,7 +209,7 @@ class CertificateDocumentGenerator
         $qr = (new Writer(new ImageRenderer(new RendererStyle(200, 4), new SvgImageBackEnd)))
             ->writeString($this->verificationUrl($code));
 
-        return $this->previewPdf(view('certificates.demonstration', [
+        return $this->previewPdf(view(in_array($context->origen ?? null, ['reconocimiento', 'practica', 'ponente_actividad', 'ponente_sesion'], true) ? 'certificates.origins' : 'certificates.demonstration', [
             'context' => $context, 'certificate' => null, 'customMessage' => $message,
             'code' => $code, 'qrDataUri' => 'data:image/svg+xml;base64,'.base64_encode($qr),
             'logoDataUri' => 'data:image/png;base64,'.base64_encode(file_get_contents(resource_path('images/escudo-morales.png'))),
@@ -311,6 +317,22 @@ class CertificateDocumentGenerator
         if (str_starts_with($document->ruta_archivo, 'certificados/preparados/')
             || in_array($document->estado_certificado, [CertificateManagement::PREPARED, CertificateManagement::PENDING,
                 CertificateManagement::SIGNED, CertificateManagement::ISSUED], true)) {
+            $lookup = app(PublicCertificateLookup::class);
+            $published = $lookup->publishedDocument($document->codigo_verificacion);
+            if ($published !== null) {
+                return [
+                    'codigo_verificacion' => $document->codigo_verificacion, 'registro_encontrado' => true,
+                    'estado_certificado' => $document->estado_certificado, 'estado_documento' => $document->estado,
+                    'estado_disponibilidad' => 'Listo para entrega', 'pdf_confirmado' => true,
+                    'vigente' => false, 'puede_ver_documento' => true, 'integridad_verificada' => true,
+                    'emision_oficial_verificada' => false, 'firma_verificada' => false,
+                    'hash_sha256' => $published->hash_certificado, 'url_documento' => $lookup->pdfUrl($document->codigo_verificacion),
+                    'url_descarga' => $lookup->pdfUrl($document->codigo_verificacion).'&descargar=1',
+                    'beneficiario' => null, 'demostracion' => false, 'modo' => 'administrativo',
+                    'fecha_emision' => null, 'fecha_generacion' => $document->fecha_generacion,
+                    'motivos' => ['PDF administrativo confirmado y autorizado para publicación; no acredita firma criptográfica ni emisión oficial.'],
+                ];
+            }
             $integrity = true;
             try {
                 $this->assertArtifact($document);
@@ -323,7 +345,7 @@ class CertificateDocumentGenerator
                 'estado_certificado' => $document->estado_certificado, 'estado_documento' => $document->estado,
                 'estado_flujo' => $document->estado_flujo ?? $document->estado_certificado, 'vigente' => false, 'puede_ver_documento' => false,
                 'emision_oficial_verificada' => false, 'firma_verificada' => false,
-                'hash_sha256' => null, 'url_documento' => null, 'beneficiario' => null,
+                'hash_sha256' => null, 'url_documento' => null, 'url_descarga' => null, 'beneficiario' => null,
                 'integridad_verificada' => $integrity, 'demostracion' => false, 'modo' => 'administrativo',
                 'fecha_emision' => $document->fecha_emision, 'fecha_generacion' => $document->fecha_generacion,
                 'motivos' => [$document->estado_certificado === CertificateManagement::ISSUED

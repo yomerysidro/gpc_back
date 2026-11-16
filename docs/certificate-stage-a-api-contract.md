@@ -1,5 +1,100 @@
 # Contrato vigente de Etapa A con certificados_morales
 
+## Consulta pública por DNI
+
+Ruta del Portal Público: `POST /api/portal-certificados/consultar-dni`, sin JWT, con `Content-Type: application/json` y cuerpo `{"dni":"<ocho dígitos>"}`. Se conserva `POST /api/certificados/consulta-dni` como ruta compatible del mismo controlador y servicio. Ambas comparten los mismos límites; alternarlas no reinicia la cuota. No admite DNI en la URL ni campos adicionales. El DNI debe enviarse como string para conservar ceros iniciales.
+
+Resuelve exclusivamente documentos DNI activos de `gestion.persona_documento`, tipo DNI activo y persona existente. Si un DNI identifica ambiguamente a varias personas, no devuelve resultados. Reutiliza la comprobación de RR. HH. de PDF original íntegro, versión aprobada vigente y plan administrativo confirmado. Exige remisión a Gerencia (`PENDIENTE_FIRMA`), sin fecha de emisión, sin exigir `FIRMADO` ni `EMITIDO`. Excluye preparados sin confirmar, anulados, versiones vigentes ambiguas y archivos ausentes o alterados. No escribe en PostgreSQL ni regenera PDFs.
+
+Ejemplo anonimizado basado en una respuesta real obtenida por lectura de certificados_morales el 2026-11-15. Se omite el DNI y se representa el código con un marcador:
+
+```json
+{
+  "success": true,
+  "message": "Consulta de disponibilidad documental.",
+  "data": {
+    "certificados": [{
+      "referencia_publica": "817ced05b8830de1773ee1736d26b4fb29df76d6b3353a69ed1a37de4e70ee8a",
+      "codigo_verificacion": "<codigo publico de 30 caracteres hexadecimales>",
+      "origen": "sesion",
+      "tipo_certificado": "Capacitación",
+      "actividad": "Capacitacion  Personal",
+      "sesion": "Sesión N°001",
+      "fecha_sesion": "2026-11-03",
+      "estado_disponibilidad": "Listo para entrega",
+      "disponible_rrhh": true,
+      "pdf_publicado": false,
+      "url_documento": null,
+      "url_descarga": null
+    }]
+  }
+}
+```
+
+La referencia pública es HMAC y no permite recuperar IDs internos. `codigo_verificacion` es el código público ya existente del documento (no un ID de persona ni una credencial), reutilizable con `GET /api/certificados/verificar/{code}`. Conocer ese código no habilita descargar un PDF administrativo privado. No se devuelven DNI, nombre, datos laborales, identificadores internos, firmantes ni rutas privadas. Todos los documentos disponibles se devuelven como elementos separados por actividad, sesión, origen y tipo. DNI inexistente, inactivo, ambiguo o sin documentos disponibles: HTTP 200 con el mismo mensaje y `data.certificados:[]`. Payload inválido: 422 con mensaje genérico, sin eco del DNI. Fallo operativo: 503 sin detalles internos ni DNI en el registro de error de esta consulta.
+
+Límites: 5 consultas/minuto y 30/hora por IP; 10/hora por DNI incluso cambiando de IP. El DNI de las claves del limitador está protegido con HMAC. Respuestas `private, no-store`, `no-referrer` y `noindex, nofollow`; límite excedido: 429 y Retry-After. Estos controles reducen enumeración; no acreditan titularidad.
+
+El listado de disponibilidad NO autoriza a descargar un PDF privado. La publicación anónima requiere configurar ambas opciones desde una autorización institucional: `CERTIFICATION_PUBLIC_PDF_POLICY_REFERENCE` y `CERTIFICATION_PUBLIC_PDF_CODES` (códigos autorizados separados por `|`). Por defecto ambas están vacías: `pdf_publicado:false`, `url_documento:null`, `url_descarga:null`. No se agregó autorización global de todos los archivos. La política temporal usada en el test existe únicamente en la configuración de su proceso; no habilita publicación en el entorno real.
+
+Cuando un código está autorizado y su documento cumple de nuevo todos los requisitos, `url_documento` usa la ruta existente `GET /api/certificados/verificar/{code}?archivo=1`, sin JWT. Sirve la versión PDF aprobada, con comprobación de original y hash vigente; no sirve el original anterior por error. La búsqueda independiente por código y los QR conservan su ruta. `firma_verificada` y `emision_oficial_verificada` permanecen false. Fuera de publicación autorizada se conservan las rutas privadas y sus permisos existentes.
+
+Validación PostgreSQL: tres DNI registrados devolvieron respectivamente 1, 2 y 2 documentos confirmados; los dos certificados PREPARADO quedaron fuera. La ejecución de lectura real con visualización y descarga aprobó 11 casos y 92 aserciones. `PublicCertificateLookupPostgresTest` usa exclusivamente registros y PDFs reales, sin factories, mocks ni inserciones, dentro de transacciones REPEATABLE READ / READ ONLY con ROLLBACK. Compara certificados, documentos, asignaciones de firmantes, personas, documentos de identidad y hashes de todos los archivos documentales antes/después. Incluye límites por IP y por DNI entre IP distintas, entradas inválidas/inyección, datos mínimos, exclusión de preparados, PDF privado bloqueado y versión aprobada visible solo con política temporal de prueba. Ejecución explícita: `PUBLIC_CERTIFICATES_REAL_READ_ONLY=1`, PHPUnit con `--configuration phpunit.postgresql.xml tests/Feature/PublicCertificateLookupPostgresTest.php`. La suite normal omite el grupo PostgreSQL.
+
+
+### Visualización y descarga pública para Angular
+
+Se reutiliza exclusivamente `GET /api/certificados/verificar/{code}` (código hexadecimal de 30 caracteres, nunca DNI ni ID secuencial):
+
+- Metadatos: sin parámetros, `Accept: application/json`.
+- Visualizar: `?archivo=1`, devuelve `application/pdf` inline.
+- Descargar: `?archivo=1&descargar=1`, devuelve el mismo PDF con `Content-Disposition: attachment; filename=certificado-{code}.pdf`.
+
+El listado por DNI incluye `url_documento` y `url_descarga`: ambas relativas y nulas para documentos privados. Angular debe usar estas URLs únicamente cuando `pdf_publicado=true`. Puede abrir la primera en el visor y la segunda como enlace de descarga; si usa HttpClient debe pedir `responseType: 'blob'`. No necesita JWT. Un usuario autenticado tiene las mismas restricciones en esta ruta pública. La verificación administrativa autorizada también devuelve `url_descarga`.
+
+La autorización es publicación explícita para difusión pública: referencia institucional no vacía en `CERTIFICATION_PUBLIC_PDF_POLICY_REFERENCE` y códigos individualmente autorizados en `CERTIFICATION_PUBLIC_PDF_CODES`, separados por `|`. Esta referencia debe identificar la autorización para difundir el contenido personal del PDF. Conocer el DNI o el código no sustituye esa autorización. Retirar un código revoca su publicación. Aplicar la configuración con el procedimiento habitual de caché del despliegue. No se habilitó ningún código ni se modificó `.env`: no se proporcionó una autorización institucional para documentos concretos.
+
+Publicables: certificado `PENDIENTE_FIRMA`, documento `Vigente`, sin fecha de emisión, disponibilidad administrativa confirmada, origen/beneficiario coherentes, una única documentación vigente, plan de firmantes aprobado coincidente y SHA-256 válido tanto del original como del PDF aprobado vigente. No requiere `FIRMADO` ni `EMITIDO`. Se sirve el archivo confirmado por Gerencia tal como está almacenado, conservando QR, código y hash; si existe revisión aprobada se sirve esa revisión. No se crean tablas ni PDFs. Se conserva el comportamiento de verificación de certificados históricos.
+
+Documento privado, PREPARADO, anulado o íntegro pero sin aprobación: 403 al solicitar archivo; código inexistente o formato inválido: 404. Integridad que cambia entre validación y resolución: 409. Los errores no contienen el archivo. No usar endpoints privados de Gerencia para este flujo.
+
+Ambas modalidades comparten el límite existente de 30 solicitudes/minuto por IP con la verificación. Respuestas PDF: `private, no-store`, `nosniff`, `no-referrer`, `noindex, nofollow` y `X-Document-SHA256`. Auditoría mediante el logger existente: referencia HMAC del código, modalidad de descarga y denegaciones; sin DNI ni tokens. Los logs del proxy deben mantener su propia política de minimización.
+
+## Recuperación de preparación y continuación a Gerencia
+
+`POST /api/activity-session/{id}/preparar-certificados` conserva las acciones
+`revisar_documento`, `confirmar_preparacion` y `enviar_gerencia`. La identidad de recuperación
+es participación + sesión + tipo; nunca se cambia el QR, hash o PDF de un documento existente.
+
+- `revisar_documento` devuelve HTTP 200 con la preparación existente cuando ya está guardada:
+  `creado:false`, `reintento:true`, `preparacion_persistida:true`, IDs reales, estado y siguiente paso.
+  La vista previa contiene los bytes almacenados y el nuevo token de continuación está vinculado
+  a ese documento y hash; no genera otro PDF ni certificado.
+- `confirmar_preparacion` crea una sola preparación (201) o recupera la ya persistida (200).
+  Un reintento posterior a una escritura exitosa no se convierte en conflicto por haber guardado.
+- `enviar_gerencia` acepta el token de preparación o el `id_certificado_documento` real y
+  `confirmar:true`. En el esquema mínimo realiza las operaciones documentales existentes de
+  revisión y remisión, comprobando sesión, ámbito, permisos, PDF, estado y concurrencia.
+  Una remisión ya persistida devuelve HTTP 200 y `reintento:true` sin volver a escribir.
+- Antes del envío: `estado_flujo:PREPARADO`, `siguiente_paso:revisar-envio` y
+  `siguiente_accion_preparacion:enviar_gerencia`. Después: `enviado:true`,
+  `estado_flujo:PENDIENTE_FIRMA` y `siguiente_paso:consultar_gerencia`.
+
+La preparación inicial del esquema mínimo no exige configurar ni habilitar firmantes.
+Sin una selección documental explícita, el PDF inicial no fija responsables ni crea filas
+en `certificado_firma`: se seleccionan después, en Gerencia. Esto no confirma el PDF de
+firmantes ni habilita RR. HH., firma criptográfica o emisión oficial.
+
+Revisiones pendientes idénticas del mismo usuario/contexto pueden reutilizar sus bytes y QR
+con un token renovado. Un archivo reservado tras un fallo solo se reutiliza si coincide
+exactamente con el hash revisado y no pertenece a otro documento; nunca se sobrescribe.
+Tokens ajenos, documentos de otra sesión, PDF alterados, antecedentes sin sesión, estados
+incompatibles y duplicidad real de documentos siguen produciendo errores explícitos.
+
+La operación tiene un presupuesto acotado de ejecución (`preparation.execution_timeout_seconds`,
+120 segundos por defecto), aplicado solo al endpoint de preparación cuando PHP tenía un límite
+menor. No altera el límite global, no oculta excepciones y no declara éxito antes de guardar.
+
 La inspección de PostgreSQL 15.19 confirmó id_actividad_sesion BIGINT NULL, la FK compuesta validada hacia asistencia, el índice único parcial de participación/sesión/tipo y fecha_emision nullable. Los cambios estructurales fueron aplicados externamente. Esta verificación y las pruebas aisladas de Laravel se realizaron sin crear certificados institucionales en la base principal.
 
 | Entidad | Estados reales |
@@ -617,3 +712,7 @@ caducidad, cargo/contexto cambiados, ámbito, permisos, fallo de almacenamiento,
 rollback después de crear archivo, preservación de archivo preexistente y guardas
 de CRUD. PostgreSQL y concurrencia entre conexiones independientes no
 se acreditan con SQLite. No se ejecutó SQL de migración en ninguna base.
+
+## Ampliación por orígenes existentes
+
+La preparación de reconocimientos municipales y prácticas se integra mediante `POST /api/certificaciones/{origen}/{id}/preparar`, con revisión y confirmación separadas. Conserva `id_reconocimiento` o `id_practica`, participación y sesión NULL y las mismas APIs de remisión explícita, revisión y confirmación. Su elegibilidad requiere la política institucional que interprete el estado persistente del origen; no se extrapolan reglas de asistencia. No modifica la preparación por sesión ni sus plantillas. Contrato completo: [certificate-origins-api-contract.md](certificate-origins-api-contract.md).

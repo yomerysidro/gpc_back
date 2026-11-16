@@ -6,6 +6,7 @@ use App\Http\Data\ActivityRequests\ActivityRequestData;
 use App\Models\Certificate\Certificate;
 use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\User\User;
+use App\Services\RequestSchema as Schema;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Collection;
@@ -13,8 +14,8 @@ use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class CertificateDocumentWorkflow
 {
@@ -55,6 +56,10 @@ class CertificateDocumentWorkflow
     private function documents(User $actor, bool $includeWithoutDocument = false): Builder
     {
         $areas = $this->areas($actor);
+        $speakerOrigins = Schema::hasColumn('certificado.reconocimiento', 'id_actividad_ponente');
+        $sessionSpeakerOrigins = $speakerOrigins && Schema::hasColumn('certificado.actividad_ponente', 'id_actividad_sesion');
+        $recognitionPerson = $speakerOrigins ? 'COALESCE(ponente.id_persona,trabajador.id_persona)' : 'trabajador.id_persona';
+        $areaExpression = $speakerOrigins ? 'COALESCE(a.id_area,pr.id_area,actividad_ponente.id_area,trabajador.id_area)' : 'COALESCE(a.id_area,pr.id_area,trabajador.id_area)';
 
         $query = $includeWithoutDocument
             ? DB::table('certificado.certificado as c')->leftJoin('certificado.certificado_documento as d', 'd.id_certificado', '=', 'c.id_certificado')
@@ -67,23 +72,33 @@ class CertificateDocumentWorkflow
             ->leftJoin('gestion.persona_practicante as practicante', 'practicante.id_persona_practicante', '=', 'pr.id_persona_practicante')
             ->leftJoin('certificado.reconocimiento as r', 'r.id_reconocimiento', '=', 'c.id_reconocimiento')
             ->leftJoin('gestion.persona_trabajador as trabajador', 'trabajador.id_persona_trabajador', '=', 'r.id_persona_trabajador')
-            ->where(function (Builder $query): void {
+            ->when($speakerOrigins, fn (Builder $query) => $query
+                ->leftJoin('certificado.actividad_ponente as vinculo_ponente', 'vinculo_ponente.id_actividad_ponente', '=', 'r.id_actividad_ponente')
+                ->leftJoin('gestion.persona_ponente as ponente', 'ponente.id_persona_ponente', '=', 'vinculo_ponente.id_persona_ponente')
+                ->leftJoin('certificado.actividad as actividad_ponente', 'actividad_ponente.id_actividad', '=', 'vinculo_ponente.id_actividad'))
+            ->when($sessionSpeakerOrigins, fn (Builder $query) => $query
+                ->leftJoin('certificado.actividad_sesion as sesion_ponente', 'sesion_ponente.id_actividad_sesion', '=', 'vinculo_ponente.id_actividad_sesion')
+                ->where(fn (Builder $context) => $context->whereNull('vinculo_ponente.id_actividad_sesion')
+                    ->orWhereColumn('sesion_ponente.id_actividad', 'vinculo_ponente.id_actividad')))
+            ->where(function (Builder $query) use ($recognitionPerson): void {
                 $query->where(function (Builder $activity): void {
                     $activity->whereNotNull('c.id_participacion')->whereNull('c.id_practica')->whereNull('c.id_reconocimiento')
                         ->whereColumn('p.id_persona', 'c.id_persona');
                 })->orWhere(function (Builder $practice): void {
                     $practice->whereNotNull('c.id_practica')->whereNull('c.id_participacion')->whereNull('c.id_reconocimiento')
                         ->whereColumn('practicante.id_persona', 'c.id_persona');
-                })->orWhere(function (Builder $recognition): void {
+                })->orWhere(function (Builder $recognition) use ($recognitionPerson): void {
                     $recognition->whereNotNull('c.id_reconocimiento')->whereNull('c.id_participacion')->whereNull('c.id_practica')
-                        ->whereColumn('trabajador.id_persona', 'c.id_persona');
+                        ->whereColumn(DB::raw($recognitionPerson), 'c.id_persona');
                 });
             })
-            ->when($areas !== null, fn (Builder $query) => $query->whereIn(DB::raw('COALESCE(a.id_area,pr.id_area,trabajador.id_area)'), $areas))
+            ->when($areas !== null, fn (Builder $query) => $query->whereIn(DB::raw($areaExpression), $areas))
             ->select('d.*', 'c.id_certificado', 'c.id_persona', 'c.id_tipo_certificado', 'c.id_participacion', 'c.id_practica', 'c.id_reconocimiento',
-                'c.estado as estado_certificado', 'c.fecha_emision', 'c.notificado', 'c.fecha_notificacion', 'a.id_actividad', 'a.nombre as actividad',
+                'c.estado as estado_certificado', 'c.fecha_emision', 'c.notificado', 'c.fecha_notificacion',
                 'tipo.nombre_tipo as tipo_certificado', 'tipo.estado as tipo_activo', 'beneficiario.nombres', 'beneficiario.apellido_paterno', 'beneficiario.apellido_materno')
-            ->selectRaw('COALESCE(a.id_area,pr.id_area,trabajador.id_area) as id_area');
+            ->selectRaw($areaExpression.' as id_area')
+            ->selectRaw(($speakerOrigins ? 'COALESCE(a.id_actividad,actividad_ponente.id_actividad)' : 'a.id_actividad').' as id_actividad')
+            ->selectRaw(($speakerOrigins ? 'COALESCE(a.nombre,actividad_ponente.nombre)' : 'a.nombre').' as actividad');
         if (Schema::hasColumn('certificado.certificado', 'id_actividad_sesion')) {
             $query->leftJoin('certificado.actividad_sesion as sesion', 'sesion.id_actividad_sesion', '=', 'c.id_actividad_sesion')
                 ->leftJoin('certificado.asistencia as asistencia', function (JoinClause $join): void {
@@ -100,11 +115,14 @@ class CertificateDocumentWorkflow
     public function document(int $id, User $actor): object
     {
         $this->authorize($actor);
-        $document = $this->documents($actor)->where('d.id_certificado_documento', $id)->first();
+        $key = self::class.'.document.'.hash('sha256', serialize([$id, $actor->getAuthIdentifier(),
+            $actor->id_persona, $actor->estado, config('module_permissions')]));
+        $document = RequestReadMemo::remember($key,
+            fn (): ?object => $this->documents($actor)->where('d.id_certificado_documento', $id)->first());
         abort_unless($document, 404, 'Documento no encontrado en su ámbito.');
         abort_unless(Gate::forUser($actor)->allows('view', (new CertificateDocument)->newFromBuilder((array) $document)), 403, 'No autorizado.');
 
-        return app(CertificateDocumentVersions::class)->resolve($document);
+        return app(CertificateDocumentVersions::class)->resolve($document, readOnly: true);
     }
 
     /** @param Collection<int, object> $documents
@@ -158,6 +176,9 @@ class CertificateDocumentWorkflow
                         && ($signer->fecha_fin === null || $signer->fecha_fin >= today()->toDateString()),
                 ])->values();
             }
+            if (($document->id_sesion ?? null) !== null && $applications->isEmpty()) {
+                $signers = collect();
+            }
             $result[$id] = [
                 'id_certificado_documento' => $id, 'id_certificado' => (int) $document->id_certificado,
                 'codigo_verificacion' => $document->codigo_verificacion, 'hash_pdf' => $document->hash_certificado,
@@ -188,6 +209,21 @@ class CertificateDocumentWorkflow
                     'remitir' => false,
                     'firmar' => false, 'emitir' => false, 'entregar' => false],
             ];
+            if ($document->id_reconocimiento !== null && $document->id_participacion === null) {
+                try {
+                    $approved = app(CertificateDocumentVersions::class)->approvedContent($document);
+                    $context = $approved['context'];
+                    if (in_array($context['origen'] ?? null, ['ponente_actividad', 'ponente_sesion'], true)) {
+                        $result[$id] = array_replace($result[$id], array_intersect_key($context, array_flip([
+                            'origen', 'modalidad_reconocimiento', 'id_actividad_ponente', 'id_actividad', 'actividad',
+                            'id_sesion', 'sesion', 'fecha_sesion',
+                        ])), ['id_reconocimiento' => (int) $document->id_reconocimiento,
+                            'identidad_sesion_disponible' => ($context['id_sesion'] ?? null) !== null]);
+                        $result[$id] = array_replace($result[$id], app(CertificateOrigins::class)->savedSessionRecognitionText($approved));
+                    }
+                } catch (HttpException) {
+                }
+            }
         }
 
         return $result;
@@ -200,6 +236,16 @@ class CertificateDocumentWorkflow
 
     private function canRemit(object $document, User $actor): bool
     {
+        $originAvailable = false;
+        if ($document->id_participacion === null && (($document->id_reconocimiento ?? null) !== null || ($document->id_practica ?? null) !== null)) {
+            try {
+                app(CertificateOrigins::class)->documentContext($document);
+                $originAvailable = true;
+            } catch (HttpException) {
+                $originAvailable = false;
+            }
+        }
+
         return in_array($document->estado_certificado, [CertificateManagement::PREPARED, CertificateManagement::PENDING], true)
             && (($document->id_sesion ?? null) === null || ($document->fecha_emision === null
                 && $document->estado_sesion === 'Finalizada'
@@ -208,7 +254,7 @@ class CertificateDocumentWorkflow
             && $document->estado === 'Vigente'
             && (bool) $document->tipo_activo
             && ! (bool) $document->notificado && $document->fecha_notificacion === null
-            && $document->id_participacion !== null
+            && ($document->id_participacion !== null || $originAvailable)
             && ! str_starts_with($document->ruta_archivo, 'certificados/desarrollo/')
             && ! str_starts_with($document->ruta_archivo, 'certificados/demostracion/')
             && Gate::forUser($actor)->allows('update', (new CertificateDocument)->newFromBuilder((array) $document))
@@ -289,6 +335,10 @@ class CertificateDocumentWorkflow
 
         $result = DB::transaction(function () use ($id, $confirmation, $actor): array {
             $document = $this->document($id, $actor);
+            if ($document->id_participacion === null) {
+                $origin = $document->id_reconocimiento !== null ? 'reconocimiento' : 'practica';
+                app(CertificateOrigins::class)->lock($origin, (int) ($document->id_reconocimiento ?? $document->id_practica));
+            }
             DB::table('certificado.certificado')->where('id_certificado', $document->id_certificado)->lockForUpdate()->first();
             if (($document->id_sesion ?? null) !== null) {
                 DB::table('certificado.participacion')->where('id_participacion', $document->id_participacion)->lockForUpdate()->first();
@@ -378,7 +428,9 @@ class CertificateDocumentWorkflow
             $query->where('c.estado', $filters['estado_flujo']);
         }
         if (isset($filters['id_actividad'])) {
-            $query->where('a.id_actividad', $filters['id_actividad']);
+            $activity = Schema::hasColumn('certificado.reconocimiento', 'id_actividad_ponente')
+                ? 'COALESCE(a.id_actividad,actividad_ponente.id_actividad)' : 'a.id_actividad';
+            $query->where(DB::raw($activity), (int) $filters['id_actividad']);
         }
         $page = $query->orderByDesc('d.id_certificado_documento')->paginate($filters['per_page'] ?? 20, ['*'], 'page', $filters['page'] ?? 1);
         foreach ($page->getCollection() as $document) {

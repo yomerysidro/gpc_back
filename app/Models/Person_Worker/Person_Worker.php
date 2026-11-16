@@ -30,6 +30,7 @@ class Person_Worker extends Model
 
     protected $casts = [
         'estado' => 'boolean',
+        'habilitado_firma_certificados' => 'boolean',
     ];
 
     public function persona(): BelongsTo

@@ -16,6 +16,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -111,7 +112,7 @@ class CertificateDocumentController extends Controller
                 $generator->authorizeDocument($document, $request->user());
             }
             abort_unless($document->estado === 'Vigente', 409, 'El documento no está vigente.');
-            $document = $generator->authorizedArtifact($document);
+            $document = $generator->authorizedArtifact($document, readOnly: true);
 
             return response()->download(Storage::disk('local')->path($document->ruta_archivo),
                 'certificado-'.$document->codigo_verificacion.'.pdf', ['Content-Type' => 'application/pdf',
@@ -173,13 +174,27 @@ class CertificateDocumentController extends Controller
             $document = $generator->documentByCode($code);
             $verification = $generator->verification($document);
             if ($request->boolean('archivo')) {
-                abort_unless($verification['puede_ver_documento'], 409, 'El documento no está disponible para consulta pública.');
-                $generator->assertArtifact($document);
-
-                return response()->file(Storage::disk('local')->path($document->ruta_archivo), [
-                    'Content-Type' => 'application/pdf', 'Cache-Control' => 'no-store',
+                if (! $verification['puede_ver_documento']) {
+                    Log::notice('certificado_documento.acceso_publico_denegado', [
+                        'referencia' => hash_hmac('sha256', $code, (string) config('app.key')),
+                    ]);
+                    abort(403, 'El documento no está disponible para consulta pública.');
+                }
+                $document = $generator->authorizedArtifact($document, readOnly: true);
+                $headers = [
+                    'Content-Type' => 'application/pdf', 'Cache-Control' => 'private, no-store',
                     'X-Content-Type-Options' => 'nosniff', 'Referrer-Policy' => 'no-referrer',
+                    'X-Robots-Tag' => 'noindex, nofollow', 'X-Document-SHA256' => $document->hash_certificado,
+                ];
+                Log::info('certificado_documento.acceso_publico', [
+                    'referencia' => hash_hmac('sha256', $code, (string) config('app.key')),
+                    'descarga' => $request->boolean('descargar'),
                 ]);
+
+                return $request->boolean('descargar')
+                    ? response()->download(Storage::disk('local')->path($document->ruta_archivo), 'certificado-'.$code.'.pdf', $headers)
+                    : response()->file(Storage::disk('local')->path($document->ruta_archivo), $headers)
+                        ->setContentDisposition('inline', 'certificado-'.$document->codigo_verificacion.'.pdf');
             }
             if ($request->acceptsHtml() && ! $request->expectsJson()) {
                 return response()->view('certificates.verification', ['verification' => $verification])

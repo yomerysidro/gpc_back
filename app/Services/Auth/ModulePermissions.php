@@ -37,7 +37,8 @@ class ModulePermissions
             'rechazar' => $canReject,
             'decidir_ambito_institucional' => $institutionalDecision,
             'decidir_propias' => $institutionalDecision,
-            'representar_areas' => $user->canRepresentAllRequestAreas(),
+            'representar_areas' => config('module_permissions.administrator_request_represent_all_areas', false)
+                && $administrator && $user->estado && in_array('solicitudes.crear', $permissions, true),
         ];
     }
 
@@ -53,15 +54,7 @@ class ModulePermissions
             return false;
         }
 
-        $request = request();
-        $permissionKey = self::class.'.permissions.'.spl_object_id($user);
-        $permissions = $request->route() !== null ? $request->attributes->get($permissionKey) : null;
-        if ($permissions === null) {
-            $permissions = $user->permissionKeys();
-            if ($request->route() !== null) {
-                $request->attributes->set($permissionKey, $permissions);
-            }
-        }
+        $permissions = $user->permissionKeys();
         if ($action === 'ver' && in_array($class, [Area::class, ActivityType::class], true)
             && array_intersect(['solicitudes.crear', 'solicitudes.propias', 'solicitudes.consultar'], $permissions) !== []) {
             return true;

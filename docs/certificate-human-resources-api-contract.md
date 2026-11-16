@@ -223,3 +223,111 @@ nuevos ni permite descargar documentos ajenos. La autorización y la integridad
 se vuelven a comprobar al descargar el archivo.
 
 Los certificados históricos sin documento siguen presentes en /api/certificados/list cuando su ámbito permite consultarlos. No se les atribuye PDF confirmado ni disponibilidad para RR. HH. y no se genera un documento para incluirlos.
+
+## Catálogo normal y recuperación de operaciones
+
+Certificados emitidos consulta GET /certificados/list; también existe GET /certificados-documentos/list. Ambos exigen preparación confirmada para certificados PREPARADO/PENDIENTE_FIRMA. Los filtros id_sesion, id_participacion, id_tipo_certificado e id_certificado conservan participación + sesión + tipo. La ausencia en catálogo no autoriza a crear nuevamente: consultar el documento existente por el flujo administrativo.
+
+Estado real comprobado: documentos 2, 4 y 5 visibles con revisión confirmada; documento 6 existente y oculto por faltar responsables, modalidad y confirmación PDF. La revisión y asignación solas no habilitan RR. HH. Tras confirmar el plan exacto, el mismo documento entra en catálogo con estado_preparacion:PREPARADO_ENTREGA, pdf_confirmado:true y disponible_rrhh:true; no requiere escritura de envío a RR. HH.
+
+GET /certificados-documentos/{id}/archivo y GET /rrhh/certificados/{id}/pdf conservan autorización e integridad del archivo. La consulta individual lee el manifiesto privado sin crear archivos de bloqueo. fecha_emision permanece nula y firma_verificada/emision_oficial_verificada permanecen false. PENDIENTE_FIRMA acredita remisión administrativa, sin historial ni fecha de envío persistidos en el esquema actual.
+
+## Documentos de reconocimiento y prácticas
+
+El catálogo y la bandeja existentes incorporan documentos por `id_reconocimiento` e `id_practica`, con titularidad y área verificadas. Se conservan los grupos `actividades` de Capacitación; la bandeja añade `otros_origenes` solo si contiene documentos confirmados sin actividad. No se crean actividad o sesión con ID 0. Los nuevos elementos indican origen, claves y los datos acreditados del reconocimiento o periodo. La descarga usa las mismas rutas privadas. Un documento sin plan de responsables confirmado no está disponible; la disponibilidad administrativa no registra una entrega ni acredita firma criptográfica. Contrato completo: [certificate-origins-api-contract.md](certificate-origins-api-contract.md).
+## Publicación académica mediante configuración Laravel
+
+El alcance vigente no crea tablas, columnas ni migraciones. La propuesta
+`docs/certificate-publication-schema-proposal.sql` queda descartada de este trabajo:
+no ejecutarla. No existen endpoints de publicación o retiro desde RR. HH. ni estados
+persistentes de publicación. `pdf_publicado` es una facultad calculada, no un estado
+del certificado en PostgreSQL.
+
+La autorización vigente utiliza exclusivamente:
+
+- `CERTIFICATION_PUBLIC_PDF_POLICY_REFERENCE`: referencia no vacía que documenta la
+  autorización y el consentimiento para difundir los PDFs académicos seleccionados.
+- `CERTIFICATION_PUBLIC_PDF_CODES`: códigos exactos autorizados, separados por `|`.
+  No admite comodines ni autoriza por DNI, persona, actividad o rol.
+
+Antes de añadir códigos, el responsable debe identificar los documentos académicos
+y conservar fuera de este mecanismo la evidencia del consentimiento aplicable al
+contenido del PDF. No basta escribir «demostración» como referencia. La aplicación
+no distingue automáticamente un PDF académico de uno institucional por su código,
+no comprueba la autenticidad de una referencia y no crea un registro de consentimiento.
+No habilitar documentos de terceros o de producción sin autorización específica.
+
+Ejemplo de estructura, con marcadores que deben sustituirse y que NO autorizan nada:
+
+```dotenv
+CERTIFICATION_PUBLIC_PDF_POLICY_REFERENCE="<referencia verificable del consentimiento académico>"
+CERTIFICATION_PUBLIC_PDF_CODES="<codigo autorizado A>|<codigo autorizado B>"
+```
+
+La referencia corresponde a todos los códigos enumerados: debe identificar evidencia
+que cubra cada documento y su contenido confirmado. No pegar estos marcadores como
+configuración real. Sin referencia o sin un código expresamente enumerado, el PDF
+administrativo permanece privado. Ejecutar pruebas no habilita códigos en la
+configuración real; tampoco basta estar listo para entrega.
+
+Configurar mediante las variables del despliegue o su `.env`, conservando la lista
+autorizada existente. Para un despliegue con configuración cacheada ejecutar:
+
+```shell
+php artisan config:cache --no-interaction
+```
+
+En desarrollo sin caché puede usarse `php artisan config:clear --no-interaction`.
+El código de aplicación lee `config()`, no `.env` directamente. Si existen procesos
+persistentes, recargarlos mediante el procedimiento del despliegue para que adopten
+la nueva configuración. No hace falta ejecutar migraciones ni regenerar PDFs.
+
+### Consulta y archivo existentes
+
+1. POST `/api/portal-certificados/consultar-dni`, cuerpo `{"dni":"<ocho dígitos>"}`.
+   Devuelve `data.certificados[]` con los documentos administrativamente confirmados.
+   Un documento privado puede aparecer como «Listo para entrega», pero conserva
+   `pdf_publicado:false`, `url_documento:null` y `url_descarga:null`.
+2. GET `/api/certificados/verificar/{codigo}` consulta el registro. La autorización
+   administrativa permite `puede_ver_documento:true` y URLs públicas solamente si el
+   código está autorizado y el documento continúa confirmado, vigente e íntegro.
+3. GET `/api/certificados/verificar/{codigo}?archivo=1` sirve el PDF con
+   `application/pdf` y disposición `inline`.
+4. GET `/api/certificados/verificar/{codigo}?archivo=1&descargar=1` descarga el mismo
+   archivo con disposición `attachment`.
+
+En cada solicitud se valida la autorización cargada y el documento existente mediante
+los servicios actuales de RR. HH., incluido su plan administrativo confirmado por
+Gerencia, remisión PENDIENTE_FIRMA, vigencia y SHA-256. Se utiliza la revisión confirmada
+que ya consulta RR. HH.; no se sobrescriben el PDF base, el PDF confirmado, sus hashes
+ni el código. No se exige EMITIDO ni firma digital criptográfica y ambos indicadores
+de verificación oficial permanecen false. El encabezado `X-Document-SHA256` identifica
+el PDF servido; no se exponen rutas físicas ni Base64 en la consulta pública.
+
+Se conserva el QR ya grabado: su código sigue verificando el mismo registro y la
+configuración actual decide si ofrece acceso al archivo. El destino del QR existente
+no se modifica; la visualización en el portal Angular depende de que esa página use
+los endpoints existentes. Las pruebas HTTP del backend no prueban un escaneo físico
+ni una sesión completa del navegador Angular.
+
+### Retirar una autorización y límites de RR. HH.
+
+Quitar únicamente el código afectado de `CERTIFICATION_PUBLIC_PDF_CODES` y aplicar
+la configuración como arriba. Para bloquear todos los PDFs administrativos puede
+vaciarse la lista o retirarse la referencia. Después de recargar la configuración,
+una nueva petición al enlace ya compartido se rechaza con 403; la descarga también.
+El documento privado sigue siendo consultable administrativamente con los permisos
+existentes. No se eliminan certificados, PDFs, QR ni hashes.
+
+No se puede revocar una copia que alguien ya descargó ni interrumpir una respuesta
+ya enviada. Con caché o varios procesos, editar `.env` por sí solo no garantiza un
+retiro inmediato: todos deben cargar la nueva configuración. No hay historial de
+publicación/retiro, fecha ni responsable persistidos por este mecanismo. Los logs
+de acceso no sustituyen esa auditoría ni prueban consentimiento.
+
+RR. HH. no dispone de una acción dinámica y persistente Publicar/Retirar. El cambio
+lo realiza un responsable de configuración autorizado; no se implementa un endpoint
+que escriba `.env` ni archivos de autorización. Angular debe reutilizar
+`pdf_publicado`, `puede_ver_documento`, `url_documento` y `url_descarga`; no debe crear
+un botón que anuncie persistencia administrativa inexistente. Los documentos no
+autorizados, anulados, ausentes, corruptos o sin confirmación continúan bloqueados.

@@ -3,6 +3,7 @@
 namespace App\Http\Data\Attendance;
 
 use App\Http\Data\GestionIntegrity;
+use App\Services\CertificateAttendanceProtection;
 use App\Services\CertificationReadiness;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
@@ -87,7 +88,7 @@ class AttendanceData
         try {
             self::validateBusinessRules($data);
 
-            if (DB::table('certificado.certificado')->where('id_participacion', $data['ID_PARTICIPACION'])->lockForUpdate()->exists()) {
+            if (CertificateAttendanceProtection::forAttendance((int) $data['ID_PARTICIPACION'], (int) $data['ID_ACTIVIDAD_SESION'])) {
                 DB::rollBack();
 
                 return ['success' => false, 'message' => 'La participación ya sustenta certificados; sus asistencias deben conservarse.', 'status' => 409];
@@ -192,7 +193,8 @@ class AttendanceData
                 ? [...$finalData, 'ID_ACTIVIDAD' => $data['ID_ACTIVIDAD']]
                 : $finalData);
 
-            if (DB::table('certificado.certificado')->whereIn('id_participacion', [$attendance->id_participacion, $finalData['ID_PARTICIPACION']])->lockForUpdate()->exists()) {
+            if (CertificateAttendanceProtection::forAttendance((int) $attendance->id_participacion, (int) $attendance->id_actividad_sesion)
+                || CertificateAttendanceProtection::forAttendance((int) $finalData['ID_PARTICIPACION'], (int) $finalData['ID_ACTIVIDAD_SESION'])) {
                 DB::rollBack();
 
                 return ['success' => false, 'message' => 'La asistencia sustenta certificados y debe conservarse.', 'status' => 409];
@@ -281,7 +283,7 @@ class AttendanceData
 
                 return ['success' => false, 'message' => 'La sesión está finalizada; no se puede eliminar su asistencia.', 'status' => 409];
             }
-            if (DB::table('certificado.certificado')->where('id_participacion', $attendance->id_participacion)->lockForUpdate()->exists()) {
+            if (CertificateAttendanceProtection::forAttendance((int) $attendance->id_participacion, (int) $attendance->id_actividad_sesion)) {
                 DB::rollBack();
 
                 return ['success' => false, 'message' => 'La asistencia sustenta certificados y debe conservarse.', 'status' => 409];

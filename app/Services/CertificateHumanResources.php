@@ -6,11 +6,12 @@ use App\Http\Data\ActivityRequests\ActivityRequestData;
 use App\Models\Certificate\Certificate;
 use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\User\User;
+use App\Services\RequestSchema as Schema;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Schema;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class CertificateHumanResources
 {
@@ -36,31 +37,62 @@ class CertificateHumanResources
         return $areas;
     }
 
-    private function records(User $actor, bool $own = false): Builder
+    private function availableRecords(bool $includeActivityDocuments = false): Builder
     {
-        $areas = $own ? [] : $this->areas($actor);
-        abort_unless($actor->estado && $actor->id_persona, 403);
+        $speakerOrigins = Schema::hasColumn('certificado.reconocimiento', 'id_actividad_ponente');
+        $recognitionPerson = $speakerOrigins ? 'COALESCE(ponente_rrhh.id_persona,rt.id_persona)' : 'rt.id_persona';
+        $areaExpression = $speakerOrigins ? 'COALESCE(a.id_area,pr.id_area,actividad_ponente_rrhh.id_area,rt.id_area)' : 'COALESCE(a.id_area,pr.id_area,rt.id_area)';
         $query = DB::table('certificado.certificado_documento as d')
             ->join('certificado.certificado as c', 'c.id_certificado', '=', 'd.id_certificado')
-            ->join('certificado.participacion as participante', 'participante.id_participacion', '=', 'c.id_participacion')
-            ->join('gestion.persona as p', 'p.id_persona', '=', 'participante.id_persona')
+            ->leftJoin('certificado.participacion as participante', 'participante.id_participacion', '=', 'c.id_participacion')
+            ->join('gestion.persona as p', 'p.id_persona', '=', 'c.id_persona')
             ->join('certificado.tipo_certificado as t', 't.id_tipo_certificado', '=', 'c.id_tipo_certificado')
-            ->join('certificado.actividad_sesion as s', 's.id_actividad_sesion', '=', 'c.id_actividad_sesion')
-            ->join('certificado.actividad as a', 'a.id_actividad', '=', 's.id_actividad')
-            ->whereColumn('c.id_persona', 'participante.id_persona')->whereColumn('participante.id_actividad', 's.id_actividad')
-            ->whereNull('c.id_practica')->whereNull('c.id_reconocimiento')->where('d.estado', 'Vigente')
+            ->leftJoin('certificado.actividad_sesion as s', 's.id_actividad_sesion', '=', 'c.id_actividad_sesion')
+            ->leftJoin('certificado.actividad as a', 'a.id_actividad', '=', DB::raw('COALESCE(s.id_actividad, participante.id_actividad)'))
+            ->leftJoin('gestion.practica as pr', 'pr.id_practica', '=', 'c.id_practica')
+            ->leftJoin('gestion.persona_practicante as pp', 'pp.id_persona_practicante', '=', 'pr.id_persona_practicante')
+            ->leftJoin('certificado.reconocimiento as r', 'r.id_reconocimiento', '=', 'c.id_reconocimiento')
+            ->leftJoin('gestion.persona_trabajador as rt', 'rt.id_persona_trabajador', '=', 'r.id_persona_trabajador')
+            ->when($speakerOrigins, fn (Builder $query) => $query
+                ->leftJoin('certificado.actividad_ponente as vinculo_ponente_rrhh', 'vinculo_ponente_rrhh.id_actividad_ponente', '=', 'r.id_actividad_ponente')
+                ->leftJoin('gestion.persona_ponente as ponente_rrhh', 'ponente_rrhh.id_persona_ponente', '=', 'vinculo_ponente_rrhh.id_persona_ponente')
+                ->leftJoin('certificado.actividad as actividad_ponente_rrhh', 'actividad_ponente_rrhh.id_actividad', '=', 'vinculo_ponente_rrhh.id_actividad'))
+            ->where(function (Builder $origins) use ($includeActivityDocuments, $recognitionPerson): void {
+                $origins->where(fn (Builder $training) => $training->whereNotNull('c.id_participacion')
+                    ->whereColumn('c.id_persona', 'participante.id_persona')
+                    ->where(fn (Builder $scope) => $scope->whereColumn('participante.id_actividad', 's.id_actividad')
+                        ->when($includeActivityDocuments, fn (Builder $scope) => $scope->orWhereNull('c.id_actividad_sesion')))
+                    ->whereNull('c.id_practica')->whereNull('c.id_reconocimiento'))
+                    ->orWhere(fn (Builder $recognition) => $recognition->whereNull('c.id_participacion')->whereNull('c.id_actividad_sesion')
+                        ->whereNull('c.id_practica')->whereNotNull('c.id_reconocimiento')->whereColumn(DB::raw($recognitionPerson), 'c.id_persona'))
+                    ->orWhere(fn (Builder $practice) => $practice->whereNull('c.id_participacion')->whereNull('c.id_actividad_sesion')
+                        ->whereNull('c.id_reconocimiento')->whereNotNull('c.id_practica')->whereColumn('pp.id_persona', 'c.id_persona'));
+            })->where('d.estado', 'Vigente')
             ->whereIn('c.estado', [CertificateManagement::PREPARED, CertificateManagement::PENDING])->whereNull('c.fecha_emision')
             ->whereNotExists(function (Builder $other): void {
                 $other->selectRaw('1')->from('certificado.certificado_documento as otra')
                     ->whereColumn('otra.id_certificado', 'd.id_certificado')->where('otra.estado', 'Vigente')
                     ->whereColumn('otra.id_certificado_documento', '<>', 'd.id_certificado_documento');
             })
-            ->select('d.*', 'c.id_persona', 'c.id_participacion', 'c.id_tipo_certificado',
+            ->select('d.*', 'c.id_persona', 'c.id_participacion', 'c.id_tipo_certificado', 'c.id_practica', 'c.id_reconocimiento',
                 'c.estado as estado_certificado', 'c.fecha_emision', 't.nombre_tipo as tipo_certificado',
-                'p.nombres', 'p.apellido_paterno', 'p.apellido_materno', 'a.id_actividad', 'a.id_area', 'a.nombre as actividad',
-                's.id_actividad_sesion as id_sesion', 's.nombre as sesion', 's.fecha as fecha_sesion');
+                'p.nombres', 'p.apellido_paterno', 'p.apellido_materno', 'a.id_actividad', 'a.nombre as actividad',
+                's.id_actividad_sesion as id_sesion', 's.nombre as sesion', 's.fecha as fecha_sesion')
+            ->selectRaw($areaExpression.' as id_area');
+
+        return $query;
+    }
+
+    private function records(User $actor, bool $own = false): Builder
+    {
+        $areas = $own ? [] : $this->areas($actor);
+        abort_unless($actor->estado && $actor->id_persona, 403);
+        $query = $this->availableRecords();
         if (! $own) {
-            return $query->whereIn('a.id_area', $areas);
+            $areaExpression = Schema::hasColumn('certificado.reconocimiento', 'id_actividad_ponente')
+                ? 'COALESCE(a.id_area,pr.id_area,actividad_ponente_rrhh.id_area,rt.id_area)' : 'COALESCE(a.id_area,pr.id_area,rt.id_area)';
+
+            return $query->whereIn(DB::raw($areaExpression), $areas);
         }
         $query->where('c.id_persona', $actor->id_persona);
         if (! Schema::hasColumn('certificado.certificado_documento', 'gestion_entrega')) {
@@ -71,17 +103,52 @@ class CertificateHumanResources
             ->whereIn('d.gestion_entrega->estado_administrativo', ['DISPONIBLE_ENTREGA', 'ENTREGADO']);
     }
 
+    /** @return \Generator<int, object> */
+    public function publicConfirmedDocuments(int $personId, ?string $code = null): \Generator
+    {
+        $query = $this->availableRecords(includeActivityDocuments: true)->where('c.id_persona', $personId)
+            ->where('c.estado', CertificateManagement::PENDING)
+            ->when($code !== null, fn (Builder $query) => $query->where('d.codigo_verificacion', $code))
+            ->orderBy('d.id_certificado_documento');
+        foreach ($query->lazy(100) as $document) {
+            try {
+                $confirmed = $this->confirmed($document);
+                if ($confirmed !== null) {
+                    yield $confirmed;
+                }
+            } catch (HttpException) {
+                continue;
+            }
+        }
+    }
+
     /** @param array<string, int> $filters */
     private function filtered(User $actor, array $filters, bool $own = false): Builder
     {
         $query = $this->records($actor, $own);
         foreach (['id_actividad' => 'a.id_actividad', 'id_sesion' => 's.id_actividad_sesion', 'id_persona' => 'c.id_persona'] as $key => $column) {
             if (isset($filters[$key])) {
-                $query->where($column, $filters[$key]);
+                if ($key === 'id_actividad') {
+                    $this->filterActivityCandidates($query, (int) $filters[$key]);
+                } elseif ($key === 'id_sesion') {
+                    $query->where(fn (Builder $scope) => $scope->where($column, $filters[$key])->orWhereNotNull('c.id_reconocimiento'));
+                } else {
+                    $query->where($column, $filters[$key]);
+                }
             }
         }
 
         return $query->orderBy('a.id_actividad')->orderBy('s.id_actividad_sesion')->orderBy('d.id_certificado_documento');
+    }
+
+    private function filterActivityCandidates(Builder $query, int $id): void
+    {
+        $query->where(fn (Builder $activity) => $activity->where('a.id_actividad', $id)->orWhereNotNull('c.id_reconocimiento'));
+    }
+
+    private function matchesActivity(object $document, ?int $id): bool
+    {
+        return $id === null || (int) ($this->present($document)['id_actividad'] ?? 0) === $id;
     }
 
     /** @param list<array<string, mixed>>|null $signers */
@@ -133,7 +200,7 @@ class CertificateHumanResources
     }
 
     /** @return \Generator<int, object> */
-    private function rows(Builder $query, bool $historical = false): \Generator
+    private function rows(Builder $query, bool $historical = false, bool $includePending = false): \Generator
     {
         foreach ($query->lazy(100)->chunk(100) as $chunk) {
             $documents = collect($chunk->all());
@@ -153,9 +220,18 @@ class CertificateHumanResources
                     if ((int) $currentCounts->get($document->id_certificado, 0) !== 1) {
                         continue;
                     }
-                    $document = $this->confirmed($document, $plans[(int) $document->id_certificado_documento] ?? []);
-                    if ($document !== null) {
-                        yield $document;
+                    if ($includePending && ($document->estado_certificado !== CertificateManagement::PENDING
+                        || $document->estado !== 'Vigente' || $document->fecha_emision !== null)) {
+                        continue;
+                    }
+                    $confirmed = $this->confirmed($document, $plans[(int) $document->id_certificado_documento] ?? []);
+                    if ($confirmed !== null) {
+                        yield $confirmed;
+                    } elseif ($includePending) {
+                        $this->generator->assertArtifact($document);
+                        $resolved = $this->versions->resolve($document, readOnly: true);
+                        $this->generator->assertArtifact($resolved);
+                        yield $resolved;
                     }
                 } elseif ($historical) {
                     yield $this->versions->resolve($document, readOnly: true);
@@ -169,6 +245,9 @@ class CertificateHumanResources
     {
         $activities = [];
         foreach ($this->rows($this->filtered($actor, [])) as $document) {
+            if ($document->id_actividad === null) {
+                continue;
+            }
             $id = (int) $document->id_actividad;
             $activities[$id] ??= ['id_actividad' => $id, 'actividad' => $document->actividad,
                 'id_area' => (int) $document->id_area, 'total_certificados' => 0, 'sesiones' => []];
@@ -220,6 +299,12 @@ class CertificateHumanResources
         $total = 0;
         $items = [];
         foreach ($this->rows($this->filtered($actor, $filters, $own)) as $confirmed) {
+            if (isset($filters['id_sesion']) && (int) $this->present($confirmed)['id_sesion'] !== (int) $filters['id_sesion']) {
+                continue;
+            }
+            if (! $this->matchesActivity($confirmed, isset($filters['id_actividad']) ? (int) $filters['id_actividad'] : null)) {
+                continue;
+            }
             if ($total >= $offset && count($items) < 50) {
                 $items[] = $this->present($confirmed);
             }
@@ -236,7 +321,7 @@ class CertificateHumanResources
     public function inbox(User $actor, array $filters, bool $own = false): array
     {
         $page = $this->pageDocuments($actor, $filters, $own);
-        $activities = collect($page['data'])->groupBy('id_actividad')->map(fn (Collection $activity): array => [
+        $activities = collect($page['data'])->whereNotNull('id_actividad')->whereNotNull('id_participacion')->groupBy('id_actividad')->map(fn (Collection $activity): array => [
             'id_actividad' => $activity->first()['id_actividad'], 'actividad' => $activity->first()['actividad'],
             'sesiones' => $activity->groupBy('id_sesion')->map(fn (Collection $session): array => [
                 'id_sesion' => $session->first()['id_sesion'], 'sesion' => $session->first()['sesion'],
@@ -244,7 +329,10 @@ class CertificateHumanResources
             ])->values()->all(),
         ])->values()->all();
 
-        return ['actividades' => $activities, 'pagina' => $page['current_page'], 'total' => $page['total'], 'por_pagina' => 50];
+        $otherOrigins = collect($page['data'])->whereNull('id_participacion')->values()->all();
+
+        return ['actividades' => $activities, 'pagina' => $page['current_page'], 'total' => $page['total'], 'por_pagina' => 50,
+            ...($otherOrigins === [] ? [] : ['otros_origenes' => $otherOrigins])];
     }
 
     public function document(int $id, User $actor, bool $own = false): object
@@ -277,7 +365,13 @@ class CertificateHumanResources
             'fecha_emision' => 'c.fecha_emision', 'notificado' => 'c.notificado',
             'fecha_notificacion' => 'c.fecha_notificacion', 'motivo_reemision' => 'd.motivo_reemision'] as $field => $column) {
             if (array_key_exists($field, $filters)) {
-                $query->where($column, $filters[$field]);
+                if ($field === 'id_actividad') {
+                    $this->filterActivityCandidates($query, (int) $filters[$field]);
+                } elseif ($field === 'id_sesion') {
+                    $query->where(fn (Builder $scope) => $scope->where($column, $filters[$field])->orWhereNotNull('c.id_reconocimiento'));
+                } else {
+                    $query->where($column, $filters[$field]);
+                }
             }
         }
         if (isset($filters['estado']) && $filters['estado'] !== 'PREPARADO_ENTREGA') {
@@ -293,7 +387,13 @@ class CertificateHumanResources
         $items = [];
         $seen = [];
         $total = 0;
-        foreach ($this->rows($query->orderByDesc('d.id_certificado_documento')->orderByDesc('c.id_certificado'), historical: true) as $document) {
+        foreach ($this->rows($query->orderByDesc('d.id_certificado_documento')->orderByDesc('c.id_certificado'), historical: true, includePending: true) as $document) {
+            if (isset($filters['id_sesion']) && (int) $this->present($document)['id_sesion'] !== (int) $filters['id_sesion']) {
+                continue;
+            }
+            if (! $this->matchesActivity($document, isset($filters['id_actividad']) ? (int) $filters['id_actividad'] : null)) {
+                continue;
+            }
             if ($document->estado_certificado === CertificateManagement::SIGNED
                 || ($onlyPrepared && ! ($document->preparado_entrega ?? false))) {
                 continue;
@@ -319,7 +419,7 @@ class CertificateHumanResources
     {
         $query = $this->workflow->readableDocuments($actor)->where('c.id_certificado', $id)
             ->whereIn('c.estado', [CertificateManagement::PREPARED, CertificateManagement::PENDING]);
-        foreach ($this->rows($query->orderByDesc('d.id_certificado_documento')) as $document) {
+        foreach ($this->rows($query->orderByDesc('d.id_certificado_documento'), includePending: true) as $document) {
             return $this->certificateRow($document);
         }
         abort(404, 'Certificado preparado no encontrado en su ámbito.');
@@ -374,14 +474,40 @@ class CertificateHumanResources
     private function present(object $document): array
     {
         $prepared = (bool) ($document->preparado_entrega ?? false);
+        $originData = [];
+        $activityId = $document->id_actividad ?? null;
+        $activityName = $document->actividad ?? null;
+        if ($document->id_participacion === null && (($document->id_reconocimiento ?? null) !== null || ($document->id_practica ?? null) !== null)) {
+            try {
+                $documentContent = $this->versions->approvedContent($document);
+                $approvedContext = $documentContent['context'];
+                $approved = $approvedContext['datos_origen'] ?? [];
+            } catch (HttpException) {
+                $approved = [];
+                $approvedContext = [];
+            }
+            $originData = ['origen' => $document->id_reconocimiento !== null ? 'reconocimiento' : 'practica',
+                'id_reconocimiento' => $document->id_reconocimiento, 'id_practica' => $document->id_practica,
+                'titulo_reconocimiento' => $approved['titulo'] ?? null, 'motivo' => $approved['motivo'] ?? null,
+                'fecha_inicio_practica' => $approved['fecha_inicio'] ?? null, 'fecha_fin_practica' => $approved['fecha_fin'] ?? null];
+            if (in_array($approvedContext['origen'] ?? null, ['ponente_actividad', 'ponente_sesion'], true)) {
+                $activityId = $approvedContext['id_actividad'];
+                $activityName = $approvedContext['actividad'];
+                $originData['origen'] = $approvedContext['origen'];
+                $originData['modalidad_reconocimiento'] = $approvedContext['modalidad_reconocimiento'];
+                $originData['id_actividad_ponente'] = $approvedContext['id_actividad_ponente'];
+                $originData['motivo'] = app(CertificateOrigins::class)->message((object) $approvedContext);
+                $originData = array_replace($originData, app(CertificateOrigins::class)->savedSessionRecognitionText($documentContent));
+            }
+        }
 
-        return ['id_certificado' => (int) $document->id_certificado,
+        return [...$originData, 'id_certificado' => (int) $document->id_certificado,
             'id_certificado_documento' => $document->id_certificado_documento === null ? null : (int) $document->id_certificado_documento,
             'id_persona' => (int) $document->id_persona, 'id_participacion' => $document->id_participacion === null ? null : (int) $document->id_participacion,
             'nombre_completo' => trim(implode(' ', array_filter([$document->nombres, $document->apellido_paterno, $document->apellido_materno]))),
-            'id_actividad' => isset($document->id_actividad) ? (int) $document->id_actividad : null, 'actividad' => $document->actividad ?? null,
-            'id_sesion' => isset($document->id_sesion) ? (int) $document->id_sesion : null,
-            'sesion' => $document->sesion ?? null, 'fecha_sesion' => $document->fecha_sesion ?? null,
+            'id_actividad' => $activityId === null ? null : (int) $activityId, 'actividad' => $activityName,
+            'id_sesion' => isset($document->id_sesion) ? (int) $document->id_sesion : ($approvedContext['id_sesion'] ?? null),
+            'sesion' => $document->sesion ?? ($approvedContext['sesion'] ?? null), 'fecha_sesion' => $document->fecha_sesion ?? ($approvedContext['fecha_sesion'] ?? null),
             'id_tipo_certificado' => (int) $document->id_tipo_certificado, 'tipo_certificado' => $document->tipo_certificado,
             'codigo_verificacion' => $document->codigo_verificacion,
             'hash_pdf' => $document->hash_certificado, 'hash_pdf_original' => $document->hash_certificado_original ?? $document->hash_certificado,
@@ -390,7 +516,8 @@ class CertificateHumanResources
             'hash_certificado' => $document->hash_certificado, 'motivo_reemision' => $document->motivo_reemision ?? null,
             'preparado_para_entrega' => $prepared, 'disponible_rrhh' => $prepared,
             'estado_preparacion' => $prepared ? 'PREPARADO_ENTREGA' : null,
-            'etiqueta_estado' => $prepared ? 'Preparado para entrega' : $document->estado,
+            'etiqueta_estado' => $prepared ? 'Listo para entrega'
+                : ($document->estado_certificado === CertificateManagement::PENDING ? 'Pendiente de firma' : $document->estado),
             'responsables_administrativos' => $document->responsables_administrativos ?? [],
             'estado_documental' => $document->estado, 'estado_certificado' => $document->estado_certificado,
             'estado_firma' => $document->estado_certificado, 'fecha_emision' => $document->fecha_emision,

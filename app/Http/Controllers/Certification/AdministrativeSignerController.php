@@ -22,17 +22,41 @@ class AdministrativeSignerController extends Controller
 
     public function workers(Request $request): JsonResponse
     {
-        return $this->listing($request, false);
+        return $this->listing($request);
     }
 
     public function index(Request $request): JsonResponse
     {
-        return $this->listing($request, true);
+        return $this->listing($request);
     }
 
-    private function listing(Request $request, bool $authorizedOnly): JsonResponse
+    public function show(Request $request, int $id): JsonResponse
     {
-        return $this->respond(function () use ($request, $authorizedOnly): array {
+        return $this->respond(fn (): array => $this->signers->detail($id, $request->user()));
+    }
+
+    public function enable(Request $request): JsonResponse
+    {
+        return $this->respond(function () use ($request): array {
+            $actor = $request->user();
+            abort_unless($actor->estado && in_array('ponentes-firmantes.editar', $actor->permissionKeys(), true), 403,
+                'Se requiere permiso para administrar habilitaciones de firmantes.');
+            abort_if(array_diff(array_keys($request->all()), ['id_persona_trabajador', 'confirmar']) !== [], 422, 'Campos no admitidos.');
+            $input = Validator::make($request->all(), ['id_persona_trabajador' => 'required|integer|min:1',
+                'confirmar' => 'sometimes|accepted'])->validate();
+
+            return $this->signers->changeAuthorization((int) $input['id_persona_trabajador'], $actor);
+        });
+    }
+
+    public function disable(Request $request, int $id): JsonResponse
+    {
+        return $this->respond(fn (): array => $this->signers->changeAuthorization($id, $request->user(), false));
+    }
+
+    private function listing(Request $request): JsonResponse
+    {
+        return $this->respond(function () use ($request): array {
             $this->signers->authorize($request->user());
             abort_if(array_diff(array_keys($request->query()), ['id_area']) !== [], 422, 'Filtros no admitidos.');
             $input = Validator::make($request->query(), ['id_area' => 'sometimes|integer|min:1'])->validate();
@@ -43,31 +67,32 @@ class AdministrativeSignerController extends Controller
                 $areas = [$area];
             }
 
-            return ['funcionarios' => $this->signers->workers($areas, authorizedOnly: $authorizedOnly),
-                'origen' => 'relaciones_laborales_y_permisos_existentes', 'catalogo_independiente' => false,
-                'registro_independiente_disponible' => false, 'requiere_pfx' => false, 'requiere_password' => false];
+            return ['funcionarios' => $this->signers->workers($areas, includeInactive: true),
+                'origen' => 'trabajadores_municipales', 'catalogo_independiente' => false,
+                'registro_independiente_disponible' => $this->signers->authorizationAvailability()['disponible'], 'requiere_pfx' => false, 'requiere_password' => false,
+                'habilitacion_administrativa' => $this->signers->authorizationAvailability()];
         });
     }
 
     public function store(Request $request): JsonResponse
     {
+        if (! $request->exists('id_certificado_documento')) {
+            return $this->enable($request);
+        }
+
         return $this->respond(function () use ($request): array {
             $this->signers->authorize($request->user());
             abort_if(array_diff(array_keys($request->all()), ['id_persona_trabajador', 'id_certificado_documento', 'orden_firma', 'modalidad', 'confirmar']) !== [], 422, 'Campos no admitidos; no se recibe PFX ni contraseña.');
             $input = Validator::make($request->all(), [
                 'id_persona_trabajador' => 'required|integer|min:1', 'confirmar' => 'required|accepted',
-                'id_certificado_documento' => 'sometimes|integer|min:1',
-                'orden_firma' => 'required_with:id_certificado_documento|integer|min:1',
-                'modalidad' => 'required_with:id_certificado_documento|in:PARALELA,SECUENCIAL',
+                'id_certificado_documento' => 'required|integer|min:1',
+                'orden_firma' => 'required|integer|min:1',
+                'modalidad' => 'required|in:PARALELA,SECUENCIAL',
             ])->validate();
 
-            if (isset($input['id_certificado_documento'])) {
-                return ['tipo_registro' => 'habilitacion_documental', 'catalogo_independiente' => false]
-                    + app(CertificateSigningStageB::class)->assign((int) $input['id_certificado_documento'], $request->user(),
-                        $input['modalidad'], [['id_persona_trabajador' => (int) $input['id_persona_trabajador'], 'orden_firma' => (int) $input['orden_firma']]]);
-            }
-
-            return $this->signers->enable((int) $input['id_persona_trabajador'], $request->user());
+            return ['tipo_registro' => 'asignacion_documental', 'catalogo_independiente' => false]
+                + app(CertificateSigningStageB::class)->assign((int) $input['id_certificado_documento'], $request->user(),
+                    $input['modalidad'], [['id_persona_trabajador' => (int) $input['id_persona_trabajador'], 'orden_firma' => (int) $input['orden_firma']]]);
         });
     }
 
@@ -76,14 +101,14 @@ class AdministrativeSignerController extends Controller
         try {
             $data = $operation();
             $response = ($data['completada'] ?? null) === false
-                ? $this->information('No se guardó una habilitación administrativa.', 409, $data) : $this->ok($data);
+                ? $this->information('No se guardaron cambios.', 409, $data) : $this->ok($data);
         } catch (ValidationException $exception) {
             $response = $this->information('Datos de validación incorrectos.', 422, $exception->errors());
         } catch (HttpException $exception) {
             $response = $this->error($exception->getMessage(), $exception->getStatusCode());
         } catch (Throwable $exception) {
             Log::error('funcionarios.consulta_fallida', ['tipo' => $exception::class]);
-            $response = $this->error('No se pudo comprobar la habilitación administrativa.', 500);
+            $response = $this->error('No se pudo consultar trabajadores o guardar la asignación documental.', 500);
         }
 
         return $response->header('Cache-Control', 'private, no-store')->header('X-Content-Type-Options', 'nosniff');

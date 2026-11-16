@@ -4,9 +4,9 @@ namespace App\Services;
 
 use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\User\User;
+use App\Services\RequestSchema as Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class CertificateSigningStageB
@@ -34,6 +34,7 @@ class CertificateSigningStageB
         $controlledVersions = $modeSupported && $workerSupported && $credentialOptional && $pendingSupported;
 
         return $this->requirements = [
+            'habilitacion_global_administrativa' => app(AdministrativeSigners::class)->authorizationAvailability()['disponible'],
             'firmantes_pendientes_individuales' => $pendingSupported,
             'modalidad_documental' => $modeSupported,
             'vinculo_versiones' => $versionsSupported,
@@ -44,6 +45,7 @@ class CertificateSigningStageB
             'asignacion_sin_credencial' => $workerSupported
                 && $credentialOptional,
             'motivos_bloqueo' => array_values(array_filter([
+                app(AdministrativeSigners::class)->authorizationAvailability()['motivo'],
                 ! $pendingSupported ? 'certificado_firma.fecha_firma es obligatoria; no admite asignaciones individuales pendientes.' : null,
                 ! $modeSupported ? 'El documento carece de modalidad_firma persistente.' : null,
                 ! $versionsSupported && ! $controlledVersions ? 'Falta soporte persistente para revisar versiones del documento.' : null,
@@ -79,6 +81,7 @@ class CertificateSigningStageB
         }
         $result['pdf_revisado_disponible'] = ($parent !== null || $initialApproval)
             && hash_equals($metadata['p'], CertificateSignerRevision::planHash($result['firmantes_asignados'], $result['modalidad']));
+        $result['pdf_confirmado'] = $result['pdf_revisado_disponible'];
         $result['requiere_nueva_revision_pdf'] = $result['asignacion_documental_persistida'] && ! $result['pdf_revisado_disponible'];
         $delivery = CertificateHumanResources::delivery($document);
         $result['estado_administrativo'] = $delivery['estado_administrativo']
@@ -90,12 +93,13 @@ class CertificateSigningStageB
         $result['preparado_para_entrega'] = $prepared;
         $result['disponible_rrhh'] = $prepared;
         $result['estado_preparacion'] = $prepared ? 'PREPARADO_ENTREGA' : null;
-        $result['etiqueta_estado'] = $prepared ? 'Preparado para entrega' : null;
+        $result['etiqueta_estado'] = $prepared ? 'Listo para entrega' : null;
         $result['documento']['hash_pdf'] = $document->hash_certificado;
         $result['documento']['revision_pdf'] = $document->revision_pdf ?? null;
         $result['documento']['codigo_verificacion'] = $document->codigo_verificacion;
         $result['documento']['hash_pdf_original'] = $document->hash_certificado_original ?? $document->hash_certificado;
         $result['facultades']['asignar'] = $this->requirements()['firmantes_pendientes_individuales']
+            && $this->requirements()['habilitacion_global_administrativa']
             && $this->requirements()['modalidad_documental']
             && $this->requirements()['asignacion_sin_credencial']
             && $document->estado_certificado === CertificateManagement::PENDING
@@ -155,6 +159,19 @@ class CertificateSigningStageB
             DB::table('certificado.certificado_documento')->where('id_certificado_documento', $id)->lockForUpdate()->first();
             $current = $this->pendingForUpdate($id, $actor);
             $existing = $this->assignedSigners($id);
+            if ($existing !== []) {
+                $samePlan = count($existing) === count($signers) && $current->modalidad_firma === $mode;
+                foreach ($signers as $index => $signer) {
+                    $key = isset($signer['id_persona_trabajador']) ? 'id_persona_trabajador' : 'id_firma';
+                    $samePlan = $samePlan && isset($existing[$index][$key])
+                        && $existing[$index][$key] === $signer[$key]
+                        && $existing[$index]['orden_firma'] === $signer['orden_firma'];
+                }
+                abort_unless($samePlan, 409, 'El documento ya tiene otro plan de firmas; no se reemplaza.');
+
+                return ['completada' => true, 'persistido' => true, 'reintento' => true] + $this->progress($id, $actor);
+            }
+            app(AdministrativeSigners::class)->assertAuthorizationAvailable();
             $available = collect($this->availableSigners($id, $actor));
             $plan = [];
             foreach ($signers as $signer) {
@@ -165,12 +182,6 @@ class CertificateSigningStageB
                 $plan[] = ['id_persona_trabajador' => $responsible['id_persona_trabajador'], 'orden_firma' => $signer['orden_firma']];
             }
             abort_unless(count($plan) === count(array_unique(array_column($plan, 'id_persona_trabajador'))), 422, 'No se permite repetir al trabajador.');
-            if ($existing !== []) {
-                $previous = array_map(fn (array $signer): array => array_intersect_key($signer, array_flip(['id_persona_trabajador', 'orden_firma'])), $existing);
-                abort_unless($current->modalidad_firma === $mode && $previous === $plan, 409, 'El documento ya tiene otro plan de firmas; no se reemplaza.');
-
-                return ['completada' => true, 'persistido' => true, 'reintento' => true] + $this->progress($id, $actor);
-            }
             abort_unless($current->modalidad_firma === null, 409, 'El plan documental está incompleto; requiere revisión.');
             $people = [];
             foreach ($plan as $index => $entry) {
@@ -232,10 +243,9 @@ class CertificateSigningStageB
     /** @return list<array<string, mixed>> */
     public function availableSigners(int $id, User $actor): array
     {
-        $document = $this->pendingForUpdate($id, $actor);
+        $this->pendingForUpdate($id, $actor);
 
-        return app(AdministrativeSigners::class)->workers([(int) $document->id_area],
-            $document->id_actividad === null ? null : (int) $document->id_actividad, authorizedOnly: false);
+        return app(AdministrativeSigners::class)->authorizedWorkers();
     }
 
     public function pendingForUpdate(int $id, User $actor): object

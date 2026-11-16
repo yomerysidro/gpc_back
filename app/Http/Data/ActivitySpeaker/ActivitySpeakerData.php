@@ -2,9 +2,12 @@
 
 namespace App\Http\Data\ActivitySpeaker;
 
+use App\Services\CertificateDocumentVersions;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Throwable;
 
 class ActivitySpeakerData
@@ -13,7 +16,7 @@ class ActivitySpeakerData
     {
         try {
             $activitySpeakers = DB::table('certificado.actividad_ponente')
-                ->select('id_actividad_ponente', 'id_actividad', 'id_persona_ponente')
+                ->select('*')
                 ->when($areaIds !== null, fn ($query) => $query->whereIn('id_actividad', DB::table('certificado.actividad')->select('id_actividad')->whereIn('id_area', $areaIds)))
                 ->orderBy('id_actividad_ponente', 'desc')
                 ->get();
@@ -34,7 +37,7 @@ class ActivitySpeakerData
     {
         try {
             $activitySpeaker = DB::table('certificado.actividad_ponente')
-                ->select('id_actividad_ponente', 'id_actividad', 'id_persona_ponente')
+                ->select('*')
                 ->where('id_actividad_ponente', $id)
                 ->first();
 
@@ -68,6 +71,7 @@ class ActivitySpeakerData
             if (DB::table('certificado.actividad_ponente')
                 ->where('id_actividad', $data['id_actividad'])
                 ->where('id_persona_ponente', $data['id_persona_ponente'])
+                ->when(Schema::hasColumn('certificado.actividad_ponente', 'id_actividad_sesion'), fn ($query) => $query->whereNull('id_actividad_sesion'))
                 ->exists()) {
                 DB::rollBack();
 
@@ -80,7 +84,7 @@ class ActivitySpeakerData
             ], 'id_actividad_ponente');
 
             $activitySpeaker = DB::table('certificado.actividad_ponente')
-                ->select('id_actividad_ponente', 'id_actividad', 'id_persona_ponente')
+                ->select('*')
                 ->where('id_actividad_ponente', $idActivitySpeaker)
                 ->first();
 
@@ -104,7 +108,7 @@ class ActivitySpeakerData
                 return ['success' => false, 'message' => 'El ponente ya está asignado a esta actividad.', 'status' => 409];
             }
 
-            if ($e instanceof QueryException && (string) $e->getCode() === '23503') {
+            if ($e instanceof QueryException && in_array((string) $e->getCode(), ['23503', '23514', '23502'], true)) {
                 return ['success' => false, 'message' => 'La operación no se puede completar porque existen registros relacionados.', 'status' => 409];
             }
 
@@ -125,7 +129,7 @@ class ActivitySpeakerData
             DB::beginTransaction();
 
             $activitySpeaker = DB::table('certificado.actividad_ponente')
-                ->select('id_actividad_ponente', 'id_actividad', 'id_persona_ponente')
+                ->select('*')
                 ->where('id_actividad_ponente', $id)
                 ->lockForUpdate()
                 ->first();
@@ -136,6 +140,11 @@ class ActivitySpeakerData
                 return ['success' => false, 'message' => 'Ponente de actividad no encontrado.', 'status' => 404];
             }
 
+            if (($activitySpeaker->id_actividad_sesion ?? null) !== null || self::supportsDocument($activitySpeaker)) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'El vínculo de sesión o documental debe conservarse.', 'status' => 409];
+            }
             $updateData = array_intersect_key($data, array_flip([
                 'id_actividad',
                 'id_persona_ponente',
@@ -147,6 +156,7 @@ class ActivitySpeakerData
             if (DB::table('certificado.actividad_ponente')
                 ->where('id_actividad', $finalData['id_actividad'])
                 ->where('id_persona_ponente', $finalData['id_persona_ponente'])
+                ->when(Schema::hasColumn('certificado.actividad_ponente', 'id_actividad_sesion'), fn ($query) => $query->whereNull('id_actividad_sesion'))
                 ->where('id_actividad_ponente', '!=', $id)
                 ->exists()) {
                 DB::rollBack();
@@ -168,7 +178,7 @@ class ActivitySpeakerData
             }
 
             $updatedActivitySpeaker = DB::table('certificado.actividad_ponente')
-                ->select('id_actividad_ponente', 'id_actividad', 'id_persona_ponente')
+                ->select('*')
                 ->where('id_actividad_ponente', $id)
                 ->first();
 
@@ -192,7 +202,7 @@ class ActivitySpeakerData
                 return ['success' => false, 'message' => 'El ponente ya está asignado a esta actividad.', 'status' => 409];
             }
 
-            if ($e instanceof QueryException && (string) $e->getCode() === '23503') {
+            if ($e instanceof QueryException && in_array((string) $e->getCode(), ['23503', '23514', '23502'], true)) {
                 return ['success' => false, 'message' => 'La operación no se puede completar porque existen registros relacionados.', 'status' => 409];
             }
 
@@ -210,7 +220,7 @@ class ActivitySpeakerData
             DB::beginTransaction();
 
             $activitySpeaker = DB::table('certificado.actividad_ponente')
-                ->select('id_actividad_ponente', 'id_actividad', 'id_persona_ponente')
+                ->select('*')
                 ->where('id_actividad_ponente', $id)
                 ->lockForUpdate()
                 ->first();
@@ -221,9 +231,12 @@ class ActivitySpeakerData
                 return ['success' => false, 'message' => 'Ponente de actividad no encontrado.', 'status' => 404];
             }
 
-            DB::table('certificado.actividad_ponente')
-                ->where('id_actividad_ponente', $id)
-                ->delete();
+            if (($activitySpeaker->id_actividad_sesion ?? null) !== null || self::supportsDocument($activitySpeaker)) {
+                DB::rollBack();
+
+                return ['success' => false, 'message' => 'El vínculo de sesión o documental debe conservarse.', 'status' => 409];
+            }
+            DB::table('certificado.actividad_ponente')->where('id_actividad_ponente', $id)->delete();
 
             DB::commit();
 
@@ -245,7 +258,7 @@ class ActivitySpeakerData
                 return ['success' => false, 'message' => 'El ponente ya está asignado a esta actividad.', 'status' => 409];
             }
 
-            if ($e instanceof QueryException && (string) $e->getCode() === '23503') {
+            if ($e instanceof QueryException && in_array((string) $e->getCode(), ['23503', '23514', '23502'], true)) {
                 return ['success' => false, 'message' => 'La operación no se puede completar porque existen registros relacionados.', 'status' => 409];
             }
 
@@ -255,9 +268,30 @@ class ActivitySpeakerData
         }
     }
 
-    /**
-     * @param  array<string, mixed>  $data
-     */
+    private static function supportsDocument(object $assignment): bool
+    {
+        if (! Schema::hasTable('certificado.certificado_documento')) {
+            return false;
+        }
+        $documents = DB::table('certificado.certificado_documento as d')
+            ->join('certificado.certificado as c', 'c.id_certificado', '=', 'd.id_certificado')
+            ->where('c.id_persona', DB::table('gestion.persona_ponente')->where('id_persona_ponente', $assignment->id_persona_ponente)->value('id_persona'))
+            ->whereNotNull('c.id_reconocimiento')->get(['d.*']);
+        foreach ($documents as $document) {
+            try {
+                $context = app(CertificateDocumentVersions::class)->approvedContent($document)['context'];
+                if ((int) ($context['id_actividad_ponente'] ?? 0) === (int) $assignment->id_actividad_ponente) {
+                    return true;
+                }
+            } catch (HttpException) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $data */
     private static function validateBusinessRules(array $data): void
     {
         $errors = [];

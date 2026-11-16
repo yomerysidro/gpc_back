@@ -3,11 +3,11 @@
 namespace App\Services;
 
 use App\Services\ActivityRequests\DevelopmentDatabase;
+use App\Services\RequestSchema as Schema;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 class CertificationReadiness
@@ -133,7 +133,7 @@ class CertificationReadiness
             ->where('estado', 'Aprobada')->pluck('id_actividad')->all();
         $attendance = DB::table('certificado.actividad_sesion as s')
             ->join('certificado.participacion as p', 'p.id_actividad', '=', 's.id_actividad')
-            ->leftJoin('certificado.asistencia as a', function ($join): void {
+            ->join('certificado.asistencia as a', function ($join): void {
                 $join->on('a.id_participacion', '=', 'p.id_participacion')
                     ->on('a.id_actividad_sesion', '=', 's.id_actividad_sesion');
             })
@@ -155,8 +155,8 @@ class CertificationReadiness
         $enrolledSessions = (clone $attendance)->distinct()->pluck('s.id_actividad_sesion')->all();
         foreach ($openSessions as $session) {
             $blockers = [];
-            if (($policy['scope'] ?? null) === 'development' && ! in_array($session->id_actividad_sesion, $enrolledSessions)) {
-                $blockers[] = 'La sesión debe tener al menos una inscripción vigente para finalizarse.';
+            if (! in_array($session->id_actividad_sesion, $enrolledSessions)) {
+                $blockers[] = 'La sesión debe tener al menos un participante seleccionado con inscripción vigente para finalizarse.';
             }
             if (! in_array($session->estado, $policy['open_states'], true)) {
                 $blockers[] = 'El estado actual de la sesión no admite finalización.';
