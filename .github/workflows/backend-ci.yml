@@ -68,7 +68,7 @@ jobs:
           git ls-files -z '*.php' | xargs -0 -r -n1 php -l
           echo "APP_KEY=$(php artisan key:generate --show --no-interaction)" >> "$GITHUB_ENV"
       - name: Suite PHPUnit con SQLite en memoria
-        run: php artisan test --compact --no-interaction
+        run: vendor/bin/phpunit
       - name: Contrato con PostgreSQL desechable
         env:
           MODULES_PG_TEST_URL: postgres://gpc_test:gpc_test_only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/certificados_morales_test
@@ -92,8 +92,11 @@ jobs:
             --env PORT=8087 --env RAILWAY_ENVIRONMENT_ID=ci \
             --env APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
             --env JWT_SECRET=ci-only-0123456789abcdef0123456789abcdef "gpc-back:$GITHUB_SHA"
-          if ! curl --fail --silent --show-error --retry 20 --retry-connrefused \
-            --retry-delay 1 --max-time 3 http://127.0.0.1:18087/up; then
+          if ! status=$(curl --fail --silent --show-error --retry 30 --retry-all-errors \
+            --retry-delay 1 --retry-max-time 45 --max-time 3 \
+            --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18087/up) || [[ "$status" != 200 ]]; then
+            echo "::error::El contenedor no devolvió HTTP 200 en /up (HTTP ${status:-sin respuesta})."
+            docker inspect --format '{{json .State}}' gpc-ci
             docker logs gpc-ci
             exit 1
           fi
