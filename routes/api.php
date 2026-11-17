@@ -34,6 +34,8 @@ use App\Http\Controllers\PersonSpeaker\PersonaPonenteController;
 use App\Http\Controllers\Practice\PracticeController;
 use App\Http\Controllers\Practicing_Individual\Practicing_IndividualController;
 use App\Http\Controllers\Recognition\RecognitionController;
+use App\Http\Controllers\Reports\RegisteredIndicatorController;
+use App\Http\Controllers\Reports\ReportController;
 use App\Http\Controllers\Role\RoleController;
 use App\Http\Controllers\Signature\SignatureController;
 use App\Http\Controllers\Supervisory_internship\Supervisory_internshipController;
@@ -55,6 +57,16 @@ Route::post('portal-certificados/consultar-dni', PublicCertificateLookupControll
 // ============================================================
 // Certificaciones y firmas: solo usuarios autenticados y autorizados por polÃƒÂ­ticas.
 Route::middleware('auth.cookie')->group(function () {
+    Route::middleware('permission:reportes.ver')->group(function () {
+        Route::get('reportes/sesiones', [ReportController::class, 'sessions']);
+        Route::get('reportes/series/{indicador}', [ReportController::class, 'series'])->whereIn('indicador', ['actividades', 'certificados']);
+        Route::get('reportes/{recurso}', [ReportController::class, 'index'])->whereIn('recurso', ['actividades', 'certificados', 'asistencia']);
+    });
+
+    Route::get('reportes/indicadores/{indicador}', RegisteredIndicatorController::class)
+        ->whereIn('indicador', ['certificados', 'actividades', 'participaciones', 'asistencias'])
+        ->middleware('permission:reportes.ver');
+
     Route::get('activity-session/{id}/participantes/candidatos', [SessionParticipantsController::class, 'candidates'])->whereNumber('id');
     Route::get('activity-session/{id}/participantes', [SessionParticipantsController::class, 'selected'])->whereNumber('id');
     Route::post('activity-session/{id}/participantes', [SessionParticipantsController::class, 'select'])->whereNumber('id');
