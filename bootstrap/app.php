@@ -18,6 +18,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        if (getenv('RAILWAY_ENVIRONMENT_ID')) {
+            $middleware->trustProxies(at: '*', headers: Request::HEADER_X_FORWARDED_PROTO);
+        }
+
         $middleware->trimStrings(except: ['mensaje']);
         $middleware->encryptCookies(except: [JwtService::COOKIE]);
         $middleware->alias(['auth.cookie' => AuthenticateCookie::class, 'role' => EnsureRole::class, 'permission' => EnsurePermission::class]);
