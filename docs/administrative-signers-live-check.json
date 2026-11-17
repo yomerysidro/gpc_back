@@ -1,0 +1,223 @@
+{
+    "identity": {
+        "database": "certificados_morales",
+        "username": "equipo_dev"
+    },
+    "documento": 2,
+    "workers": [
+        {
+            "id_persona_trabajador": 1,
+            "id_persona": 1,
+            "id_area": 5,
+            "nombre": "Antón Talían",
+            "cargo": "Jefe de Informática",
+            "area": "Oficina General de Administración",
+            "disponible_asignacion": true,
+            "vigente": true,
+            "habilitado": false,
+            "origen_habilitacion": "asignacion_documental",
+            "id_firma": null,
+            "credencial_registrada": false,
+            "credencial_verificada": false,
+            "credencial_valida": null
+        },
+        {
+            "id_persona_trabajador": 2,
+            "id_persona": 2,
+            "id_area": 5,
+            "nombre": "Maria Perez",
+            "cargo": "Especialista de RR.HH.",
+            "area": "Oficina General de Administración",
+            "disponible_asignacion": true,
+            "vigente": true,
+            "habilitado": false,
+            "origen_habilitacion": "asignacion_documental",
+            "id_firma": null,
+            "credencial_registrada": false,
+            "credencial_verificada": false,
+            "credencial_valida": null
+        },
+        {
+            "id_persona_trabajador": 4,
+            "id_persona": 2,
+            "id_area": 10,
+            "nombre": "Maria Perez",
+            "cargo": "supervisor",
+            "area": "Gerencia de Desarrollo Social",
+            "disponible_asignacion": true,
+            "vigente": true,
+            "habilitado": false,
+            "origen_habilitacion": "asignacion_documental",
+            "id_firma": null,
+            "credencial_registrada": false,
+            "credencial_verificada": false,
+            "credencial_valida": null
+        },
+        {
+            "id_persona_trabajador": 3,
+            "id_persona": 3,
+            "id_area": 1,
+            "nombre": "Juan Alcalde",
+            "cargo": "Alcalde",
+            "area": "Alcaldía",
+            "disponible_asignacion": true,
+            "vigente": true,
+            "habilitado": false,
+            "origen_habilitacion": "asignacion_documental",
+            "id_firma": null,
+            "credencial_registrada": false,
+            "credencial_verificada": false,
+            "credencial_valida": null
+        }
+    ],
+    "asignacion_recuperada": [
+        {
+            "id_firma": null,
+            "id_persona_trabajador": 2,
+            "id_persona": 2,
+            "nombre": "Maria Perez",
+            "cargo": "Especialista de RR.HH.",
+            "id_area": 5,
+            "area": "Oficina General de Administración",
+            "orden_firma": 1,
+            "fecha_firma": null,
+            "firma_verificada": false,
+            "estado": "Pendiente"
+        }
+    ],
+    "modalidad": "SECUENCIAL",
+    "registro_dentro_transaccion": {
+        "id_certificado_firma": 1,
+        "id_certificado_documento": 2,
+        "id_firma": null,
+        "orden_firma": 1,
+        "fecha_firma": null,
+        "id_persona_trabajador": 2
+    },
+    "catalogo_habilitados": [
+        {
+            "id_persona_trabajador": 2,
+            "id_persona": 2,
+            "id_area": 5,
+            "nombre": "Maria Perez",
+            "cargo": "Especialista de RR.HH.",
+            "area": "Oficina General de Administración",
+            "disponible_asignacion": true,
+            "vigente": true,
+            "habilitado": true,
+            "origen_habilitacion": "asignacion_documental",
+            "id_firma": null,
+            "credencial_registrada": false,
+            "credencial_verificada": false,
+            "credencial_valida": null
+        }
+    ],
+    "emision_bloqueada": true,
+    "gerencia_status": 403,
+    "rollback_completado": true,
+    "asignaciones_antes": 0,
+    "asignaciones_despues": 0,
+    "pdf_original_intacto": true,
+    "sha256_original": "5342ef1db23a15c355f559328f003689fb522eff5d2cacbc5d81efbbb4a1a96c",
+    "certificado_final": {
+        "estado": "PENDIENTE_FIRMA",
+        "fecha_emision": null
+    },
+    "modalidad_despues_rollback": null,
+    "indexes": [
+        {
+            "indexname": "certificado_firma_pkey",
+            "indexdef": "CREATE UNIQUE INDEX certificado_firma_pkey ON certificado.certificado_firma USING btree (id_certificado_firma)"
+        },
+        {
+            "indexname": "certificado_firma_id_certificado_documento_id_firma_unique",
+            "indexdef": "CREATE UNIQUE INDEX certificado_firma_id_certificado_documento_id_firma_unique ON certificado.certificado_firma USING btree (id_certificado_documento, id_firma)"
+        },
+        {
+            "indexname": "uq_certificado_firma_trabajador",
+            "indexdef": "CREATE UNIQUE INDEX uq_certificado_firma_trabajador ON certificado.certificado_firma USING btree (id_certificado_documento, id_persona_trabajador) WHERE (id_persona_trabajador IS NOT NULL)"
+        },
+        {
+            "indexname": "idx_certificado_firma_trabajador",
+            "indexdef": "CREATE INDEX idx_certificado_firma_trabajador ON certificado.certificado_firma USING btree (id_persona_trabajador)"
+        }
+    ],
+    "versionado_transaccional": {
+        "revision_creada": true,
+        "version_id": 3,
+        "hash_coincide_revision": true,
+        "pdf_revisado_disponible": true,
+        "motivo_reemision": {
+            "v": 1,
+            "d": 2,
+            "h": "5342ef1db23a15c355f559328f003689fb522eff5d2cacbc5d81efbbb4a1a96c",
+            "p": "6ae0384d954ba2cca9e97458362083c36f1b23985698ff1f29fcdd2fecefacf7",
+            "u": 1
+        },
+        "asignados": [
+            {
+                "id_firma": null,
+                "id_persona_trabajador": 2,
+                "id_persona": 2,
+                "nombre": "Maria Perez",
+                "cargo": "Especialista de RR.HH.",
+                "id_area": 5,
+                "area": "Oficina General de Administración",
+                "orden_firma": 1,
+                "fecha_firma": null,
+                "firma_verificada": false,
+                "estado": "Pendiente"
+            }
+        ],
+        "rollback_completado": true,
+        "pdf_original_intacto": true,
+        "documentos_finales": 1,
+        "estado_documento_original": "Vigente"
+    },
+    "resolucion_permisos_gerencia": {
+        "at": "2026-11-11T16:24:45+00:00",
+        "usuario": 3,
+        "rol": "Gerencial",
+        "permisos_administrativos": [
+            "emision.ver",
+            "emision.editar"
+        ],
+        "firmas_firmar": false,
+        "administrador_global": false,
+        "area_real_usuario": 1,
+        "area_original_documento": 5,
+        "trabajadores_status": 200,
+        "documento_fuera_ambito_status": 404,
+        "invitado_status": 401,
+        "contexto_prueba": "Área del documento ajustada exclusivamente dentro de la transacción revertida; no se amplió el ámbito del usuario.",
+        "disponibles_status": 200,
+        "asignacion_status": 200,
+        "consulta_status": 200,
+        "asignados": [
+            {
+                "id_firma": null,
+                "id_persona_trabajador": 3,
+                "id_persona": 3,
+                "nombre": "Juan Alcalde",
+                "cargo": "Alcalde",
+                "id_area": 1,
+                "area": "Alcaldía",
+                "orden_firma": 1,
+                "fecha_firma": null,
+                "firma_verificada": false,
+                "estado": "Pendiente"
+            }
+        ],
+        "modalidad": "PARALELA",
+        "firma_sin_permiso_status": 403,
+        "registro_credencial_sin_permiso_status": 403,
+        "rollback_completado": true,
+        "area_documento_restaurada": true,
+        "asignaciones_prueba_revertidas": true,
+        "pdf_original_intacto": true,
+        "estado_final": {
+            "estado": "PENDIENTE_FIRMA",
+            "fecha_emision": null
+        }
+    }
+}
