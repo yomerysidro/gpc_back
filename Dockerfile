@@ -2,24 +2,7 @@
 # STAGE 1: COMPOSER - Dependencias PHP
 # ============================================================
 
-FROM composer:2.9.5 AS vendor
-
-WORKDIR /app
-
-COPY composer.json composer.lock* ./
-
-RUN composer validate --no-check-all || \
-    { echo "ERROR: composer.json o composer.lock invalido."; exit 1; }
-
-RUN --mount=type=cache,target=/tmp/cache \
-    composer install \
-    --no-dev \
-    --prefer-dist \
-    --no-interaction \
-    --no-progress \
-    --optimize-autoloader \
-    --ignore-platform-reqs \
-    --no-scripts
+FROM composer:2.9.5 AS composer_binary
 
 
 # ============================================================
@@ -30,12 +13,13 @@ FROM node:22-bookworm-slim AS node_build
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json .npmrc ./
 
 RUN --mount=type=cache,target=/root/.npm \
     npm ci
 
-COPY . .
+COPY vite.config.js ./
+COPY resources ./resources
 
 RUN --mount=type=cache,target=/root/.npm \
     --mount=type=cache,target=/app/node_modules/.cache \
@@ -48,8 +32,10 @@ RUN --mount=type=cache,target=/root/.npm \
 
 FROM php:8.3-fpm-bookworm
 
-ENV COMPOSER_ALLOW_SUPERUSER=1 \
-    DEBIAN_FRONTEND=noninteractive
+ENV APP_ENV=production \
+    APP_DEBUG=false \
+    LOG_CHANNEL=stderr \
+    LOG_LEVEL=info
 
 WORKDIR /var/www/httpdocs
 
@@ -58,7 +44,7 @@ WORKDIR /var/www/httpdocs
 # CONFIGURACIONES
 # ============================================================
 
-COPY nginx.conf /etc/nginx/sites-enabled/default
+COPY nginx.conf /etc/nginx/gpc-site.conf
 
 COPY docker/php.prod.ini \
     /usr/local/etc/php/conf.d/99-production.ini
@@ -71,15 +57,13 @@ COPY docker/supervisord.dev.conf \
 # PAQUETES Y EXTENSIONES PHP
 # ============================================================
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         nginx \
         supervisor \
         git \
         unzip \
         zip \
-        curl \
+        util-linux \
         ca-certificates \
         libpng-dev \
         libjpeg62-turbo-dev \
@@ -103,6 +87,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         intl \
         opcache \
     && apt-get clean \
+    && ln -sf /dev/stderr /var/log/nginx/error.log \
     && rm -rf /var/lib/apt/lists/*
 
 
@@ -110,11 +95,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # COPIAR APLICACIÓN
 # ============================================================
 
-COPY --from=vendor \
-    /app/vendor \
-    /var/www/httpdocs/vendor
+COPY --from=composer_binary /usr/bin/composer /usr/local/bin/composer
+COPY composer.json composer.lock ./
+RUN COMPOSER_ALLOW_SUPERUSER=1 composer validate --strict \
+    && COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --prefer-dist --no-interaction --no-progress --no-scripts --no-autoloader
 
-COPY . /var/www/httpdocs
+COPY artisan ./
+COPY app ./app
+COPY bootstrap ./bootstrap
+COPY config ./config
+COPY database ./database
+COPY lang ./lang
+COPY public ./public
+COPY resources ./resources
+COPY routes ./routes
 
 COPY --from=node_build \
     /app/public/build \
@@ -126,15 +120,13 @@ COPY --from=node_build \
 # ============================================================
 
 RUN mkdir -p \
-        /run/php \
-        /var/www/httpdocs/storage \
-        /var/www/httpdocs/bootstrap/cache \
-    && chown -R www-data:www-data \
-        /var/www/httpdocs \
-        /run/php \
-    && chmod -R 775 \
-        /var/www/httpdocs/storage \
-        /var/www/httpdocs/bootstrap/cache
+        storage/app/private storage/app/public storage/logs \
+        storage/framework/cache/data storage/framework/sessions storage/framework/views bootstrap/cache \
+    && COMPOSER_ALLOW_SUPERUSER=1 composer dump-autoload --no-dev --optimize --no-interaction \
+    && COMPOSER_ALLOW_SUPERUSER=1 composer check-platform-reqs --no-dev \
+    && chown -R www-data:www-data storage bootstrap/cache
+
+COPY --chmod=0755 docker/entrypoint.prod.sh /usr/local/bin/gpc-start
 
 
 # ============================================================
@@ -148,4 +140,5 @@ EXPOSE 80
 # INICIAR SUPERVISOR
 # ============================================================
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+STOPSIGNAL SIGTERM
+CMD ["/usr/local/bin/gpc-start"]

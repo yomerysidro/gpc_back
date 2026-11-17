@@ -1,0 +1,108 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, development, 'dev-*']
+  pull_request:
+    branches: [main, development, 'dev-*']
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  php:
+    name: PHP y pruebas
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: certificados_morales_test
+          POSTGRES_USER: gpc_test
+          POSTGRES_PASSWORD: gpc_test_only
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U gpc_test -d certificados_morales_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      APP_ENV: testing
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ':memory:'
+      DB_URL: ''
+      CACHE_STORE: array
+      SESSION_DRIVER: array
+      MAIL_MAILER: array
+      QUEUE_CONNECTION: sync
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, gd, pdo_sqlite, pdo_pgsql, zip, intl
+          tools: composer:2.9.5
+          ini-values: memory_limit=512M
+          coverage: none
+      - name: Validar Composer y obtener ruta de caché
+        id: composer
+        run: |
+          composer validate --strict
+          echo "path=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ steps.composer.outputs.path }}
+          key: ${{ runner.os }}-php83-composer-${{ hashFiles('composer.lock') }}
+      - name: Instalar dependencias del lock
+        run: |
+          composer install --prefer-dist --no-interaction --no-progress
+          composer check-platform-reqs
+      - name: Comprobar sintaxis PHP y arranque
+        run: |
+          git ls-files -z '*.php' | xargs -0 -r -n1 php -l
+          echo "APP_KEY=$(php artisan key:generate --show --no-interaction)" >> "$GITHUB_ENV"
+      - name: Suite PHPUnit con SQLite en memoria
+        run: php artisan test --compact --no-interaction
+      - name: Contrato con PostgreSQL desechable
+        env:
+          MODULES_PG_TEST_URL: postgres://gpc_test:gpc_test_only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/certificados_morales_test
+          MODULES_PG_TEST_EXCLUSIVE: '1'
+        run: vendor/bin/phpunit -c phpunit.postgresql.xml --fail-on-skipped
+
+  docker:
+    name: Imagen Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Construir con el Dockerfile del repositorio
+        run: docker build --tag "gpc-back:$GITHUB_SHA" .
+      - name: Verificar arranque, volumen, salud y parada
+        run: |
+          docker run --detach --name gpc-ci --publish 127.0.0.1:18087:8087 \
+            --volume /var/www/httpdocs/storage/app/private \
+            --env PORT=8087 --env RAILWAY_ENVIRONMENT_ID=ci \
+            --env APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+            --env JWT_SECRET=ci-only-0123456789abcdef0123456789abcdef "gpc-back:$GITHUB_SHA"
+          if ! curl --fail --silent --show-error --retry 20 --retry-connrefused \
+            --retry-delay 1 --max-time 3 http://127.0.0.1:18087/up; then
+            docker logs gpc-ci
+            exit 1
+          fi
+          docker exec --user www-data gpc-ci test -w /var/www/httpdocs/storage/app/private
+          docker stop --time 20 gpc-ci
+          test "$(docker inspect --format '{{.State.ExitCode}}' gpc-ci)" = 0
+      - name: Limpiar contenedor de pruebas
+        if: always()
+        run: |
+          if docker container inspect gpc-ci >/dev/null 2>&1; then
+            docker rm --force --volumes gpc-ci
+          fi
