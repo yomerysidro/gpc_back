@@ -45,10 +45,18 @@ class CertificateOrigins
             abort_unless(Gate::forUser($actor)->allows('viewAny', $model), 403, 'No autorizado para consultar el origen.');
             $record = $model::find($id);
             abort_unless($record, 404, 'Origen no encontrado.');
+            if ($origin === 'reconocimiento' && $record->id_actividad_ponente !== null) {
+                $assignment = $this->assignment((int) $record->id_actividad_ponente);
+                abort_unless($assignment, 409, 'El reconocimiento no conserva su asignación de ponente.');
+                $this->authorize($assignment->id_actividad_sesion === null ? 'ponente_actividad' : 'ponente_sesion', (int) $record->id_actividad_ponente, $actor);
+
+                return;
+            }
             abort_unless(Gate::forUser($actor)->allows('view', $record), 403, 'No autorizado para consultar este origen.');
             $area = $origin === 'reconocimiento' ? $record->worker?->id_area : $record->id_area;
         }
-        abort_unless($area !== null, 409, 'El origen no tiene un área coherente.');
+        abort_unless($area !== null, 409, $origin === 'reconocimiento'
+            ? 'El reconocimiento no tiene un beneficiario municipal verificable con persona y área.' : 'El origen no tiene un área coherente.');
         if (! $actor->isSystemAdministrator()) {
             $areas = ActivityRequestData::authorizedAreas((int) $actor->id_persona);
             abort_unless($areas['success'], $areas['status'] ?? 500, 'No se pudo comprobar el ámbito.');
@@ -96,7 +104,10 @@ class CertificateOrigins
 
     public function message(object $context): string
     {
-        if ($context->origen === 'ponente_sesion' && isset($context->texto_reconocimiento)) {
+        if ($context->origen === 'practica' && isset($context->texto_practica)) {
+            return $context->texto_practica['mensaje'];
+        }
+        if (in_array($context->origen, ['ponente_sesion', 'reconocimiento'], true) && isset($context->texto_reconocimiento)) {
             return $context->texto_reconocimiento['mensaje'];
         }
         $record = $context->datos_origen;
@@ -107,15 +118,46 @@ class CertificateOrigins
 
         return $context->origen === 'reconocimiento'
             ? trim($record['titulo']).'. '.trim($record['motivo'])
-            : 'Por haber realizado sus prácticas en '.$record['area'].', del '.$record['fecha_inicio'].' al '.$record['fecha_fin'].'.';
+            : $this->practiceMessage((object) $record);
     }
 
-    /** @param array{mensaje: string, motivo: string}|null $text */
+    private function practiceMessage(object $practice): string
+    {
+        return 'Por haber realizado sus prácticas en '.$practice->area.', del '.$practice->fecha_inicio.' al '.$practice->fecha_fin.'.';
+    }
+
+    /** @param array{mensaje: string, motivo?: string}|null $text */
+    public function withDocumentText(object $context, ?array $text): object
+    {
+        if ($context->origen === 'practica' && $text !== null) {
+            $context->texto_practica = ['v' => 1, 'mensaje' => $text['mensaje']];
+
+            return $context;
+        }
+
+        return $this->withSessionRecognitionText($context, $text);
+    }
+
+    /** @param array{message: string, context: array<string, mixed>} $approved
+     * @return array<string, mixed>
+     */
+    public function savedPracticeText(array $approved): array
+    {
+        if (($approved['context']['origen'] ?? null) !== 'practica') {
+            return [];
+        }
+
+        return ['mensaje' => $approved['message'], 'mensaje_aprobado' => $approved['message'],
+            'texto_editable' => false, 'mensaje_persistido_en_pdf' => true, 'mensaje_estructurado_disponible' => true];
+    }
+
+    /** @param array{mensaje: string, motivo?: string}|null $text */
     public function withSessionRecognitionText(object $context, ?array $text): object
     {
         if ($text !== null) {
-            abort_unless($context->origen === 'ponente_sesion', 422, 'La edición de texto sólo corresponde a ponentes por sesión.');
-            $context->texto_reconocimiento = ['v' => 1, 'mensaje' => $text['mensaje'], 'motivo' => $text['motivo']];
+            abort_unless(in_array($context->origen, ['ponente_sesion', 'reconocimiento'], true), 422, 'La edición de texto sólo corresponde a reconocimientos individuales o ponentes por sesión.');
+            $context->texto_reconocimiento = ['v' => 1, 'mensaje' => $text['mensaje'],
+                'motivo' => $text['motivo'] ?? $this->recognitionMotive($context)];
         }
 
         return $context;
@@ -123,7 +165,7 @@ class CertificateOrigins
 
     public function recognitionMotive(object $context): string
     {
-        return $context->origen === 'ponente_sesion' && isset($context->texto_reconocimiento)
+        return in_array($context->origen, ['ponente_sesion', 'reconocimiento'], true) && isset($context->texto_reconocimiento)
             ? $context->texto_reconocimiento['motivo'] : $this->message($context);
     }
 
@@ -132,7 +174,7 @@ class CertificateOrigins
      */
     public function savedSessionRecognitionText(array $approved): array
     {
-        if (($approved['context']['origen'] ?? null) !== 'ponente_sesion') {
+        if (! in_array($approved['context']['origen'] ?? null, ['ponente_sesion', 'reconocimiento'], true)) {
             return [];
         }
 
@@ -169,6 +211,18 @@ class CertificateOrigins
         $origin = $document->id_reconocimiento !== null ? 'reconocimiento' : 'practica';
         $id = (int) ($origin === 'reconocimiento' ? $document->id_reconocimiento : $document->id_practica);
         $context = $this->context($origin, $id);
+        if ($origin === 'reconocimiento' && isset($approved['context']['texto_reconocimiento'])) {
+            $text = $approved['context']['texto_reconocimiento'];
+            abort_unless(is_array($text) && ($text['v'] ?? null) === 1 && is_string($text['mensaje'] ?? null)
+                && is_string($text['motivo'] ?? null) && $text['mensaje'] === $approved['message'], 409, 'El mensaje aprobado no conserva su identidad documental.');
+            $context = $this->withDocumentText($context, $text);
+        }
+        if ($origin === 'practica' && isset($approved['context']['texto_practica'])) {
+            $text = $approved['context']['texto_practica'];
+            abort_unless(is_array($text) && ($text['v'] ?? null) === 1 && is_string($text['mensaje'] ?? null)
+                && $text['mensaje'] === $approved['message'], 409, 'El mensaje aprobado no conserva su identidad documental.');
+            $context = $this->withDocumentText($context, $text);
+        }
         abort_unless(($document->id_reconocimiento !== null) !== ($document->id_practica !== null)
             && $document->id_participacion === null && ($document->id_sesion ?? null) === null
             && (int) $context->id_persona === (int) $document->id_persona
@@ -184,25 +238,97 @@ class CertificateOrigins
     public function recognition(int $id): array
     {
         $recognition = DB::table('certificado.reconocimiento as r')
-            ->join('gestion.persona_trabajador as t', 't.id_persona_trabajador', '=', 'r.id_persona_trabajador')
-            ->join('gestion.persona as p', 'p.id_persona', '=', 't.id_persona')
+            ->leftJoin('gestion.persona_trabajador as t', 't.id_persona_trabajador', '=', 'r.id_persona_trabajador')
+            ->leftJoin('gestion.persona as p', 'p.id_persona', '=', 't.id_persona')
             ->where('r.id_reconocimiento', $id)
             ->first(['r.*', 't.id_persona', 't.id_area', 'p.nombres', 'p.apellido_paterno', 'p.apellido_materno']);
-        abort_unless($recognition, 409, 'El reconocimiento no tiene un trabajador y una persona coherentes.');
-        $blockers = $this->policyBlockers('reconocimiento', $recognition->estado);
+        abort_unless($recognition, 404, 'Reconocimiento no encontrado.');
+        $modality = 'individual';
+        $originalContext = [];
         if (($recognition->id_actividad_ponente ?? null) !== null) {
-            $blockers[] = 'Este reconocimiento pertenece a un vínculo de sesión; utilice el origen ponente_sesion.';
+            $speaker = DB::table('certificado.actividad_ponente as ap')
+                ->join('gestion.persona_ponente as pp', 'pp.id_persona_ponente', '=', 'ap.id_persona_ponente')
+                ->join('gestion.persona as p', 'p.id_persona', '=', 'pp.id_persona')
+                ->join('certificado.actividad as a', 'a.id_actividad', '=', 'ap.id_actividad')
+                ->where('ap.id_actividad_ponente', $recognition->id_actividad_ponente)
+                ->first(['pp.id_persona', 'a.id_area', 'ap.id_actividad', 'ap.id_actividad_sesion', 'p.nombres', 'p.apellido_paterno', 'p.apellido_materno']);
+            if ($speaker !== null) {
+                foreach ((array) $speaker as $field => $value) {
+                    $recognition->{$field} = $value;
+                }
+            }
+            $modality = ($speaker->id_actividad_sesion ?? null) === null ? 'actividad' : 'sesion';
+        }
+        $academic = app()->environment(['local', 'development'])
+            && config('certification.origins.reconocimiento.academic_enabled') === true
+            && in_array($id, config('certification.origins.reconocimiento.academic_ids', []), true);
+        $blockers = $modality !== 'individual' ? [] : ($academic
+            ? (in_array($recognition->estado, config('certification.origins.reconocimiento.academic_states', []), true)
+                ? [] : ['El estado registrado no está seleccionado para preparación académica.'])
+            : $this->policyBlockers('reconocimiento', $recognition->estado));
+        if ($recognition->id_persona === null || $recognition->id_area === null || trim($recognition->nombres ?? '') === '') {
+            $blockers[] = 'El reconocimiento individual no tiene un beneficiario municipal verificable con persona y área.';
+        }
+        if (in_array(mb_strtolower(trim($recognition->estado)), ['anulado', 'anulada', 'cancelado', 'cancelada'], true)) {
+            $blockers[] = 'El reconocimiento está anulado o cancelado.';
+        }
+        if (($recognition->id_actividad_ponente ?? null) !== null) {
+            $blockers[] = $modality === 'sesion'
+                ? 'Este reconocimiento pertenece a un vínculo de sesión; utilice el origen ponente_sesion.'
+                : 'Este reconocimiento pertenece a un ponente por actividad; utilice el origen ponente_actividad.';
         }
         if (trim($recognition->titulo ?? '') === '' || trim($recognition->motivo ?? '') === ''
             || $recognition->fecha_reconocimiento === null || $recognition->fecha_reconocimiento > today()->toDateString()) {
             $blockers[] = 'El reconocimiento requiere título, motivo y fecha real no futura.';
         }
 
-        return $this->evaluation('reconocimiento', $id, [
+        $evaluation = $this->evaluation('reconocimiento', $id, [
             'reconocimiento' => $recognition, 'id_persona' => (int) $recognition->id_persona,
             'id_area' => (int) $recognition->id_area, 'id_actividad' => null, 'id_sesion' => null,
             'ponente_externo_admitido' => false,
         ], $blockers);
+        $documents = DB::table('certificado.certificado_documento')
+            ->whereIn('id_certificado', $evaluation['certificados_existentes']->pluck('id_certificado'))
+            ->orderBy('id_certificado_documento')->get();
+        foreach ($evaluation['certificados_existentes'] as $certificate) {
+            $current = $documents->where('id_certificado', $certificate->id_certificado)->where('estado', 'Vigente');
+            $certificate->id_certificado_documento = $current->count() === 1 ? (int) $current->first()->id_certificado_documento : null;
+        }
+        if ($modality === 'individual' && $documents->isNotEmpty()) {
+            foreach ($documents as $document) {
+                $approved = app(CertificateDocumentVersions::class)->approvedContent($document);
+                if (in_array($approved['context']['origen'] ?? null, ['ponente_actividad', 'ponente_sesion'], true)) {
+                    $originalContext = $approved['context'];
+                    $modality = $approved['context']['origen'] === 'ponente_sesion' ? 'sesion' : 'actividad';
+                    $evaluation['motivos_bloqueo'] = ['El documento existente acredita un ponente; recupérelo mediante su origen original.'];
+                    $evaluation['estado_elegibilidad'] = 'Pendiente de validación';
+                    $evaluation['puede_preparar'] = false;
+                    $evaluation['puede_generar_pdf'] = false;
+                }
+            }
+        }
+
+        return [...$evaluation, 'id_reconocimiento' => $id,
+            'id_persona_trabajador' => $recognition->id_persona_trabajador,
+            'modalidad_reconocimiento' => $modality,
+            'id_actividad' => null, 'id_sesion' => null,
+            'contexto_origen_real' => ['origen' => $modality === 'individual' ? 'reconocimiento' : 'ponente_'.$modality,
+                'id_origen' => $originalContext['id_origen'] ?? $recognition->id_actividad_ponente ?? $id,
+                'id_actividad' => $originalContext['id_actividad'] ?? $recognition->id_actividad ?? null,
+                'id_sesion' => $originalContext['id_sesion'] ?? $recognition->id_actividad_sesion ?? null,
+                'id_actividad_ponente' => $originalContext['id_actividad_ponente'] ?? $recognition->id_actividad_ponente ?? null],
+            'certificados_existentes' => $modality === 'individual' ? $evaluation['certificados_existentes'] : collect(),
+            'certificados_otro_origen' => $modality === 'individual' ? collect() : $evaluation['certificados_existentes'],
+            'puede_consultar_certificado_existente' => $modality === 'individual' && $evaluation['puede_consultar_certificado_existente'],
+            'modalidad_preparacion' => $academic ? 'academica' : 'institucional',
+            'aprobacion_institucional_acreditada' => ! $academic && $evaluation['estado_elegibilidad'] === 'Elegible',
+            'estado_reconocimiento' => $recognition->estado,
+            'documentos_existentes' => $documents->map(fn (object $document): array => [
+                'id_certificado_documento' => (int) $document->id_certificado_documento,
+                'id_certificado' => (int) $document->id_certificado, 'estado_documento' => $document->estado,
+            ]),
+            'mensaje_predeterminado' => trim($recognition->titulo ?? '').'. '.trim($recognition->motivo ?? ''),
+        ];
     }
 
     /** @return list<string> */
@@ -259,7 +385,11 @@ class CertificateOrigins
             'supervisores' => $origin === 'practica' ? $evaluation['supervisores']->map(fn (object $row): array => array_diff_key(
                 (array) $row, array_flip(['fecha_ingreso_trabajador', 'fecha_fin_trabajador'])
             ))->all() : [],
-            'politica' => config('certification.origins.'.$origin)];
+            'politica' => $origin === 'reconocimiento' && $evaluation['modalidad_preparacion'] === 'institucional'
+                ? array_diff_key(config('certification.origins.reconocimiento'), array_flip(['academic_enabled', 'academic_ids', 'academic_states']))
+                : config('certification.origins.'.$origin),
+            ...($origin === 'reconocimiento' && $evaluation['modalidad_preparacion'] === 'academica'
+                ? ['modalidad_preparacion' => 'academica'] : [])];
     }
 
     public function activitySpeakerContext(int $id, bool $bySession = false): object
@@ -482,13 +612,17 @@ class CertificateOrigins
             && $practice->fecha_inicio <= $practice->fecha_fin;
         $periodValid = $periodOrdered && $practice->fecha_fin <= today()->toDateString();
         $supervisors = DB::table('gestion.practica_supervisor as supervisor')
-            ->join('gestion.persona_trabajador as trabajador', 'trabajador.id_persona_trabajador', '=', 'supervisor.id_persona_trabajador')
-            ->join('gestion.persona as persona', 'persona.id_persona', '=', 'trabajador.id_persona')
+            ->leftJoin('gestion.persona_trabajador as trabajador', 'trabajador.id_persona_trabajador', '=', 'supervisor.id_persona_trabajador')
+            ->leftJoin('gestion.persona as persona', 'persona.id_persona', '=', 'trabajador.id_persona')
             ->where('supervisor.id_practica', $practiceId)->orderBy('supervisor.id_practica_supervisor')
             ->get(['supervisor.*', 'trabajador.id_persona', 'trabajador.fecha_ingreso as fecha_ingreso_trabajador',
                 'trabajador.fecha_fin as fecha_fin_trabajador', 'persona.nombres', 'persona.apellido_paterno', 'persona.apellido_materno']);
 
-        $blockers = $this->policyBlockers('practica', $practice->estado);
+        $completed = $practice->estado === $this->practiceCompletionState();
+        $blockers = $completed ? [] : ['El estado registrado no acredita la finalización de la práctica.'];
+        if (mb_strtolower(trim($practice->estado)) === 'activo') {
+            $blockers[] = 'Una práctica activa no acredita su finalización.';
+        }
         if (trim((string) $practice->nombres) === '' || trim((string) $practice->carrera) === ''
             || trim((string) $practice->institucion) === '' || trim((string) $practice->area) === '') {
             $blockers[] = 'La constancia requiere beneficiario, carrera, institución y área con datos completos.';
@@ -505,10 +639,11 @@ class CertificateOrigins
             && ($row->fecha_fin_trabajador === null || $row->fecha_fin_trabajador >= $practice->fecha_fin);
         $supervisionAccredited = $supervisorStatesConfigured && $supervisors->contains(fn (object $row): bool => $coversPeriod($row)
             && in_array($row->estado, $supervisorStates, true));
-        if (! $supervisorStatesConfigured) {
+        $supervisionRequired = (bool) config('certification.origins.practica.supervision_required', false);
+        if ($supervisionRequired && ! $supervisorStatesConfigured) {
             $blockers[] = 'Falta configurar los estados de supervisión autorizados por la política institucional.';
         }
-        if (! $supervisionAccredited) {
+        if ($supervisionRequired && ! $supervisionAccredited) {
             $blockers[] = 'No existe un responsable de supervisión que cubra el periodo según la política institucional.';
         }
 
@@ -529,7 +664,67 @@ class CertificateOrigins
             }
         }
 
-        return [...$evaluation, 'cumplimiento_requisitos_acreditado' => $evaluation['estado_elegibilidad'] === 'Elegible' ? true : null,
+        return [...$evaluation,
+            'mensaje_predeterminado' => $this->practiceMessage($practice),
+            'mensaje' => $evaluation['certificados_existentes']->isEmpty() ? $this->practiceMessage($practice) : null,
+            'texto_editable' => $evaluation['puede_preparar'],
+            'mensaje_estructurado_disponible' => $evaluation['certificados_existentes']->isEmpty(),
+            'finalizacion_registrada' => $completed,
+            'situacion_constancia' => $evaluation['certificados_existentes']->isNotEmpty() ? 'constancia_existente'
+                : ($evaluation['puede_preparar'] ? 'finalizada_elegible' : ($completed ? 'finalizada_no_elegible'
+                    : (mb_strtolower(trim($practice->estado)) === 'activo' ? 'activa' : 'pendiente_acreditacion'))),
+            'cumplimiento_requisitos_acreditado' => $evaluation['estado_elegibilidad'] === 'Elegible' ? true : null,
             'aprobacion_acreditada' => $evaluation['estado_elegibilidad'] === 'Elegible' ? true : null];
+    }
+
+    /** @return array<string, mixed> */
+    public function finalizePractice(int $id, User $actor): array
+    {
+        return DB::transaction(function () use ($id, $actor): array {
+            $this->authorize('practica', $id, $actor);
+            $this->lock('practica', $id);
+            $this->authorize('practica', $id, $actor);
+            $practice = Practice::findOrFail($id);
+            abort_unless(Gate::forUser($actor)->allows('update', $practice), 403, 'No autorizado para finalizar esta práctica.');
+            $evaluation = $this->practice($id);
+            $target = $this->practiceCompletionState();
+            $blockers = [];
+            if (! $evaluation['periodo_transcurrido_valido']) {
+                $blockers[] = 'El periodo debe tener inicio y fin ordenados y haber concluido; no se modifica la fecha de fin.';
+            }
+            if (mb_strtolower(trim($practice->estado)) !== 'activo' && $practice->estado !== $target) {
+                $blockers[] = 'Solo se puede finalizar una práctica activa; el estado actual requiere revisión administrativa.';
+            }
+            if (config('certification.origins.practica.supervision_required', false) && ! $evaluation['supervision_acreditada']) {
+                $blockers[] = 'Se requiere supervisión acreditada que cubra todo el periodo y estados institucionales de supervisión autorizados.';
+            }
+            foreach (['nombres', 'carrera', 'institucion', 'area'] as $field) {
+                if (trim((string) $evaluation['practica']->{$field}) === '') {
+                    $blockers[] = 'La identidad, carrera, institución y área deben estar completas.';
+                    break;
+                }
+            }
+            if ($practice->estado !== $target && $evaluation['certificados_existentes']->isNotEmpty()) {
+                $blockers[] = 'La práctica ya sustenta una constancia; no se altera su origen.';
+            }
+            if ($blockers !== []) {
+                return [...$evaluation, 'practica_finalizada' => false, 'motivos_bloqueo' => $blockers];
+            }
+            if ($practice->estado === $target) {
+                return [...$evaluation, 'practica_finalizada' => true, 'reintento' => true];
+            }
+            DB::table('gestion.practica')->where('id_practica', $id)->update(['estado' => $target]);
+
+            return [...$this->practice($id), 'practica_finalizada' => true];
+        });
+    }
+
+    private function practiceCompletionState(): string
+    {
+        $state = config('certification.origins.practica.completion_state');
+
+        return is_string($state) && trim($state) !== '' && mb_strlen(trim($state)) <= 100
+            && mb_strtolower(trim($state)) !== 'activo' && ! preg_match('/[\x00-\x1F\x7F]/', $state)
+            ? trim($state) : 'finalizado';
     }
 }

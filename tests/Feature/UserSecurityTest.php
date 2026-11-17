@@ -458,11 +458,12 @@ class UserSecurityTest extends TestCase
     {
         $public = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/certificados/verificar/{code}', 'api/certificados/consulta-dni', 'api/portal-certificados/consultar-dni'];
         $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/')));
-        $this->assertCount(243, $routes);
+        $this->assertCount(246, $routes);
         $protected = array_values(array_filter($routes, fn ($route) => ! in_array($route->uri(), $public, true)));
-        $this->assertCount(237, $protected);
+        $this->assertCount(240, $protected);
         foreach ($protected as $route) {
-            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{origen}', 'reconocimiento', $route->uri()));
+            $origin = str_contains($route->wheres['origen'] ?? '', 'reconocimiento') ? 'reconocimiento' : 'practica';
+            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{origen}', $origin, $route->uri()));
             $this->json($route->methods()[0], $uri)->assertUnauthorized()->assertHeaderMissing('Location');
         }
     }
@@ -473,9 +474,10 @@ class UserSecurityTest extends TestCase
         $allowed = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/auth/me', 'api/auth/logout', 'api/certificados/verificar/{code}', 'api/certificados/consulta-dni', 'api/portal-certificados/consultar-dni',
             'api/mis-certificados', 'api/mis-certificados/{id}/pdf'];
         $routes = array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/') && ! in_array($route->uri(), $allowed, true));
-        $this->assertCount(233, $routes);
+        $this->assertCount(236, $routes);
         foreach ($routes as $route) {
-            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{origen}', 'reconocimiento', $route->uri()));
+            $origin = str_contains($route->wheres['origen'] ?? '', 'reconocimiento') ? 'reconocimiento' : 'practica';
+            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{origen}', $origin, $route->uri()));
             $response = $this->json($route->methods()[0], $uri);
             $this->assertSame(403, $response->status(), $route->methods()[0].' '.$uri);
         }

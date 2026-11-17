@@ -1,5 +1,41 @@
 # Contrato de orígenes documentales para Angular
 
+## Mensaje editable de Prácticas — contrato vigente
+
+Se conserva el asistente administrativo y el origen `practica`. No requiere cambios de esquema ni de Angular para aceptar `mensaje` en la API. Se reutilizan el generador institucional, el manifiesto cifrado, el token de revisión, el PDF privado, QR y SHA-256.
+
+### Consulta ligera
+
+`GET /api/practices/{id}/evaluacion-certificacion` y `GET /api/practices/evaluacion-certificacion` incluyen `mensaje_predeterminado` construido con área y fechas reales, `mensaje`, `texto_editable` y `mensaje_estructurado_disponible`. En la lista están en cada elemento de `data.practicas`. No generan PDF, código, token ni Base64. Para una constancia existente, la evaluación no presenta el texto predeterminado como aprobado: `mensaje:null` y `texto_editable:false`; recuperar su texto guardado con la consulta siguiente.
+
+`GET /api/certificaciones/practica/{id}/preparar?accion=consultar_preparacion` devuelve la evaluación y el mensaje predeterminado si no hay constancia (`persistido:false`, `recuperado:false`). Con documento devuelve `mensaje`, `mensaje_aprobado`, `id_certificado`, `id_certificado_documento`, `estado_flujo`, `url_documento` administrativa, `hash_pdf`, `texto_editable:false`, `persistido:true` y `recuperado:true`. No devuelve Base64 ni genera otro PDF; comprueba el archivo guardado y su aprobación. No admite `mensaje`, token ni cambios en esta consulta. Requiere los permisos de lectura y ámbito existentes; editar/preparar requiere además los permisos efectivos de creación.
+
+El mensaje automático conserva la composición existente, por ejemplo: `Por haber realizado sus prácticas en Gerencia de Desarrollo Social, del 2026-10-02 al 2026-11-16.` Las fechas acreditadas también aparecen separadamente en el PDF con formato día/mes/año; editar el mensaje no cambia los datos acreditados.
+
+### Revisión y confirmación
+
+Revisar mediante `POST /api/certificaciones/practica/{id}/preparar`:
+
+```json
+{"accion":"revisar_documento","mensaje":"Por su dedicación y aporte durante sus prácticas."}
+```
+
+`mensaje` es opcional: al omitirlo se utiliza el predeterminado. Si se envía debe ser texto plano no vacío de hasta 1200 caracteres, con las mismas comprobaciones de seguridad de ponentes (sin HTML ni controles peligrosos o de dirección; admite saltos de línea). No admite `motivo`, identidad, fechas, tipo ni otros campos desconocidos. Los datos inválidos devuelven 422.
+
+La revisión devuelve `mensaje`, `texto_editable:true`, `token_revision`, `expires_at`, `hash_pdf` y `vista_previa_pdf`. Repetir el mismo contenido y contexto reutiliza la revisión vigente. Revisar otro mensaje reemplaza la referencia vigente e impide confirmar el token anterior (409).
+
+```json
+{"accion":"confirmar_preparacion","mensaje":"Por su dedicación y aporte durante sus prácticas.","token_revision":"<64 caracteres hexadecimales>","confirmar":true}
+```
+
+Repetir exactamente el mensaje revisado al confirmar un texto personalizado. Omitirlo en ese caso devuelve 422 y enviar uno diferente devuelve 409. Para el predeterminado puede omitirse en ambas acciones. El manifiesto cifra y vincula mensaje, contexto acreditado, actor, código y SHA-256 del PDF; al confirmar se guarda una copia inmutable indexada por código en el almacenamiento privado existente. Se guardan los bytes exactos revisados, sin renderizar otro PDF. La respuesta incluye el mensaje aprobado y `texto_editable:false`. Los reintentos de confirmación recuperan la misma identidad; una nueva revisión de un origen con documento existente devuelve 409 y debe continuarse mediante la consulta ligera.
+
+Confirmar conserva `PREPARADO`. El envío explícito a Gerencia y la confirmación administrativa mantienen sus endpoints y controles actuales. Tanto esas revisiones como la recuperación preservan el mensaje aprobado. No se sobrescriben certificados ni PDF históricos; sus mensajes se leen del manifiesto original o de la versión aprobada existente, sin reemplazarlos por el predeterminado actual. Una aprobación ausente o incoherente devuelve 409 en la recuperación, sin reconstruir texto.
+
+### Regla operativa actual de prácticas
+
+El estado de finalización predeterminado es exactamente `finalizado`; se respeta un `CERTIFICATION_PRACTICE_COMPLETION_STATE` explícito válido. Una variable vacía aplica el predeterminado. La finalización exige periodo ordenado y concluido, autenticación, permisos y ámbito, y es idempotente. La supervisión es informativa y opcional por defecto (`CERTIFICATION_PRACTICE_SUPERVISION_REQUIRED=false`): la cobertura parcial o ausente y la lista vacía de estados de supervisión no bloquean finalizar ni preparar. Sólo una activación explícita de esa configuración exige acreditación de supervisión. Los apartados históricos posteriores que describen bloqueos por política o supervisión documentan el comportamiento anterior; prevalece esta regla vigente.
+
 ## Consulta ligera y continuación del asistente
 
 Usar `GET /api/certificaciones/ponente_sesion/{id_actividad_ponente}/preparar?accion=consultar_preparacion&modalidad_reconocimiento=sesion&id_sesion={id_sesion}`. También se admite la misma acción mediante POST en el contrato existente. GET rechaza cualquier acción de revisión o confirmación. Requiere autenticación, `emision.ver`, lectura del ponente, actividad, sesión y documento dentro del ámbito autorizado; consultar una preparación existente no requiere crear otra.
@@ -261,3 +297,172 @@ php -d memory_limit=1G vendor/phpunit/phpunit/phpunit --configuration phpunit.po
 Los intentos reales intermedios registraron fallos de DNS/pérdida de conexión y respuestas 500; no se consideran ejecuciones aprobadas. La ejecución final externa sí completó todas sus aserciones. Neon tiene idle_in_transaction_session_timeout=5min; la prueba larga usa SET LOCAL a 20min, manteniendo lock_timeout=3s y statement_timeout=20s. Ese ajuste se revierte con la transacción y no modifica la configuración persistente. No se atribuye a ese límite, por sí solo, la causa de todos los cortes.
 
 Las extensiones SQLite y memory_limit utilizadas en las regresiones se habilitaron sólo para los procesos de prueba. No se cambiaron PHP, dependencias ni configuración de producción. Las primeras ejecuciones focalizadas detectaron expectativas antiguas de bloqueo por ausencia de trabajador y una identidad de actor de prueba que dejó de ser trabajador al simular al externo; ambas se corrigieron y los casos se repitieron aprobados. Pint, sintaxis PHP y git diff --check finalizaron correctamente.
+
+## Reconocimientos municipales individuales: modalidad académica explícita
+
+Esta sección prevalece sobre la exigencia institucional genérica anterior únicamente para los individuales seleccionados en desarrollo. No modifica el contrato de Capacitación, Prácticas ni Ponentes.
+
+Configuración (opt-in, valores predeterminados deshabilitados):
+
+```dotenv
+CERTIFICATION_RECOGNITION_ACADEMIC_ENABLED=true
+CERTIFICATION_RECOGNITION_ACADEMIC_IDS=1,28
+CERTIFICATION_RECOGNITION_ACADEMIC_STATES=ca|PREPARADO
+```
+
+Sólo tiene efecto con `APP_ENV=local` o `development`. Producción, staging y testing mantienen la política institucional aunque las variables académicas estén activadas. Los IDs y estados son listas exactas verificadas para este desarrollo; `ca` no significa aprobado. Un ID no seleccionado vuelve a la política institucional estricta (`CERTIFICATION_RECOGNITION_POLICY_REFERENCE` y `CERTIFICATION_RECOGNITION_APPROVED_STATES`). Anulación/cancelación, beneficiario inexistente, falta de persona/área/nombres, título/motivo/fecha inválidos, modalidad de ponente y tipo documental inexistente o ambiguo siguen bloqueando. Permisos y ámbito se comprueban antes de evaluar; la variable no otorga acceso. No se cambia el estado del reconocimiento ni se acredita una aprobación institucional ficticia.
+
+### Identificadores y consulta compatible
+
+`GET /api/reconocimientos/{id_reconocimiento}/evaluacion-certificacion` requiere autenticación, `emision.ver`, `reconocimientos.ver` y ámbito. El ID procede de `GET /api/reconocimientos/list`: no es el ID de persona, trabajador, certificado ni asignación de ponente. Devuelve `origen:reconocimiento`, `id_origen`, `id_reconocimiento`, `id_persona`, `id_persona_trabajador`, `reconocimiento.nombres` y apellidos reales, `modalidad_reconocimiento`, `modalidad_preparacion:academica|institucional`, `estado_elegibilidad`, `puede_preparar`, `puede_generar_pdf`, `motivos_bloqueo` y `aprobacion_institucional_acreditada`. En modo académico este último es siempre false.
+
+Para conservar el validador Angular individual, `id_actividad` e `id_sesion` superiores son NULL. Las relaciones de otra modalidad se informan en `contexto_origen_real`. Los documentos de ponentes nunca se ofrecen como individuales: se devuelven en `certificados_otro_origen`, con `certificados_existentes:[]`, `puede_consultar_certificado_existente:false`, `puede_preparar:false` y motivo de modalidad incorrecta. Su consulta y recuperación se realizan con el origen original; no se convierten en individuales. Los documentos individuales conservan `certificados_existentes`, su estado de certificado e `id_certificado_documento`; `documentos_existentes` distingue el estado documental. `estado_reconocimiento:PREPARADO` no acredita la existencia de un PDF ni el estado documental PREPARADO.
+
+Un origen inexistente devuelve 404; permisos o ámbito insuficientes, 403. Sin beneficiario/área verificables, 409 con motivo específico y sin autorización de preparación. Los errores de conexión o timeout SQL conservan 503; ninguna excepción se convierte en elegibilidad verdadera.
+
+### Flujo documental reutilizado
+
+- Consulta ligera: `GET /api/certificaciones/reconocimiento/{id_reconocimiento}/preparar?accion=consultar_preparacion` (también POST con esa acción). No genera PDF ni token. Sin documento devuelve evaluación y `recuperado:false`; con uno devuelve su identidad persistida, mensaje, hash, estado y facultad de envío, con `recuperado:true`, `texto_editable:false` y sin Base64. Requiere lectura documental y ámbito, no creación.
+- Revisión: `POST /api/certificaciones/reconocimiento/{id_reconocimiento}/preparar` con `{"accion":"revisar_documento"}`. Mensaje predeterminado: título y motivo reales. La API también admite `mensaje` (máximo 1200) y `motivo` (máximo 500), ambos juntos, texto plano no vacío, sin HTML ni controles. La pantalla Angular individual actual utiliza el mensaje predeterminado; la edición API no implica modificar Angular.
+- Previsualización: respuesta con mensaje, motivo, `modalidad_preparacion`, PDF Base64 institucional, QR/código, `hash_pdf` SHA-256, token de revisión y caducidad. No registra certificado ni envía a Gerencia. Se reutiliza la revisión vigente para el mismo usuario y contenido; una revisión nueva invalida el token anterior.
+- Confirmación de preparación: misma ruta POST con `{"accion":"confirmar_preparacion","token_revision":"<token>","confirmar":true}`; repetir los textos si se personalizaron. Devuelve 201 al crear y 200 al reintentar la misma revisión. Certificado PREPARADO, fecha de emisión NULL y documento Vigente. Conserva PDF, hash, código y manifiesto privado cifrado; no cambia el reconocimiento histórico. No duplica ni sobrescribe una preparación existente.
+- Recuperación compatible con la pantalla actual: evaluación ? `GET /api/certificados/detail/{id_certificado}` ? `GET /api/certificados-documentos/detail/{id_certificado_documento}?flujo=firmas`. También se dispone de la consulta ligera indicada arriba. Los documentos conservan `origen:reconocimiento` y beneficiario real.
+- Envío explícito: `POST /api/certificados-documentos/{id}/revisar-envio`, seguido de `POST /api/certificados-documentos/{id}/enviar-gerencia` con token y `confirmar:true`. Transición a PENDIENTE_FIRMA. Preparar por sí solo no remite.
+- Confirmación administrativa real: rutas existentes `/{id}/firma/firmantes-disponibles`, `/firma/revision-pdf`, `/firma/asignar`, `/firma/confirmar-pdf` y `/firma/progreso` bajo `/api/certificados-documentos`. Mantienen `emision.ver`, `emision.editar`, ámbito y responsables habilitados. La disponibilidad para RR. HH. procede de esa confirmación; el modo académico no la simula ni aplica firma criptográfica. Documento ANULADO no habilita preparar de nuevo ni entregar.
+
+### Diagnóstico de los cinco registros de Neon
+
+Consulta real de `certificados_morales`, 16/11/2026:
+
+| Reconocimiento | Beneficiario | Modalidad real | Situación individual |
+| --- | --- | --- | --- |
+| 1 | persona 1, trabajador 1, Antón Talían, área 5 | individual; estado `ca` | Elegible académicamente por selección explícita; sin aprobación institucional |
+| 2 | persona 2, trabajador 2, Maria Perez, área 5 | ponente por actividad; manifiesto `ponente_actividad`, asignación 1 | Bloqueado como individual; certificado 9/documento 10 PREPARADO, recuperar por su origen |
+| 24 | persona 1, Antón Talían; asignación 17, actividad 3, sesión 5, área 5 | ponente por sesión; trabajador NULL válido | Bloqueado como individual; certificado 23/documento 22 PENDIENTE_FIRMA |
+| 27 | persona 2, Maria Perez; asignación 21, actividad 4, sesión 8, área 9 | ponente por sesión; trabajador NULL válido | Bloqueado como individual; certificado 27/documento 26 PENDIENTE_FIRMA |
+| 28 | persona 2, trabajador 2, Maria Perez, área 5 | individual; estado del reconocimiento `PREPARADO`, sin documento | Elegible académicamente; PREPARADO del origen no sustituye preparar el certificado |
+
+Los fallos de verificación tenían dos causas comprobadas en el código del cliente (sólo lectura) y PostgreSQL: 24/27 no tenían trabajador porque son ponentes por sesión, por lo que la evaluación genérica fallaba al autorizar el área o por sus INNER JOIN; el 2 sí se evaluaba, pero Angular intentaba recuperar como individual un documento cuyo origen persistido era `ponente_actividad`, y su validador lo rechazaba. Se corrige la consulta y la clasificación en Laravel, manteniendo sus datos y documentos originales.
+
+Las pruebas Neon están opt-in en `IndividualRecognitionsNeonTest` (`INDIVIDUAL_RECOGNITIONS_NEON=1`, grupo `postgresql`), con transacción, ROLLBACK obligatorio, comparación de huellas de tablas antes/después y almacenamiento falso separado. No ejecutan migraciones ni regeneran documentos históricos. Los identificadores de secuencia consumidos por INSERT de prueba pueden dejar huecos, como cualquier transacción PostgreSQL revertida.
+
+Validacion final: suite ampliada de 458 pruebas y 6.252 aserciones aprobada; repeticion focalizada final de 9 pruebas academicas y 80 aserciones aprobada; Neon, 2 pruebas y 128 aserciones aprobadas con ROLLBACK y huellas de tablas/archivos sin cambios. Pint, sintaxis PHP y git diff --check aprobados. Las consultas individuales reales respondieron aproximadamente entre 0,6 y 1,3 segundos en la ultima ejecucion. Angular se inspecciono en modo de solo lectura y no se modifico. No se ejecutaron migraciones, commit ni push.
+
+## Mensaje individual sin motivo obligatorio y consulta del documento original
+
+Este apartado actualiza los requisitos de texto y los campos administrativos de los apartados anteriores. Se conservan la elegibilidad académica de 1/28, el control institucional de producción y todos los permisos y ámbitos existentes. No se cambian rutas ni Angular.
+
+### Mensaje editable individual
+
+`POST /api/certificaciones/reconocimiento/{id_reconocimiento}/preparar` admite `mensaje` por sí solo, sin exigir `motivo`. Se aplica la misma validación de texto plano no vacío, sin HTML, controles ni marcas de dirección, de hasta 1200 caracteres Unicode. `motivo` sigue siendo opcional (máximo 500) para compatibilidad con clientes anteriores. Por sesión se conserva el contrato previo de mensaje y motivo.
+
+```json
+{"accion":"revisar_documento","mensaje":"Mensaje municipal aprobado."}
+```
+
+La revisión devuelve el mensaje aprobado, el PDF de previsualización, su SHA-256 y el token ligado al usuario, origen, contenido y caducidad. No envía ni confirma administrativamente. Para guardar:
+
+```json
+{"accion":"confirmar_preparacion","mensaje":"Mensaje municipal aprobado.","token_revision":"<token revisado>","confirmar":true}
+```
+
+Un mensaje diferente al revisado devuelve 409. Sin mensaje personalizado se omite `mensaje` en ambas acciones y se usa el predeterminado del reconocimiento. El texto se conserva en el manifiesto privado cifrado y en los bytes del PDF aprobado. La consulta devuelve `texto_editable:false` para un documento existente; revisar otra vez un individual ya preparado o confirmado devuelve 409 y no sobrescribe su PDF. No se cambia el motivo del registro histórico. La evaluación anuncia `texto_editable:true` únicamente cuando el usuario puede preparar ese reconocimiento.
+
+### Metadatos administrativos sin regeneración
+
+Se reutilizan:
+
+- `GET /api/reconocimientos/{id_reconocimiento}/evaluacion-certificacion`.
+- `GET /api/certificaciones/reconocimiento/{id_reconocimiento}/preparar?accion=consultar_preparacion` (también POST con esa acción).
+- `GET /api/certificados-documentos/detail/{id_certificado_documento}?flujo=firmas` para el detalle original.
+- `GET /api/certificados-documentos/{id_certificado_documento}/archivo?flujo=firmas` para acceder al PDF administrativo con autenticación.
+
+Las dos consultas de reconocimiento incluyen:
+
+| Campo | Contenido real |
+| --- | --- |
+| `id_reconocimiento`, `modalidad_reconocimiento` | ID del registro consultado y modalidad original: individual, actividad o sesion |
+| `reconocimiento`, `id_persona` | Identidad real ya verificada; la identidad documental se incluye también en `documento_existente.beneficiario` |
+| `contexto_origen_real` | `origen`, `id_origen`, `id_actividad_ponente`, `id_actividad`, `id_sesion` originales |
+| `documentos_existentes` | Lista de documentos administrativos consultables en el ámbito del usuario, con identificadores, beneficiario, modalidad, estados y facultades |
+| `documento_existente` | Documento único vigente; si sólo hay un documento no vigente se conserva su metadata con acceso al PDF bloqueado; si hay ambigüedad, NULL y motivo explícito |
+| `id_certificado`, `id_certificado_documento` | Identificadores del documento seleccionado, o NULL cuando no hay uno inequívoco consultable |
+| `estado_certificado` | Estado SQL real, como PREPARADO o PENDIENTE_FIRMA; no se sustituye por una confirmación simulada |
+| `estado_documento` | Estado SQL del documento, como Vigente o Anulado; es independiente del estado del certificado y del reconocimiento |
+| `url_documento` | Ruta administrativa relativa del PDF existente y permitido; NULL si falta el archivo, no está vigente o el acceso no está autorizado |
+| `puede_visualizar`, `puede_descargar` | Facultades administrativas sobre el archivo; no autorizan entregar ni acreditan firma institucional |
+| `puede_consultar_documento_original` | Existe metadata documental autorizada, incluso cuando el archivo no puede descargarse |
+| `motivo_documento` | Motivo concreto cuando falta el documento, archivo, vigencia, permiso o ámbito, o hay varios documentos |
+
+Cada elemento de `documentos_existentes` conserva `origen:reconocimiento|ponente_actividad|ponente_sesion`, `id_origen`, modalidad, beneficiario, ambos IDs documentales, estados, URL, facultades (`ver`, `visualizar`, `descargar`) y `puede_preparar_como_individual:false`. `integridad_verificada:null` indica que una consulta de metadata no ha calculado el hash del PDF; la descarga existente sigue verificando la integridad completa antes de servirlo. En el detalle se conservan `facultades.ver` para metadata y se añaden `puede_visualizar`, `puede_descargar`, `facultades.visualizar` y `motivo_documento`; una URL no se inventa para un archivo ausente.
+
+Para 2/24/27, `origen:reconocimiento` superior identifica la consulta de evaluación, no convierte el documento en individual. Usar `documento_existente.origen` o `contexto_origen_real.origen` al continuar con su flujo original. Se conservan `certificados_otro_origen` y `certificados_existentes:[]` para evitar que el validador individual anterior intente recuperar un ponente como individual; `puede_consultar_certificado_existente` sigue refiriéndose al flujo individual, mientras que `puede_consultar_documento_original` anuncia la consulta administrativa de otro origen. `puede_preparar:false` se mantiene.
+
+La consulta ligera de otro origen devuelve la metadata del documento original con `recuperado:true`, `persistido:true`, `texto_editable:false`, sin Base64 ni token. Sin documento consultable devuelve el motivo y no ofrece URL. Los IDs 24 y 27 se resuelven por su asignación real a sesión y actividad; el 2 conserva el origen por actividad de su manifiesto aprobado. Los documentos visibles se filtran con las consultas de autorización existentes y, para el origen por actividad histórico, se comprueba también el área de su actividad original.
+
+No se ejecuta el generador al evaluar, consultar ni descargar documentos existentes. La metadata no calcula firmas, facultades de remisión ni progreso completo para obtener sólo el estado; comprueba los permisos, el ámbito, la versión documental y la existencia del archivo. Las consultas de reconocimiento se sirven con `Cache-Control: private, no-store`.
+
+Validación de esta ampliación: 255 pruebas y 3.387 aserciones aprobadas en orígenes, esquema existente y confirmación administrativa; repetición final del mensaje y `texto_editable`, 2 pruebas y 35 aserciones aprobadas. Neon: 2 pruebas y 216 aserciones aprobadas, incluida descarga administrativa real de documentos 10 (reconocimiento 2, PREPARADO), 22 (24, PENDIENTE_FIRMA) y 26 (27, PENDIENTE_FIRMA). Los individuales 1 y 28 continuaron elegibles y se verificaron mensaje personalizado sin motivo, texto predeterminado, contenido exacto del PDF, confirmación, recuperación y bloqueo de edición posterior. Las consultas de metadata no consultaron firmas ni generaron PDFs. ROLLBACK y comparación de huellas de tablas y archivos históricos aprobados. Pint, sintaxis PHP y git diff --check aprobados. Sin migraciones, modificaciones de Angular, commit ni push.
+
+## Auditoría HTTP autenticada sin escrituras en Neon
+
+La implementación funcional existente se conserva. Esta auditoría añade pruebas de transporte HTTP real y documentación; no modifica controladores, servicios, autenticación ni permisos. Las peticiones por red usan la cookie `access_token` emitida por `JwtService`; el middleware comprueba el JWT y carga el usuario y sus permisos desde la base. No se utiliza `actingAs` en el servidor HTTP.
+
+| Petición comprobada | Entorno | HTTP observado |
+| --- | --- | --- |
+| GET `/api/reconocimientos/{1,28,2,24,27}/evaluacion-certificacion` | Servidor local conectado a Neon, usuario existente 1 | 200 en los cinco |
+| GET `/api/certificaciones/reconocimiento/{id}/preparar?accion=consultar_preparacion` | Mismos cinco registros reales | 200, sin PDF Base64 ni token |
+| GET `/api/certificados-documentos/detail/{10,22,26}?flujo=firmas` | Neon, usuario existente autorizado | 200 |
+| GET `/api/certificados-documentos/{10,22,26}/archivo?flujo=firmas` | PDFs originales en almacenamiento privado | 200, contenido PDF |
+| POST `/api/certificaciones/reconocimiento/28/preparar`, `revisar_documento` con sólo `mensaje` | Datos reales de Neon en transacción READ ONLY; vista previa y manifiesto en almacenamiento aislado | 200, texto exacto comprobado dentro del PDF |
+| POST misma ruta, `confirmar_preparacion`, mensaje y token revisados | HTTP real con SQLite y archivos aislados | 201; repetir devuelve 200, un solo certificado |
+| GET consulta ligera y detalle después de confirmar | HTTP real, SQLite aislado | 200, mensaje aprobado recuperado y `texto_editable:false` |
+| GET archivo individual después de confirmar | HTTP real, SQLite aislado | 200, bytes y SHA-256 iguales a la revisión |
+| POST confirmación con mensaje distinto o revisión de un individual ya persistido | HTTP real, SQLite aislado | 409, sin sobrescritura |
+| GET evaluación sin cookie | Servidor real conectado a Neon y servidor aislado | 401 esperado |
+| GET evaluación con JWT válido y usuario sin permisos | HTTP real, usuario restringido de la fixture aislada | 403 esperado |
+
+No existe un usuario activo de Neon sin `emision.ver` que permita probar allí el 403 sin cambiar permisos o crear usuarios. Se cubre con la misma autenticación y autorización en el servidor aislado. No se ejecuta una confirmación válida sobre Neon: confirmarla exige INSERT y contradice la prohibición de modificar PostgreSQL. Su confirmación completa, recuperación, detalle y descarga se verifican por TCP en la fixture aislada; los IDs creados allí no son IDs de Neon.
+
+Valores reales conservados:
+
+| Reconocimiento | `documento_existente.origen` | `id_certificado` | `id_certificado_documento` | `estado_certificado` | `estado_documento` |
+| --- | --- | --- | --- | --- | --- |
+| 2 | ponente_actividad | 9 | 10 | PREPARADO | Vigente |
+| 24 | ponente_sesion | 23 | 22 | PENDIENTE_FIRMA | Vigente |
+| 27 | ponente_sesion | 27 | 26 | PENDIENTE_FIRMA | Vigente |
+
+Para el usuario autorizado los tres devuelven `documento_existente.facultades.ver:true`, `.visualizar:true`, `.descargar:true`, `puede_visualizar:true`, `puede_descargar:true` y su URL administrativa real. `puede_preparar:false` no impide esa consulta. Los beneficiarios son Maria Perez (persona 2) para 2/27 y Antón Talían (persona 1) para 24.
+
+Ejemplo de campos JSON observados en la evaluación del 24 (subconjunto de la respuesta, sin cambiar nombres):
+
+```json
+{
+  "origen": "reconocimiento",
+  "id_origen": 24,
+  "puede_preparar": false,
+  "texto_editable": false,
+  "documento_existente": {
+    "origen": "ponente_sesion",
+    "id_origen": 17,
+    "id_reconocimiento": 24,
+    "id_certificado": 23,
+    "id_certificado_documento": 22,
+    "beneficiario": {"id_persona": 1, "nombre": "Antón Talían"},
+    "estado_certificado": "PENDIENTE_FIRMA",
+    "estado_documento": "Vigente",
+    "url_documento": "/api/certificados-documentos/22/archivo?flujo=firmas",
+    "puede_visualizar": true,
+    "puede_descargar": true,
+    "facultades": {"ver": true, "visualizar": true, "descargar": true}
+  }
+}
+```
+
+Se contrastó en modo de sólo lectura con las interfaces y servicios actuales de Angular. No hay diferencias de nombres en los campos comprobados. La evaluación conserva `origen:reconocimiento`, `id_actividad:null` e `id_sesion:null` superiores para su validador; el origen y ámbito documental reales están en `documento_existente` y `contexto_origen_real`. En evaluación usar `documento_existente.facultades.ver/descargar`; en el detalle, `facultades.ver/descargar`. No confundir `estado_documento:Vigente` con `estado_certificado:PREPARADO|PENDIENTE_FIRMA`, ni interpretar ninguno como confirmación administrativa. La pantalla municipal actual consume esos metadatos y envía `mensaje` sin exigir `motivo`.
+
+El 28 real devuelve `texto_editable:true`, `puede_preparar:true` y `mensaje_predeterminado:"DESTACADO. E"`; la consulta ligera admite que `mensaje` esté ausente y conserva `mensaje_predeterminado`. Angular ya utiliza `mensaje ?? mensaje_predeterminado`. La revisión real se probó con `mensaje:"Mensaje municipal verificado por HTTP."`. El mensaje aprobado de una preparación persistida se recupera mediante `mensaje_aprobado`, con `texto_editable:false`.
+
+Las pruebas de red son opt-in: `INDIVIDUAL_RECOGNITIONS_HTTP_READ_ONLY=1` y filtro `test_live_http_jwt_read_only` en `IndividualRecognitionsNeonTest` (grupo `postgresql`); `INDIVIDUAL_RECOGNITIONS_HTTP_ISOLATED=1` y filtro `test_individual_28_lifecycle_over_real_http` en `CertificateOriginsTest`. La primera usa el servidor de `APP_URL` (o `CERTIFICATE_HTTP_BASE_URL`) y sólo acepta host local para enviar la cookie. La revisión Neon adicional fuerza READ ONLY y usa almacenamiento temporal. La segunda exporta las fixtures SQLite existentes y arranca un servidor TCP con el middleware real; no conecta a PostgreSQL. En Windows la ejecución debe permitir iniciar y cerrar ese proceso hijo. Se comparan huellas de tablas y archivos originales antes/después para detectar cualquier modificación.
+
+Resultado final de la auditoría: HTTP Neon de sólo lectura, 1 prueba y 100 aserciones aprobadas; HTTP TCP aislado con JWT, 1 prueba y 33 aserciones aprobadas; regresión focalizada de mensajes, política académica, metadatos originales, Capacitación, Prácticas y Ponentes, 30 pruebas y 514 aserciones aprobadas. Las ejecuciones finales se realizaron secuencialmente para evitar compartir simultáneamente la caché de fuentes de Dompdf. Pint, sintaxis PHP y git diff --check aprobados. Sin cambios funcionales nuevos, escrituras en Neon, cambios de autenticación/permisos, modificaciones de Angular, alteraciones de PDFs históricos, commit ni push.

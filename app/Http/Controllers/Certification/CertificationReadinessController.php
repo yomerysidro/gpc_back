@@ -15,6 +15,7 @@ use App\Models\Participation\Participation;
 use App\Models\PersonSpeaker\PersonaPonente;
 use App\Models\Practice\Practice;
 use App\Models\Recognition\Recognition;
+use App\Services\CertificateDocumentWorkflow;
 use App\Services\CertificateManagement;
 use App\Services\CertificateOrigins;
 use App\Services\CertificationReadiness;
@@ -156,8 +157,51 @@ class CertificationReadinessController extends Controller
             $this->applyPreparationPermission($data);
             $data['puede_generar_pdf'] = $data['puede_preparar'] && Gate::allows('create', CertificateDocument::class);
             $data['puede_preparar'] = $data['puede_generar_pdf'];
+            $data['texto_editable'] = $data['puede_preparar'];
 
             return $data;
+        });
+    }
+
+    public function finalizePractice(Request $request, int $id, CertificateOrigins $origins): JsonResponse
+    {
+        return $this->respond(function () use ($request, $id, $origins): array {
+            abort_if($request->all() !== [], 422, 'La finalización no admite cambios de identidad, fechas ni estado desde el cliente.');
+
+            $data = $origins->finalizePractice($id, $request->user());
+            $data['puede_preparar'] = $data['puede_preparar'] && Gate::allows('create', Certificate::class)
+                && Gate::allows('create', CertificateDocument::class);
+            $data['puede_generar_pdf'] = $data['puede_preparar'];
+            $data['texto_editable'] = $data['puede_preparar'];
+
+            return $data;
+        });
+    }
+
+    public function practicesReadiness(Request $request, CertificateOrigins $origins): JsonResponse
+    {
+        return $this->respond(function () use ($request, $origins): array {
+            abort_unless(Gate::allows('viewAny', Certificate::class) && Gate::allows('viewAny', Practice::class),
+                403, 'No autorizado para consultar prácticas de certificación.');
+            $areas = null;
+            if (! $request->user()->isSystemAdministrator()) {
+                $result = ActivityRequestData::authorizedAreas((int) $request->user()->id_persona);
+                abort_unless($result['success'], $result['status'] ?? 500, 'No se pudo comprobar el ámbito.');
+                $areas = $result['data']->pluck('id_area')->all();
+            }
+            $practices = Practice::query()->when($areas !== null, fn ($query) => $query->whereIn('id_area', $areas))
+                ->orderBy('id_practica')->get();
+
+            return ['practicas' => $practices->filter(fn (Practice $practice): bool => Gate::allows('view', $practice))
+                ->map(function (Practice $practice) use ($origins): array {
+                    $data = $origins->practice((int) $practice->id_practica);
+                    $this->applyPreparationPermission($data);
+                    $data['puede_preparar'] = $data['puede_preparar'] && Gate::allows('create', CertificateDocument::class);
+                    $data['puede_generar_pdf'] = $data['puede_preparar'];
+                    $data['texto_editable'] = $data['puede_preparar'];
+
+                    return $data;
+                })->values()];
         });
     }
 
@@ -170,9 +214,10 @@ class CertificationReadinessController extends Controller
             $this->applyPreparationPermission($data);
             $data['puede_generar_pdf'] = $data['puede_preparar'] && Gate::allows('create', CertificateDocument::class);
             $data['puede_preparar'] = $data['puede_generar_pdf'];
+            $data['texto_editable'] = $data['puede_preparar'];
 
-            return $data;
-        });
+            return [...$data, ...app(CertificateDocumentWorkflow::class)->recognitionSummary($id, $request->user(), $data['contexto_origen_real'])];
+        })->header('Cache-Control', 'private, no-store');
     }
 
     public function prepareOrigin(Request $request, string $origen, int $id, CertificateManagement $management): JsonResponse
@@ -188,10 +233,10 @@ class CertificationReadinessController extends Controller
                 $rules['modalidad_reconocimiento'] = 'required|in:actividad,sesion';
                 $rules['id_sesion'] = 'required_if:modalidad_reconocimiento,sesion|prohibited_if:modalidad_reconocimiento,actividad|integer|min:1';
             }
-            if ($origen === 'ponente_sesion') {
+            if (in_array($origen, ['ponente_sesion', 'practica', 'reconocimiento'], true)) {
                 $hasText = array_key_exists('mensaje', $request->all()) || array_key_exists('motivo', $request->all());
-                foreach (['mensaje' => 1200, 'motivo' => 500] as $field => $limit) {
-                    $rules[$field] = [$hasText ? 'required' : 'sometimes', 'string', 'max:'.$limit,
+                foreach ($origen === 'practica' ? ['mensaje' => 1200] : ['mensaje' => 1200, 'motivo' => 500] as $field => $limit) {
+                    $rules[$field] = [$hasText && ! ($origen === 'reconocimiento' && $field === 'motivo') ? 'required' : 'sometimes', 'string', 'max:'.$limit,
                         function (string $attribute, mixed $value, \Closure $fail): void {
                             if (is_string($value) && (preg_match('/[^\p{Z}\s\p{Cf}]/u', $value) !== 1
                                 || preg_match('/<[^>]*>|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x{202A}-\x{202E}\x{2066}-\x{2069}]/u', $value))) {
@@ -203,6 +248,16 @@ class CertificationReadinessController extends Controller
             abort_if(array_diff(array_keys($request->all()), array_keys($rules)) !== [], 422, 'La acción contiene campos no admitidos.');
             $input = Validator::make($request->all(), $rules)->validate();
             if ($input['accion'] === 'consultar_preparacion') {
+                if ($origen === 'reconocimiento') {
+                    abort_if(isset($input['token_revision']) || isset($input['mensaje']) || isset($input['motivo']), 422, 'La consulta no admite revisión ni cambios.');
+
+                    return $management->consultRecognition($id, $request->user());
+                }
+                if ($origen === 'practica') {
+                    abort_if(isset($input['token_revision']) || isset($input['mensaje']), 422, 'La consulta no admite revisión ni cambios.');
+
+                    return $management->consultPractice($id, $request->user());
+                }
                 abort_unless($origen === 'ponente_sesion' && $input['modalidad_reconocimiento'] === 'sesion', 422,
                     'La consulta corresponde a reconocimientos por sesión.');
                 abort_if(isset($input['token_revision']) || isset($input['mensaje']) || isset($input['motivo']), 422,
@@ -236,8 +291,11 @@ class CertificationReadinessController extends Controller
                 abort(409, 'Falta una referencia persistente del ponente a actividad_sesion; no se convertirá el reconocimiento por sesión en uno por actividad.');
             }
 
-            $text = $origen === 'ponente_sesion' && isset($input['mensaje'])
-                ? ['mensaje' => $input['mensaje'], 'motivo' => $input['motivo']] : null;
+            $text = in_array($origen, ['ponente_sesion', 'reconocimiento'], true) && isset($input['mensaje'])
+                ? array_intersect_key($input, array_flip(['mensaje', 'motivo'])) : null;
+            if ($origen === 'practica' && isset($input['mensaje'])) {
+                $text = ['mensaje' => $input['mensaje']];
+            }
 
             return $input['accion'] === 'revisar_documento'
                 ? $management->reviewOrigin($origen, $id, $request->user(), $text)
@@ -540,6 +598,11 @@ class CertificationReadinessController extends Controller
     {
         try {
             $data = $operation();
+            if (array_key_exists('practica_finalizada', $data)) {
+                return $data['practica_finalizada']
+                    ? $this->ok($data, 'Práctica finalizada; no se ha generado ninguna constancia.')
+                    : $this->information('No se puede finalizar la práctica.', 409, $data);
+            }
             if (($data['modo'] ?? null) === 'administrativo') {
                 return $this->ok($data, ($data['enviado'] ?? false) ? 'Documento remitido a Gerencia; pendiente de firma.'
                     : 'Documento revisado o preparado; no emitido ni firmado.', ($data['creado'] ?? false) ? 201 : 200);

@@ -43,22 +43,62 @@
         .compact .position { font-size: 8px; }
         .compact .footer { margin-top: 6px; }
         .compact .qr { height: 60px; width: 60px; }
+        @if($context->origen === 'practica')
+        .practice-frame { border: 3px solid #173448; padding: 9px; }
+        .practice-certificate { padding: 22px 44px 16px; border-color: #ba9750; }
+        .practice-header { text-align: center; }
+        .practice-header .logo { height: 60px; }
+        .practice-brand { font-size: 16px; font-weight: bold; letter-spacing: 1px; margin: 8px 0 0; }
+        .practice-rule { width: 90px; border-top: 2px solid #ba9750; margin: 12px auto 0; }
+        .practice-certificate h1 { font-size: 27px; letter-spacing: 1px; margin: 20px 0 14px; color: #173448; }
+        .practice-certificate .intro { font-size: 14px; margin: 0 0 9px; color: #52606b; }
+        .practice-certificate .beneficiary { font-family: "DejaVu Serif", serif; font-size: 34px; margin: 0 18px 17px; padding: 0 0 12px; border-bottom: 1px solid #ba9750; }
+        .practice-certificate .text { font-size: 14px; line-height: 1.8; margin: 0 20px; }
+        .practice-certificate .issued { font-size: 13px; margin: 17px 0 0; }
+        .practice-certificate .signers { margin-top: 18px; }
+        .practice-certificate .signature-space { height: 26px; }
+        .practice-certificate .footer { margin-top: 10px; }
+        .practice-certificate .qr { height: 60px; width: 60px; }
+        .practice-certificate.long-message { padding-top: 12px; padding-bottom: 10px; }
+        .practice-certificate.long-message .logo { height: 40px; }
+        .practice-certificate.long-message .practice-brand { font-size: 14px; margin-top: 5px; }
+        .practice-certificate.long-message .practice-rule { margin-top: 8px; }
+        .practice-certificate.long-message h1 { font-size: 23px; margin: 12px 0 8px; }
+        .practice-certificate.long-message .beneficiary { font-size: 27px; margin-bottom: 9px; padding-bottom: 8px; }
+        .practice-certificate.long-message .text { font-size: 11px; line-height: 1.4; }
+        .practice-certificate.long-message .issued { margin-top: 9px; }
+        .practice-certificate.long-message .signers { margin-top: 8px; }
+        .practice-certificate.long-message .signature-space { height: 18px; }
+        .practice-certificate.long-message .footer { margin-top: 6px; }
+        .practice-certificate.long-message .qr { height: 45px; width: 45px; }
+        @endif
     </style>
 </head>
 <body>
-<div class="frame"><main class="certificate {{ count($signers) >= 4 || ($context->origen === 'ponente_sesion' && isset($context->texto_reconocimiento)) ? 'compact' : '' }}">
+<div class="frame {{ $context->origen === 'practica' ? 'practice-frame' : '' }}"><main class="certificate {{ count($signers) >= 4 || (in_array($context->origen, ['ponente_sesion', 'reconocimiento'], true) && isset($context->texto_reconocimiento)) || isset($context->texto_practica) ? 'compact' : '' }} {{ $context->origen === 'practica' ? 'practice-certificate'.(mb_strlen($customMessage) > 800 ? ' long-message' : '') : '' }}">
+    @if($context->origen === 'practica')
+    <div class="practice-header">
+        <img class="logo" src="{{ $logoDataUri }}" alt="Escudo municipal">
+        <p class="practice-brand">Municipalidad Distrital de Morales</p>
+        <div class="practice-rule"></div>
+    </div>
+    @else
     <table class="header"><tr>
         <td width="12%"><img class="logo" src="{{ $logoDataUri }}" alt="Escudo municipal"></td>
         <td class="brand">Municipalidad Distrital de Morales</td>
         <td class="type">{{ $context->tipo_certificado }}</td>
     </tr></table>
-    <h1>{{ in_array($context->origen, ['reconocimiento', 'ponente_actividad', 'ponente_sesion'], true) ? 'RECONOCIMIENTO' : 'CONSTANCIA DE PRÁCTICAS' }}</h1>
-    <p class="intro">{{ $context->origen === 'practica' ? 'Se expide la presente constancia a:' : 'Se otorga el presente certificado a:' }}</p>
+    @endif
+    <h1>{{ $context->origen === 'practica' ? 'CERTIFICADO DE PRÁCTICAS PREPROFESIONALES' : 'RECONOCIMIENTO' }}</h1>
+    <p class="intro">{{ $context->origen === 'practica' ? 'Otorgado a:' : 'Se otorga el presente certificado a:' }}</p>
     <h2 class="beneficiary">{{ trim(implode(' ', array_filter([$context->nombres, $context->apellido_paterno, $context->apellido_materno]))) }}</h2>
-    @if($context->origen === 'ponente_sesion' && isset($context->texto_reconocimiento))
+    @if(in_array($context->origen, ['ponente_sesion', 'reconocimiento'], true) && isset($context->texto_reconocimiento))
         <p class="text custom-message"><strong>Motivo:</strong> {{ $context->texto_reconocimiento['motivo'] }}</p>
     @endif
     <p class="text custom-message">{{ $customMessage }}</p>
+    @if($context->origen === 'practica')
+        <p class="issued">Morales, {{ \Illuminate\Support\Carbon::parse($certificate->fecha_emision ?? $certificate->fecha_generacion ?? now())->locale('es')->translatedFormat('j \d\e F \d\e Y') }}</p>
+    @endif
     @if(in_array($context->origen, ['ponente_actividad', 'ponente_sesion'], true))
         @if($context->origen === 'ponente_sesion')
             <p class="issued">Sesión: {{ $context->sesion }} · {{ $context->fecha_sesion }}</p>
@@ -70,10 +110,8 @@
         @if(!empty($context->datos_origen['descripcion']))
             <p class="text">{{ $context->datos_origen['descripcion'] }}</p>
         @endif
-    @else
-        <p class="issued">{{ $context->datos_origen['institucion'] }} · {{ $context->datos_origen['carrera'] }}</p>
     @endif
-    @if($certificate !== null && $certificate->fecha_emision !== null)
+    @if($context->origen !== 'practica' && $certificate !== null && $certificate->fecha_emision !== null)
         <p class="issued">Morales, {{ \Illuminate\Support\Carbon::parse($certificate->fecha_emision)->format('d/m/Y') }}</p>
     @endif
     @php

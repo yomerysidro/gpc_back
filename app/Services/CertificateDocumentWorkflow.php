@@ -153,6 +153,7 @@ class CertificateDocumentWorkflow
         $result = [];
         foreach ($documents as $document) {
             $id = (int) $document->id_certificado_documento;
+            $access = $this->administrativeFileAccess($document);
             $applications = $registered->get($id, collect());
             $signers = $assignments->get($document->id_actividad, collect())->map(function (object $signer) use ($applications): array {
                 $application = $applications->firstWhere('id_firma', $signer->id_firma);
@@ -204,15 +205,28 @@ class CertificateDocumentWorkflow
                     'fecha_firma' => $application->fecha_firma, 'firma_verificada' => false,
                 ])->values()->all(),
                 'remision' => null, 'historial_remision_disponible' => false, 'firma_verificada' => false,
-                'url_documento' => route('certificates.document.download', ['id' => $id], false).'?flujo=firmas',
-                'facultades' => ['ver' => true, 'descargar' => $document->estado === 'Vigente',
+                ...$access,
+                'facultades' => ['ver' => true, 'visualizar' => $access['puede_visualizar'], 'descargar' => $access['puede_descargar'],
                     'remitir' => false,
                     'firmar' => false, 'emitir' => false, 'entregar' => false],
             ];
+            if ($document->id_practica !== null && $document->id_participacion === null) {
+                try {
+                    $approved = app(CertificateDocumentVersions::class)->approvedContent($document);
+                    $result[$id] = array_replace($result[$id], app(CertificateOrigins::class)->savedPracticeText($approved));
+                } catch (HttpException) {
+                }
+            }
             if ($document->id_reconocimiento !== null && $document->id_participacion === null) {
                 try {
                     $approved = app(CertificateDocumentVersions::class)->approvedContent($document);
                     $context = $approved['context'];
+                    if (($context['origen'] ?? null) === 'reconocimiento') {
+                        $result[$id] = array_replace($result[$id], app(CertificateOrigins::class)->savedSessionRecognitionText($approved), [
+                            'modalidad_reconocimiento' => 'individual',
+                            'modalidad_preparacion' => $context['modalidad_preparacion'] ?? 'institucional',
+                        ]);
+                    }
                     if (in_array($context['origen'] ?? null, ['ponente_actividad', 'ponente_sesion'], true)) {
                         $result[$id] = array_replace($result[$id], array_intersect_key($context, array_flip([
                             'origen', 'modalidad_reconocimiento', 'id_actividad_ponente', 'id_actividad', 'actividad',
@@ -232,6 +246,84 @@ class CertificateDocumentWorkflow
     private function name(object $person): string
     {
         return trim(implode(' ', array_filter([$person->nombres, $person->apellido_paterno, $person->apellido_materno])));
+    }
+
+    /** @return array{url_documento: ?string, puede_visualizar: bool, puede_descargar: bool, motivo_documento: ?string} */
+    private function administrativeFileAccess(object $document): array
+    {
+        $reason = null;
+        if ($document->estado !== 'Vigente') {
+            $reason = 'El documento no está vigente para visualizar o descargar su PDF.';
+        } else {
+            try {
+                $current = app(CertificateDocumentVersions::class)->resolve($document, readOnly: true);
+                foreach ([$document->ruta_archivo_original ?? $document->ruta_archivo, $current->ruta_archivo] as $path) {
+                    if (! is_string($path) || ! str_starts_with($path, 'certificados/')
+                        || str_contains($path, '..') || str_contains($path, '\\') || ! Storage::disk('local')->exists($path)) {
+                        $reason = 'El PDF registrado no está disponible en el almacenamiento privado.';
+                    }
+                }
+            } catch (HttpException) {
+                $reason = 'No se pudo acreditar la versión documental vigente.';
+            }
+        }
+
+        return ['url_documento' => $reason === null
+            ? route('certificates.document.download', ['id' => $document->id_certificado_documento], false).'?flujo=firmas' : null,
+            'puede_visualizar' => $reason === null, 'puede_descargar' => $reason === null, 'motivo_documento' => $reason];
+    }
+
+    /**
+     * @param  array<string, mixed>  $originContext
+     * @return array<string, mixed>
+     */
+    public function recognitionSummary(int $id, User $actor, array $originContext): array
+    {
+        $allowed = Gate::forUser($actor)->allows('viewAny', Certificate::class)
+            && Gate::forUser($actor)->allows('viewAny', CertificateDocument::class);
+        $accessReason = 'No tiene permiso para consultar documentos administrativos.';
+        if ($allowed && $originContext['origen'] !== 'reconocimiento') {
+            $areas = $this->areas($actor);
+            if ($areas !== null && ! DB::table('certificado.actividad')->where('id_actividad', $originContext['id_actividad'])
+                ->whereIn('id_area', $areas)->exists()) {
+                $allowed = false;
+                $accessReason = 'El documento original está fuera del ámbito autorizado.';
+            }
+        }
+        $documents = $allowed ? $this->readableDocuments($actor)->where('c.id_reconocimiento', $id)
+            ->orderBy('d.id_certificado_documento')->get()
+            ->filter(fn (object $document): bool => Gate::forUser($actor)->allows('view',
+                (new CertificateDocument)->newFromBuilder((array) $document))) : collect();
+        $summaries = $documents->map(function (object $document) use ($id, $originContext): array {
+            $access = $this->administrativeFileAccess($document);
+
+            return ['id_reconocimiento' => $id, 'origen' => $originContext['origen'],
+                'id_origen' => $originContext['id_origen'],
+                'modalidad_reconocimiento' => $originContext['origen'] === 'reconocimiento' ? 'individual'
+                    : ($originContext['origen'] === 'ponente_sesion' ? 'sesion' : 'actividad'),
+                'id_actividad' => $originContext['id_actividad'], 'id_sesion' => $originContext['id_sesion'],
+                'id_actividad_ponente' => $originContext['id_actividad_ponente'],
+                'beneficiario' => ['id_persona' => (int) $document->id_persona, 'nombre' => $this->name($document)],
+                'id_certificado' => (int) $document->id_certificado,
+                'id_certificado_documento' => (int) $document->id_certificado_documento,
+                'estado_certificado' => $document->estado_certificado, 'estado_documento' => $document->estado,
+                'fecha_emision' => $document->fecha_emision, 'puede_preparar_como_individual' => false,
+                ...$access, 'integridad_verificada' => null,
+                'facultades' => ['ver' => true, 'visualizar' => $access['puede_visualizar'], 'descargar' => $access['puede_descargar']]];
+        })->values();
+        $current = $summaries->where('estado_documento', 'Vigente');
+        $single = $current->count() === 1 ? $current->first() : ($summaries->count() === 1 ? $summaries->first() : null);
+        $reason = ! $allowed ? $accessReason
+            : ($summaries->isEmpty() ? 'No existe un documento consultable en el ámbito autorizado.'
+                : ($single === null ? 'Hay varios documentos; seleccione el documento por su identificador.' : $single['motivo_documento']));
+
+        return ['documentos_existentes' => $summaries->all(), 'documento_existente' => $single,
+            'id_certificado' => $single['id_certificado'] ?? null,
+            'id_certificado_documento' => $single['id_certificado_documento'] ?? null,
+            'estado_certificado' => $single['estado_certificado'] ?? null, 'estado_documento' => $single['estado_documento'] ?? null,
+            'url_documento' => $single['url_documento'] ?? null,
+            'puede_visualizar' => $single['puede_visualizar'] ?? false, 'puede_descargar' => $single['puede_descargar'] ?? false,
+            'puede_consultar_documento_original' => $summaries->isNotEmpty(), 'motivo_documento' => $reason];
     }
 
     private function canRemit(object $document, User $actor): bool

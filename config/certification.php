@@ -3,16 +3,26 @@
 $developmentClosureEnabled = (bool) env('CERTIFICATION_DEVELOPMENT_CLOSURE_ENABLED', false);
 $sessionTypes = trim((string) env('CERTIFICATION_DEVELOPMENT_SESSION_TYPE_IDS', ''));
 $preparationTypes = trim((string) env('CERTIFICATION_PREPARATION_SESSION_TYPE_IDS', ''));
+$practiceCompletionState = trim((string) env('CERTIFICATION_PRACTICE_COMPLETION_STATE', ''));
+if ($practiceCompletionState === '' || mb_strlen($practiceCompletionState) > 100
+    || mb_strtolower($practiceCompletionState) === 'activo' || preg_match('/[\x00-\x1F\x7F]/', $practiceCompletionState)) {
+    $practiceCompletionState = 'finalizado';
+}
 
 return [
     'origins' => [
         'reconocimiento' => [
+            'academic_enabled' => (bool) env('CERTIFICATION_RECOGNITION_ACADEMIC_ENABLED', false),
+            'academic_ids' => array_map('intval', array_filter(explode(',', (string) env('CERTIFICATION_RECOGNITION_ACADEMIC_IDS', '')), fn (string $id): bool => preg_match('/^[1-9][0-9]*$/D', $id) === 1)),
+            'academic_states' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_RECOGNITION_ACADEMIC_STATES', '')))),
             'reference' => env('CERTIFICATION_RECOGNITION_POLICY_REFERENCE'),
             'eligible_states' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_RECOGNITION_APPROVED_STATES', '')))),
             'type_name' => 'Reconocimiento',
         ],
         'practica' => [
             'reference' => env('CERTIFICATION_PRACTICE_POLICY_REFERENCE'),
+            'completion_state' => $practiceCompletionState,
+            'supervision_required' => (bool) env('CERTIFICATION_PRACTICE_SUPERVISION_REQUIRED', false),
             'eligible_states' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_PRACTICE_APPROVED_STATES', '')))),
             'supervisor_states' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_PRACTICE_SUPERVISOR_STATES', '')))),
             'type_name' => 'Prácticas',

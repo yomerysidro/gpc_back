@@ -4,14 +4,19 @@ namespace Tests\Feature;
 
 use App\Models\Role\Role;
 use App\Models\User\User;
+use App\Services\Auth\JwtService;
 use App\Services\CertificateDocumentGenerator;
 use App\Services\CertificateDocumentWorkflow;
 use App\Services\CertificateOrigins;
 use App\Services\SessionSpeakers;
+use GuzzleHttp\Client;
+use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\TestWith;
+use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 class CertificateOriginsTest extends TestCase
@@ -104,9 +109,316 @@ class CertificateOriginsTest extends TestCase
             'fecha_fin' => '2025-06-30', 'estado' => 'Finalizada']);
     }
 
+    public function test_practice_finalization_requires_authentication_and_edit_permission(): void
+    {
+        $this->postJson('/api/practices/1/finalizar')->assertUnauthorized();
+        $this->seedAccreditedOrigin('practica');
+        $this->postJson('/api/practices/1/finalizar')->assertForbidden();
+        $this->assertDatabaseHas('gestion.practica', ['id_practica' => 1, 'estado' => 'APROBADO_PRUEBA']);
+    }
+
+    #[TestWith(['future'])]
+    #[TestWith(['reversed'])]
+    #[TestWith(['supervision'])]
+    #[TestWith(['invalid_state'])]
+    public function test_practice_finalization_returns_409_without_writes_for_missing_evidence(string $condition): void
+    {
+        $this->seedAccreditedOrigin('practica');
+        $this->authorize(permissions: ['practicantes.ver', 'practicantes.editar']);
+        config(['certification.origins.practica.completion_state' => 'APROBADO_PRUEBA',
+            'certification.origins.practica.supervision_required' => true]);
+        DB::table('gestion.practica')->update(['estado' => 'activo']);
+        match ($condition) {
+            'future' => DB::table('gestion.practica')->update(['fecha_fin' => '2027-01-01']),
+            'reversed' => DB::table('gestion.practica')->update(['fecha_inicio' => '2025-07-01']),
+            'supervision' => DB::table('gestion.practica_supervisor')->update(['fecha_fin' => '2025-06-29']),
+            'invalid_state' => DB::table('gestion.practica')->update(['estado' => 'cancelado']),
+        };
+        $before = DB::table('gestion.practica')->first();
+
+        $response = $this->postJson('/api/practices/1/finalizar')->assertConflict()
+            ->assertJsonPath('data.practica_finalizada', false);
+
+        $this->assertNotEmpty($response->json('data.motivos_bloqueo'));
+        $this->assertSame((array) $before, (array) DB::table('gestion.practica')->first());
+        $this->assertDatabaseCount('certificado.certificado', 0);
+    }
+
+    public function test_practice_finalization_persists_only_state_and_query_recovers_eligibility(): void
+    {
+        $this->seedAccreditedOrigin('practica');
+        $this->authorize(permissions: ['practicantes.ver', 'practicantes.editar', 'emision.ver', 'emision.crear']);
+        config(['certification.origins.practica.completion_state' => 'APROBADO_PRUEBA']);
+        DB::table('gestion.practica')->update(['estado' => 'activo']);
+        $before = (array) DB::table('gestion.practica')->first();
+        $this->getJson('/api/practices/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.practicas.0.situacion_constancia', 'activa')
+            ->assertJsonPath('data.practicas.0.puede_preparar', false);
+        $this->postJson('/api/practices/1/finalizar', ['estado' => 'APROBADO_PRUEBA'])->assertUnprocessable();
+
+        $this->postJson('/api/practices/1/finalizar')->assertOk()->assertJsonPath('data.practica_finalizada', true)
+            ->assertJsonPath('data.practica.estado', 'APROBADO_PRUEBA');
+
+        $this->assertSame([...$before, 'estado' => 'APROBADO_PRUEBA'], (array) DB::table('gestion.practica')->first());
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->getJson('/api/practices/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.practicas.0.situacion_constancia', 'finalizada_elegible')
+            ->assertJsonPath('data.practicas.0.puede_preparar', true);
+        $this->postJson('/api/practices/1/finalizar')->assertOk()->assertJsonPath('data.reintento', true);
+        $this->postJson('/api/practices/999/finalizar')->assertNotFound();
+    }
+
+    #[TestWith(['partial', null])]
+    #[TestWith(['none', ''])]
+    #[TestWith(['complete', 'finalizado'])]
+    public function test_default_finalization_and_preparation_allow_optional_supervision(string $supervision, ?string $configuredState): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $this->authorize(permissions: ['practicantes.ver', 'practicantes.editar', 'emision.ver', 'emision.crear', 'emision.editar']);
+        config(['certification.origins.practica.reference' => null,
+            'certification.origins.practica.completion_state' => $configuredState,
+            'certification.origins.practica.eligible_states' => [],
+            'certification.origins.practica.supervisor_states' => [],
+            'certification.origins.practica.supervision_required' => false]);
+        DB::table('gestion.practica')->update(['estado' => 'activo']);
+        if ($supervision === 'none') {
+            DB::table('gestion.practica_supervisor')->delete();
+        } elseif ($supervision === 'partial') {
+            DB::table('gestion.practica_supervisor')->update(['fecha_inicio' => '2025-02-01', 'fecha_fin' => '2025-06-29']);
+        }
+        $supervisors = DB::table('gestion.practica_supervisor')->get()->map(fn (object $row): array => (array) $row)->all();
+        $before = (array) DB::table('gestion.practica')->first();
+        $this->postJson('/api/certificaciones/practica/1/preparar', ['accion' => 'revisar_documento'])->assertConflict();
+        $filesBeforeFinalization = Storage::disk('local')->allFiles();
+
+        $this->postJson('/api/practices/1/finalizar')->assertOk()->assertJsonPath('data.practica.estado', 'finalizado')
+            ->assertJsonPath('data.practica_finalizada', true)->assertJsonPath('data.finalizacion_registrada', true)
+            ->assertJsonPath('data.supervision_acreditada', false)->assertJsonPath('data.motivos_bloqueo', [])
+            ->assertJsonPath('data.puede_preparar', true)->assertJsonPath('data.puede_generar_pdf', true);
+
+        $this->assertSame([...$before, 'estado' => 'finalizado'], (array) DB::table('gestion.practica')->first());
+        $this->assertSame($supervisors, DB::table('gestion.practica_supervisor')->get()->map(fn (object $row): array => (array) $row)->all());
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->assertSame($filesBeforeFinalization, Storage::disk('local')->allFiles());
+        $this->getJson('/api/practices/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.practicas.0.finalizacion_registrada', true)->assertJsonPath('data.practicas.0.puede_preparar', true);
+        $this->getJson('/api/practices/1/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.finalizacion_registrada', true)->assertJsonPath('data.puede_generar_pdf', true);
+        $url = '/api/certificaciones/practica/1/preparar';
+        $this->getJson($url.'?accion=consultar_preparacion')->assertOk()->assertJsonPath('data.puede_preparar', true);
+        $review = $this->postJson($url, ['accion' => 'revisar_documento'])->assertOk()->json('data');
+        $prepared = $this->postJson($url, ['accion' => 'confirmar_preparacion', 'token_revision' => $review['token_revision'],
+            'confirmar' => true])->assertCreated()->assertJsonPath('data.estado_flujo', 'PREPARADO')->json('data');
+        $files = Storage::disk('local')->allFiles();
+        $this->postJson('/api/practices/1/finalizar')->assertOk()->assertJsonPath('data.reintento', true);
+        $this->getJson($url.'?accion=consultar_preparacion')->assertOk()->assertJsonPath('data.recuperado', true)
+            ->assertJsonPath('data.id_certificado_documento', $prepared['id_certificado_documento']);
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+        $this->assertSame($files, Storage::disk('local')->allFiles());
+    }
+
+    public function test_practice_finalization_rejects_an_area_outside_actor_scope_with_403(): void
+    {
+        $this->seedAccreditedOrigin('practica');
+        $this->authorize(false, ['practicantes.ver', 'practicantes.editar', 'emision.ver']);
+        DB::table('gestion.practica')->update(['id_area' => 2]);
+
+        $this->postJson('/api/practices/1/finalizar')->assertForbidden();
+        $this->getJson('/api/practices/evaluacion-certificacion')->assertOk()->assertJsonCount(0, 'data.practicas');
+    }
+
+    public function test_practice_light_recovery_requires_read_permission_and_reuses_the_exact_preparation(): void
+    {
+        $url = '/api/certificaciones/practica/1/preparar';
+        $this->getJson($url.'?accion=consultar_preparacion')->assertUnauthorized();
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $this->getJson($url.'?accion=consultar_preparacion')->assertOk()->assertJsonPath('data.persistido', false);
+        $review = $this->postJson($url, ['accion' => 'revisar_documento'])->assertOk()->json('data');
+        $prepared = $this->postJson($url, ['accion' => 'confirmar_preparacion', 'token_revision' => $review['token_revision'],
+            'confirmar' => true])->assertCreated()->json('data');
+        $files = Storage::disk('local')->allFiles();
+        $this->authorize(permissions: ['practicantes.ver', 'emision.ver']);
+
+        $this->getJson($url.'?accion=consultar_preparacion')->assertOk()
+            ->assertJsonPath('data.recuperado', true)->assertJsonPath('data.id_certificado_documento', $prepared['id_certificado_documento'])
+            ->assertJsonPath('data.estado_flujo', 'PREPARADO')->assertJsonPath('data.hash_pdf', $review['hash_pdf'])
+            ->assertJsonPath('data.texto_editable', false)->assertJsonPath('data.puede_enviar_gerencia', false)
+            ->assertJsonMissingPath('data.vista_previa_pdf');
+
+        $this->assertSame($files, Storage::disk('local')->allFiles());
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+        $this->getJson($url.'?accion=revisar_documento')->assertUnprocessable();
+        $this->authorize(permissions: ['emision.ver']);
+        $this->getJson($url.'?accion=consultar_preparacion')->assertForbidden();
+    }
+
+    public function test_practice_default_message_queries_are_light_and_keep_read_permissions(): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $expected = 'Por haber realizado sus prácticas en Área, del 2025-01-01 al 2025-06-30.';
+        foreach (['/api/practices/1/evaluacion-certificacion',
+            '/api/certificaciones/practica/1/preparar?accion=consultar_preparacion'] as $url) {
+            $this->getJson($url)->assertOk()->assertJsonPath('data.mensaje', $expected)
+                ->assertJsonPath('data.mensaje_predeterminado', $expected)->assertJsonPath('data.texto_editable', true)
+                ->assertJsonMissingPath('data.vista_previa_pdf')->assertJsonMissingPath('data.token_revision');
+        }
+        $this->getJson('/api/practices/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.practicas.0.mensaje', $expected);
+        $this->assertSame([], Storage::disk('local')->allFiles());
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->authorize(permissions: ['practicantes.ver', 'emision.ver']);
+        $this->getJson('/api/certificaciones/practica/1/preparar?accion=consultar_preparacion')->assertOk()
+            ->assertJsonPath('data.mensaje', $expected)->assertJsonPath('data.texto_editable', false);
+    }
+
+    #[TestWith(['default'])]
+    #[TestWith(['custom'])]
+    #[TestWith(['maximum'])]
+    public function test_practice_message_is_reviewed_persisted_and_recovered_without_duplicates(string $kind): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $url = '/api/certificaciones/practica/1/preparar';
+        $input = ['accion' => 'revisar_documento'];
+        if ($kind !== 'default') {
+            $input['mensaje'] = $kind === 'maximum' ? str_repeat('á', 1200) : "Por su dedicación & servicio institucional.\nGracias por su aporte.";
+        }
+        $review = $this->postJson($url, $input)->assertOk()->assertJsonPath('data.texto_editable', true)->json('data');
+        $expected = $input['mensaje'] ?? 'Por haber realizado sus prácticas en Área, del 2025-01-01 al 2025-06-30.';
+        $this->assertSame($expected, $review['mensaje']);
+        $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get('certificados/revisiones/'.hash('sha256', $review['token_revision']).'.manifest')), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame($expected, $manifest['message']);
+        $this->assertSame($expected, $manifest['context']['texto_practica']['mensaje']);
+        $this->assertSame(1, $manifest['context']['id_persona']);
+        $html = view('certificates.origins', ['context' => (object) $manifest['context'], 'customMessage' => $manifest['message'],
+            'certificate' => null, 'signers' => [], 'logoDataUri' => 'data:image/png;base64,',
+            'code' => $manifest['code'], 'qrDataUri' => 'data:image/svg+xml;base64,', 'administrative' => true])->render();
+        foreach ([e($expected), 'Ana', 'CERTIFICADO DE PRÁCTICAS PREPROFESIONALES', 'Otorgado a:', 'Morales, 13 de noviembre de 2026', $manifest['code']] as $text) {
+            $this->assertStringContainsString($text, $html);
+        }
+        $this->assertSame(1, substr_count($html, e($expected)));
+        $this->assertStringNotContainsString('Institución', $html);
+        $this->assertStringNotContainsString('Sistemas', $html);
+        $this->assertStringNotContainsString('Área:', $html);
+        $this->assertStringStartsWith('%PDF-', base64_decode($review['vista_previa_pdf']['contenido_base64'], true));
+        $this->postJson($url, [...$input, 'mensaje' => $expected])->assertOk()
+            ->assertJsonPath('data.token_revision', $review['token_revision'])->assertJsonPath('data.revision_reutilizada', true);
+        $confirm = [...$input, 'accion' => 'confirmar_preparacion', 'token_revision' => $review['token_revision'], 'confirmar' => true];
+        $prepared = $this->postJson($url, $confirm)->assertCreated()->assertJsonPath('data.mensaje', $expected)
+            ->assertJsonPath('data.texto_editable', false)->assertJsonPath('data.estado_flujo', 'PREPARADO')->json('data');
+        $this->postJson($url, $confirm)->assertOk()->assertJsonPath('data.creado', false);
+        $recovered = $this->getJson($url.'?accion=consultar_preparacion')->assertOk()
+            ->assertJsonPath('data.mensaje_aprobado', $expected)->assertJsonPath('data.mensaje', $expected)
+            ->assertJsonPath('data.texto_editable', false)->assertJsonPath('data.hash_pdf', $review['hash_pdf'])
+            ->assertJsonPath('data.id_certificado_documento', $prepared['id_certificado_documento'])
+            ->assertJsonMissingPath('data.vista_previa_pdf')->json('data');
+        $this->assertNotEmpty($recovered['url_documento']);
+        $document = DB::table('certificado.certificado_documento')->first();
+        $this->assertSame(base64_decode($review['vista_previa_pdf']['contenido_base64'], true), Storage::disk('local')->get($document->ruta_archivo));
+        $this->assertTrue(Storage::disk('local')->exists('certificados/preparados/'.$document->codigo_verificacion.'.manifest'));
+        $this->postJson($url, ['accion' => 'revisar_documento', 'mensaje' => 'Cambio después de guardar.'])->assertConflict();
+        if ($kind === 'custom') {
+            $base = '/api/certificados-documentos/'.$prepared['id_certificado_documento'];
+            $send = $this->postJson($base.'/revisar-envio')->assertOk()->json('data');
+            $this->postJson($base.'/enviar-gerencia', ['token_revision' => $send['token_revision'], 'confirmar' => true])->assertOk();
+            $plan = ['modalidad' => 'SECUENCIAL', 'firmantes' => [['id_persona_trabajador' => 2, 'orden_firma' => 1]]];
+            $revision = $this->postJson($base.'/firma/revision-pdf', $plan)->assertOk()->assertJsonPath('data.mensaje', $expected)->json('data');
+            $this->postJson($base.'/firma/asignar', $plan + ['confirmar' => true])->assertOk();
+            $this->postJson($base.'/firma/confirmar-pdf', ['token_revision' => $revision['token_revision'], 'confirmar' => true])->assertOk();
+            $this->getJson($url.'?accion=consultar_preparacion')->assertOk()->assertJsonPath('data.mensaje_aprobado', $expected)
+                ->assertJsonPath('data.estado_flujo', 'PENDIENTE_FIRMA')->assertJsonPath('data.texto_editable', false);
+        }
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseCount('certificado.certificado_documento', 1);
+    }
+
+    public function test_practice_message_change_invalidates_previous_review_and_confirmation_text(): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $url = '/api/certificaciones/practica/1/preparar';
+        $first = $this->postJson($url, ['accion' => 'revisar_documento', 'mensaje' => 'Primer mensaje.'])->assertOk()->json('data');
+        $second = $this->postJson($url, ['accion' => 'revisar_documento', 'mensaje' => 'Segundo mensaje.'])->assertOk()->json('data');
+        $this->postJson($url, ['accion' => 'confirmar_preparacion', 'token_revision' => $first['token_revision'],
+            'confirmar' => true, 'mensaje' => 'Primer mensaje.'])->assertConflict();
+        $confirm = ['accion' => 'confirmar_preparacion', 'token_revision' => $second['token_revision'], 'confirmar' => true];
+        $this->postJson($url, $confirm)->assertUnprocessable();
+        $this->postJson($url, [...$confirm, 'mensaje' => 'Texto no revisado.'])->assertConflict();
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->postJson($url, [...$confirm, 'mensaje' => 'Segundo mensaje.'])->assertCreated()
+            ->assertJsonPath('data.mensaje', 'Segundo mensaje.');
+    }
+
+    public function test_practice_recovery_reads_original_message_without_an_indexed_manifest_or_regeneration(): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $url = '/api/certificaciones/practica/1/preparar';
+        $review = $this->postJson($url, ['accion' => 'revisar_documento'])->assertOk()->json('data');
+        $prepared = $this->postJson($url, ['accion' => 'confirmar_preparacion', 'token_revision' => $review['token_revision'],
+            'confirmar' => true])->assertCreated()->json('data');
+        $disk = Storage::disk('local');
+        $disk->delete('certificados/preparados/'.$prepared['codigo_verificacion'].'.manifest');
+        DB::table('gestion.area')->where('id_area', 1)->update(['nombre' => 'Área actualizada']);
+        $files = collect($disk->allFiles())->mapWithKeys(fn (string $path): array => [$path => hash_file('sha256', $disk->path($path))])->all();
+
+        $this->getJson($url.'?accion=consultar_preparacion')->assertOk()->assertJsonPath('data.mensaje', $review['mensaje'])
+            ->assertJsonPath('data.mensaje_aprobado', $review['mensaje'])->assertJsonPath('data.texto_editable', false)
+            ->assertJsonPath('data.hash_pdf', $review['hash_pdf']);
+
+        $this->assertSame($files, collect($disk->allFiles())->mapWithKeys(fn (string $path): array => [$path => hash_file('sha256', $disk->path($path))])->all());
+        $this->assertDatabaseCount('certificado.certificado', 1);
+    }
+
+    #[TestWith([''])]
+    #[TestWith(['   '])]
+    #[TestWith([null])]
+    #[TestWith([123])]
+    #[TestWith(['<script>alert(1)</script>'])]
+    #[TestWith(["Texto\x00oculto"])]
+    #[TestWith(["Texto\u{202E}oculto"])]
+    public function test_practice_message_rejects_invalid_content_with_422(mixed $message): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $url = '/api/certificaciones/practica/1/preparar';
+        $this->postJson($url, ['accion' => 'revisar_documento', 'mensaje' => $message])->assertUnprocessable();
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->assertSame([], Storage::disk('local')->allFiles());
+    }
+
+    public function test_practice_message_rejects_overlong_unknown_and_consultation_fields(): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $url = '/api/certificaciones/practica/1/preparar';
+        $this->postJson($url, ['accion' => 'revisar_documento', 'mensaje' => str_repeat('á', 1201)])->assertUnprocessable();
+        $this->postJson($url, ['accion' => 'revisar_documento', 'id_persona' => 99])->assertUnprocessable();
+        $this->postJson($url, ['accion' => 'revisar_documento', 'motivo' => 'No admitido'])->assertUnprocessable();
+        $this->getJson($url.'?accion=consultar_preparacion&mensaje=Otro')->assertUnprocessable();
+        $this->assertSame([], Storage::disk('local')->allFiles());
+    }
+
+    public function test_an_active_practice_remains_blocked_even_if_misconfigured_as_an_approved_state(): void
+    {
+        $this->seedAccreditedOrigin('practica');
+        DB::table('gestion.practica')->update(['estado' => 'activo']);
+        config(['certification.origins.practica.eligible_states' => ['activo']]);
+
+        $this->getJson('/api/practices/1/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.puede_preparar', false)->assertJsonPath('data.situacion_constancia', 'activa');
+        $this->postJson('/api/certificaciones/practica/1/preparar', ['accion' => 'revisar_documento'])->assertConflict();
+    }
+
     #[TestWith(['/api/certificaciones/catalogos-origenes'])]
     #[TestWith(['/api/activity-session/1/ponentes-certificacion'])]
     #[TestWith(['/api/practices/1/evaluacion-certificacion'])]
+    #[TestWith(['/api/practices/evaluacion-certificacion'])]
     #[TestWith(['/api/reconocimientos/1/evaluacion-certificacion'])]
     public function test_origin_queries_require_authentication(string $url): void
     {
@@ -116,6 +428,7 @@ class CertificateOriginsTest extends TestCase
     #[TestWith(['/api/certificaciones/catalogos-origenes'])]
     #[TestWith(['/api/activity-session/1/ponentes-certificacion'])]
     #[TestWith(['/api/practices/1/evaluacion-certificacion'])]
+    #[TestWith(['/api/practices/evaluacion-certificacion'])]
     #[TestWith(['/api/reconocimientos/1/evaluacion-certificacion'])]
     public function test_origin_queries_require_existing_module_permissions(string $url): void
     {
@@ -214,6 +527,323 @@ class CertificateOriginsTest extends TestCase
         $this->getJson($url)->assertForbidden();
     }
 
+    private function enableAcademicRecognition(): void
+    {
+        $this->app->instance('env', 'local');
+        config(['certification.origins.reconocimiento.reference' => null,
+            'certification.origins.reconocimiento.eligible_states' => [],
+            'certification.origins.reconocimiento.academic_enabled' => true,
+            'certification.origins.reconocimiento.academic_ids' => [1],
+            'certification.origins.reconocimiento.academic_states' => ['APROBADO_PRUEBA']]);
+    }
+
+    public function test_individual_28_lifecycle_over_real_http_with_jwt_cookie_and_isolated_storage(): void
+    {
+        if (getenv('INDIVIDUAL_RECOGNITIONS_HTTP_ISOLATED') !== '1') {
+            $this->markTestSkipped('Requiere servidor TCP local explícito; usa únicamente SQLite y archivos aislados.');
+        }
+        $this->seedAccreditedOrigin('reconocimiento');
+        DB::table('certificado.reconocimiento')->where('id_reconocimiento', 1)->update([
+            'id_reconocimiento' => 28, 'titulo' => 'DESTACADO', 'motivo' => 'E', 'estado' => 'PREPARADO']);
+        DB::statement("ATTACH DATABASE ':memory:' AS acceso");
+        foreach ([
+            'acceso.usuario' => 'id_usuario INTEGER PRIMARY KEY, id_persona INTEGER, correo TEXT, estado BOOLEAN, bloqueado_hasta TEXT',
+            'acceso.rol' => 'id_rol INTEGER PRIMARY KEY, nombre TEXT, estado BOOLEAN',
+            'acceso.usuario_rol' => 'id_usuario_rol INTEGER PRIMARY KEY, id_usuario INTEGER, id_rol INTEGER',
+            'acceso.modulo' => 'id_modulo INTEGER PRIMARY KEY, nombre TEXT, url TEXT, estado BOOLEAN',
+            'acceso.permiso' => 'id_permiso INTEGER PRIMARY KEY, id_modulo INTEGER, clave TEXT, estado BOOLEAN',
+            'acceso.rol_modulo' => 'id_rol INTEGER, id_modulo INTEGER',
+            'acceso.rol_modulo_permiso' => 'id_rol INTEGER, id_modulo INTEGER, id_permiso INTEGER',
+        ] as $table => $columns) {
+            DB::statement("CREATE TABLE {$table} ({$columns})");
+        }
+        DB::table('acceso.usuario')->insert([
+            ['id_usuario' => 1, 'id_persona' => 1, 'correo' => 'http-allowed@example.test', 'estado' => true],
+            ['id_usuario' => 2, 'id_persona' => 2, 'correo' => 'http-denied@example.test', 'estado' => true],
+        ]);
+        DB::table('acceso.rol')->insert([
+            ['id_rol' => 2, 'nombre' => 'Operador', 'estado' => true], ['id_rol' => 3, 'nombre' => 'Sin permisos', 'estado' => true],
+        ]);
+        DB::table('acceso.usuario_rol')->insert([
+            ['id_usuario_rol' => 1, 'id_usuario' => 1, 'id_rol' => 2], ['id_usuario_rol' => 2, 'id_usuario' => 2, 'id_rol' => 3],
+        ]);
+        DB::table('acceso.modulo')->insert(['id_modulo' => 1, 'nombre' => 'Emisión', 'url' => '/emision', 'estado' => true]);
+        DB::table('acceso.rol_modulo')->insert(['id_modulo' => 1, 'id_rol' => 2]);
+        foreach (['emision.ver', 'emision.crear', 'reconocimientos.ver'] as $index => $permission) {
+            DB::table('acceso.permiso')->insert(['id_permiso' => $index + 1, 'id_modulo' => 1, 'clave' => $permission, 'estado' => true]);
+            DB::table('acceso.rol_modulo_permiso')->insert(['id_permiso' => $index + 1, 'id_modulo' => 1, 'id_rol' => 2]);
+        }
+        $directory = storage_path('framework/testing/recognition-http-'.bin2hex(random_bytes(6)));
+        File::ensureDirectoryExists($directory.'/private');
+        $schemas = [];
+        foreach (['main', 'gestion', 'certificado', 'acceso'] as $schema) {
+            $path = str_replace('\\', '/', $directory.'/'.$schema.'.sqlite');
+            DB::statement('VACUUM '.$schema.' INTO ?', [$path]);
+            if ($schema !== 'main') {
+                $schemas[$schema] = $path;
+            }
+        }
+        $socket = stream_socket_server('tcp://127.0.0.1:0');
+        $this->assertIsResource($socket);
+        $address = stream_socket_get_name($socket, false);
+        fclose($socket);
+        $base = 'http://'.$address;
+        $testConfig = ['database.default' => 'sqlite', 'database.connections.sqlite.database' => $directory.'/main.sqlite',
+            'database.connections.sqlite.url' => null, 'filesystems.disks.local.root' => $directory.'/private',
+            'cache.default' => 'array', 'session.driver' => 'array',
+            'app.url' => $base, 'app.key' => 'base64:'.base64_encode(str_repeat('a', 32)),
+            'jwt.secret' => str_repeat('isolated-http-recognition-', 3),
+            'certification.origins.reconocimiento.academic_enabled' => true,
+            'certification.origins.reconocimiento.academic_ids' => [28],
+            'certification.origins.reconocimiento.academic_states' => ['PREPARADO']];
+        file_put_contents($directory.'/fixture.json', json_encode(['config' => $testConfig, 'schemas' => $schemas], JSON_THROW_ON_ERROR));
+        config(['jwt.secret' => $testConfig['jwt.secret']]);
+        $token = app(JwtService::class)->createToken(User::findOrFail(1));
+        $deniedToken = app(JwtService::class)->createToken(User::findOrFail(2));
+        $server = new Process([PHP_BINARY, '-d', 'extension=pdo_sqlite', '-S', $address,
+            base_path('tests/Fixtures/recognition-http-router.php')], base_path(), [
+                'RECOGNITION_HTTP_FIXTURE' => $directory.'/fixture.json', 'APP_ENV' => 'local',
+            ]);
+        $server->start();
+        try {
+            $ready = false;
+            for ($attempt = 0; $attempt < 50; $attempt++) {
+                $probe = @fsockopen('127.0.0.1', (int) parse_url($base, PHP_URL_PORT), timeout: 0.1);
+                if (is_resource($probe)) {
+                    fclose($probe);
+                    $ready = true;
+                    break;
+                }
+                usleep(100000);
+            }
+            $this->assertTrue($ready, 'El servidor HTTP aislado debe iniciar: '.$server->getErrorOutput());
+            $client = new Client(['base_uri' => $base, 'timeout' => 60, 'http_errors' => false,
+                'allow_redirects' => false, 'headers' => ['Accept' => 'application/json']]);
+            $send = static function (string $method, string $path, array $payload, ?string $cookie) use ($client): array {
+                $options = $cookie === null ? [] : ['cookies' => CookieJar::fromArray([JwtService::COOKIE => $cookie], '127.0.0.1')];
+                if ($method === 'POST') {
+                    $options['json'] = $payload;
+                }
+                $response = $client->request($method, $path, $options);
+                fwrite(STDOUT, 'HTTP '.$method.' '.$path.': '.$response->getStatusCode().' [SQLite aislado, JWT real]'.PHP_EOL);
+
+                return [$response->getStatusCode(), json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR)];
+            };
+            $evaluate = '/api/reconocimientos/28/evaluacion-certificacion';
+            $url = '/api/certificaciones/reconocimiento/28/preparar';
+            $this->assertSame(401, $send('GET', $evaluate, [], null)[0]);
+            $this->assertSame(403, $send('GET', $evaluate, [], $deniedToken)[0]);
+            [$status, $evaluated] = $send('GET', $evaluate, [], $token);
+            $this->assertSame(200, $status, json_encode($evaluated));
+            $this->assertTrue($evaluated['data']['texto_editable']);
+            [$status, $consult] = $send('GET', $url.'?accion=consultar_preparacion', [], $token);
+            $this->assertSame(200, $status);
+            $this->assertSame('DESTACADO. E', $consult['data']['mensaje_predeterminado']);
+            $this->assertTrue($consult['data']['texto_editable']);
+            $message = 'Mensaje municipal aprobado por HTTP.';
+            [$status, $review] = $send('POST', $url, ['accion' => 'revisar_documento', 'mensaje' => $message], $token);
+            $this->assertSame(200, $status, json_encode(array_diff_key($review, ['data' => true])));
+            $this->assertSame($message, $review['data']['mensaje']);
+            $pdf = base64_decode($review['data']['vista_previa_pdf']['contenido_base64'], true);
+            preg_match_all('/stream\r?\n(.*?)\r?\nendstream/s', $pdf, $streams);
+            $decoded = implode('', array_map(fn (string $stream): string => @gzuncompress($stream) ?: $stream, $streams[1]));
+            $encoded = mb_convert_encoding($message, 'UTF-16BE', 'UTF-8');
+            $this->assertTrue(str_contains($decoded, $encoded) || str_contains(strtolower($decoded), bin2hex($encoded)));
+            $confirm = ['accion' => 'confirmar_preparacion', 'mensaje' => $message,
+                'token_revision' => $review['data']['token_revision'], 'confirmar' => true];
+            $this->assertSame(409, $send('POST', $url, array_replace($confirm, ['mensaje' => 'Mensaje distinto.']), $token)[0]);
+            [$status, $prepared] = $send('POST', $url, $confirm, $token);
+            $this->assertSame(201, $status, json_encode(array_diff_key($prepared, ['data' => true])));
+            $this->assertSame($message, $prepared['data']['mensaje']);
+            $this->assertSame(200, $send('POST', $url, $confirm, $token)[0]);
+            $documentId = $prepared['data']['id_certificado_documento'];
+            [$status, $detail] = $send('GET', '/api/certificados-documentos/detail/'.$documentId.'?flujo=firmas', [], $token);
+            $this->assertSame(200, $status);
+            $this->assertSame('reconocimiento', $detail['data']['origen']);
+            $this->assertSame($evaluated['data']['id_persona'], $detail['data']['beneficiario']['id_persona']);
+            $this->assertSame($evaluated['data']['id_tipo_certificado'], $detail['data']['id_tipo_certificado']);
+            $this->assertSame('PREPARADO', $detail['data']['estado_certificado']);
+            $this->assertSame($review['data']['hash_pdf'], $detail['data']['hash_pdf']);
+            $this->assertSame($message, $detail['data']['mensaje_aprobado']);
+            $download = $client->get('/api/certificados-documentos/'.$documentId.'/archivo?flujo=firmas', [
+                'cookies' => CookieJar::fromArray([JwtService::COOKIE => $token], '127.0.0.1'),
+            ]);
+            $this->assertSame(200, $download->getStatusCode());
+            $this->assertSame($pdf, (string) $download->getBody());
+            fwrite(STDOUT, 'HTTP GET PDF individual persistido: 200; bytes y SHA-256 idénticos a la revisión [aislado].'.PHP_EOL);
+            [$status, $recovered] = $send('GET', $url.'?accion=consultar_preparacion', [], $token);
+            $this->assertSame(200, $status);
+            $this->assertSame($message, $recovered['data']['mensaje_aprobado']);
+            $this->assertTrue($recovered['data']['recuperado']);
+            $this->assertFalse($recovered['data']['texto_editable']);
+            $this->assertSame(409, $send('POST', $url, ['accion' => 'revisar_documento', 'mensaje' => 'Otro mensaje.'], $token)[0]);
+            $saved = new \PDO('sqlite:'.$schemas['certificado']);
+            $this->assertSame(1, (int) $saved->query('SELECT count(*) FROM certificado')->fetchColumn());
+            $document = $saved->query('SELECT * FROM certificado_documento')->fetch(\PDO::FETCH_OBJ);
+            $this->assertSame($pdf, file_get_contents($directory.'/private/'.$document->ruta_archivo));
+            $this->assertSame(hash('sha256', $pdf), $document->hash_certificado);
+        } finally {
+            $server->stop(0);
+        }
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_individual_message_without_motive_is_reviewed_confirmed_and_kept_in_the_pdf(bool $custom): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('reconocimiento');
+        $this->enableAcademicRecognition();
+        $url = '/api/certificaciones/reconocimiento/1/preparar';
+        $this->getJson('/api/reconocimientos/1/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.texto_editable', true);
+        $text = $custom ? ['mensaje' => 'Mensaje municipal aprobado.'] : [];
+        $message = $text['mensaje'] ?? 'Reconocimiento municipal. Servicio acreditado';
+        $review = $this->postJson($url, ['accion' => 'revisar_documento'] + $text)->assertOk()
+            ->assertJsonPath('data.mensaje', $message)->json('data');
+        $pdf = base64_decode($review['vista_previa_pdf']['contenido_base64'], true);
+        preg_match_all('/stream\r?\n(.*?)\r?\nendstream/s', $pdf, $streams);
+        $decoded = implode('', array_map(fn (string $stream): string => @gzuncompress($stream) ?: $stream, $streams[1]));
+        $encoded = mb_convert_encoding($message, 'UTF-16BE', 'UTF-8');
+        $this->assertTrue(str_contains($decoded, $encoded) || str_contains(strtolower($decoded), bin2hex($encoded)), 'El PDF debe contener el texto exacto aprobado.');
+        $confirm = ['accion' => 'confirmar_preparacion', 'token_revision' => $review['token_revision'], 'confirmar' => true] + $text;
+        if ($custom) {
+            $this->postJson($url, array_replace($confirm, ['mensaje' => 'Mensaje distinto.']))->assertConflict();
+        }
+        $prepared = $this->postJson($url, $confirm)->assertCreated()->assertJsonPath('data.mensaje', $message)->json('data');
+        $this->postJson($url, $confirm)->assertOk();
+        $this->getJson($url.'?accion=consultar_preparacion')->assertOk()
+            ->assertJsonPath('data.mensaje_aprobado', $message)->assertJsonPath('data.texto_editable', false);
+        $this->getJson('/api/reconocimientos/1/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.texto_editable', false);
+        $document = DB::table('certificado.certificado_documento')->where('id_certificado_documento', $prepared['id_certificado_documento'])->first();
+        $this->assertSame($pdf, Storage::disk('local')->get($document->ruta_archivo));
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->postJson($url, ['accion' => 'revisar_documento', 'mensaje' => 'Otro texto.'])->assertConflict();
+        $this->assertDatabaseHas('certificado.reconocimiento', ['id_reconocimiento' => 1, 'motivo' => 'Servicio acreditado']);
+    }
+
+    #[TestWith([''])]
+    #[TestWith(['<b>Texto</b>'])]
+    #[TestWith(["Texto\u{202E}"])]
+    public function test_individual_message_rejects_invalid_text_with_422(string $message): void
+    {
+        $this->seedAccreditedOrigin('reconocimiento');
+        $this->enableAcademicRecognition();
+        $this->postJson('/api/certificaciones/reconocimiento/1/preparar', ['accion' => 'revisar_documento', 'mensaje' => $message])->assertUnprocessable();
+        $this->assertDatabaseCount('certificado.certificado', 0);
+    }
+
+    public function test_individual_message_rejects_more_than_1200_characters(): void
+    {
+        $this->seedAccreditedOrigin('reconocimiento');
+        $this->enableAcademicRecognition();
+        $this->postJson('/api/certificaciones/reconocimiento/1/preparar', ['accion' => 'revisar_documento', 'mensaje' => str_repeat('á', 1201)])->assertUnprocessable();
+        $this->assertDatabaseCount('certificado.certificado', 0);
+    }
+
+    public function test_individual_message_accepts_1200_characters_without_motive(): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('reconocimiento');
+        $this->enableAcademicRecognition();
+        $message = str_repeat('á', 1200);
+        $review = $this->postJson('/api/certificaciones/reconocimiento/1/preparar', ['accion' => 'revisar_documento', 'mensaje' => $message])
+            ->assertOk()->assertJsonPath('data.mensaje', $message)->json('data');
+        $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get('certificados/revisiones/'.hash('sha256', $review['token_revision']).'.manifest')), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame($message, $manifest['message']);
+        $this->assertDatabaseCount('certificado.certificado', 0);
+    }
+
+    public function test_academic_recognition_preserves_authentication_create_permissions_and_area_scope(): void
+    {
+        $url = '/api/certificaciones/reconocimiento/1/preparar';
+        $this->postJson($url, ['accion' => 'revisar_documento'])->assertUnauthorized();
+        $this->seedAccreditedOrigin('reconocimiento');
+        $this->enableAcademicRecognition();
+        $this->authorize(false, ['emision.ver', 'reconocimientos.ver']);
+        $this->getJson('/api/reconocimientos/1/evaluacion-certificacion')->assertOk()->assertJsonPath('data.puede_preparar', false);
+        $this->postJson($url, ['accion' => 'revisar_documento'])->assertForbidden();
+        $this->authorize(false, ['emision.ver', 'emision.crear', 'reconocimientos.ver']);
+        DB::table('gestion.area')->insert(['id_area' => 2, 'nombre' => 'Otra área']);
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 2)->update(['id_area' => 2]);
+        DB::table('certificado.reconocimiento')->update(['id_persona_trabajador' => 2]);
+        $this->getJson('/api/reconocimientos/1/evaluacion-certificacion')->assertForbidden();
+        $this->postJson($url, ['accion' => 'revisar_documento'])->assertForbidden();
+        $this->assertDatabaseCount('certificado.certificado', 0);
+    }
+
+    #[TestWith(['disabled'])]
+    #[TestWith(['production'])]
+    #[TestWith(['unselected'])]
+    #[TestWith(['unknown_state'])]
+    #[TestWith(['annulled'])]
+    public function test_academic_recognition_remains_blocked_without_explicit_technical_eligibility(string $case): void
+    {
+        $this->seedAccreditedOrigin('reconocimiento');
+        $this->enableAcademicRecognition();
+        if ($case === 'disabled') {
+            config(['certification.origins.reconocimiento.academic_enabled' => false]);
+        } elseif ($case === 'production') {
+            $this->app->instance('env', 'production');
+        } elseif ($case === 'unselected') {
+            config(['certification.origins.reconocimiento.academic_ids' => [28]]);
+        } else {
+            DB::table('certificado.reconocimiento')->update(['estado' => $case === 'annulled' ? 'ANULADO' : 'cualquier texto']);
+            if ($case === 'annulled') {
+                config(['certification.origins.reconocimiento.academic_states' => ['ANULADO']]);
+            }
+        }
+        $this->getJson('/api/reconocimientos/1/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.puede_preparar', false);
+        $this->postJson('/api/certificaciones/reconocimiento/1/preparar', ['accion' => 'revisar_documento'])->assertConflict();
+        $this->assertDatabaseCount('certificado.certificado', 0);
+    }
+
+    public function test_academic_recognition_without_beneficiary_is_blocked_with_specific_reason(): void
+    {
+        $this->seedAccreditedOrigin('reconocimiento');
+        $this->enableAcademicRecognition();
+        DB::table('certificado.reconocimiento')->update(['id_persona_trabajador' => null]);
+        $this->getJson('/api/reconocimientos/1/evaluacion-certificacion')->assertConflict()
+            ->assertJsonPath('message', 'El reconocimiento no tiene un beneficiario municipal verificable con persona y área.');
+        self::assertFalse(app(CertificateOrigins::class)->recognition(1)['puede_preparar']);
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_academic_individual_recognition_reuses_document_lifecycle_without_approving_origin(bool $custom): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('reconocimiento');
+        $this->enableAcademicRecognition();
+        $url = '/api/certificaciones/reconocimiento/1/preparar';
+        $this->getJson('/api/reconocimientos/1/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.puede_preparar', true)->assertJsonPath('data.modalidad_preparacion', 'academica')
+            ->assertJsonPath('data.aprobacion_institucional_acreditada', false);
+        $this->getJson($url.'?accion=consultar_preparacion')->assertOk()->assertJsonPath('data.recuperado', false);
+        $text = $custom ? ['mensaje' => 'Por su aporte al servicio municipal.', 'motivo' => 'Servicio municipal acreditado'] : [];
+        $review = $this->postJson($url, ['accion' => 'revisar_documento'] + $text)->assertOk()->json('data');
+        self::assertStringStartsWith('%PDF-', base64_decode($review['vista_previa_pdf']['contenido_base64'], true));
+        self::assertSame($custom ? $text['mensaje'] : 'Reconocimiento municipal. Servicio acreditado', $review['mensaje']);
+        $confirm = ['accion' => 'confirmar_preparacion', 'token_revision' => $review['token_revision'], 'confirmar' => true] + $text;
+        $prepared = $this->postJson($url, $confirm)->assertCreated()->json('data');
+        $this->postJson($url, $confirm)->assertOk();
+        $this->getJson($url.'?accion=consultar_preparacion')->assertOk()->assertJsonPath('data.recuperado', true)
+            ->assertJsonPath('data.texto_editable', false)->assertJsonPath('data.mensaje', $review['mensaje']);
+        $this->assertDatabaseCount('certificado.certificado', 1);
+        $this->assertDatabaseHas('certificado.certificado', ['id_reconocimiento' => 1, 'estado' => 'PREPARADO', 'fecha_emision' => null]);
+        $base = '/api/certificados-documentos/'.$prepared['id_certificado_documento'];
+        $send = $this->postJson($base.'/revisar-envio')->assertOk()->json('data');
+        $this->postJson($base.'/enviar-gerencia', ['token_revision' => $send['token_revision'], 'confirmar' => true])->assertOk();
+        $plan = ['modalidad' => 'SECUENCIAL', 'firmantes' => [['id_persona_trabajador' => 2, 'orden_firma' => 1]]];
+        $revision = $this->postJson($base.'/firma/revision-pdf', $plan)->assertOk()->json('data');
+        $this->postJson($base.'/firma/asignar', $plan + ['confirmar' => true])->assertOk();
+        $this->postJson($base.'/firma/confirmar-pdf', ['token_revision' => $revision['token_revision'], 'confirmar' => true])->assertOk();
+        $this->getJson($base.'/firma/progreso')->assertOk()->assertJsonPath('data.disponible_rrhh', true);
+        $this->assertDatabaseHas('certificado.reconocimiento', ['id_reconocimiento' => 1, 'estado' => 'APROBADO_PRUEBA', 'motivo' => 'Servicio acreditado']);
+    }
+
     private function seedAccreditedOrigin(string $origin): void
     {
         $this->travelTo('2026-11-13');
@@ -234,6 +864,7 @@ class CertificateOriginsTest extends TestCase
             'id_persona_trabajador' => 2, 'fecha_inicio' => '2025-01-01', 'fecha_fin' => '2025-06-30', 'estado' => 'SUPERVISION_PRUEBA']);
         config(['certification.origins.'.$origin.'.reference' => 'Política sintética exclusiva de esta prueba',
             'certification.origins.'.$origin.'.eligible_states' => ['APROBADO_PRUEBA'],
+            'certification.origins.practica.completion_state' => 'APROBADO_PRUEBA',
             'certification.origins.practica.supervisor_states' => ['SUPERVISION_PRUEBA']]);
         $this->authorize(permissions: ['emision.ver', 'emision.crear', 'emision.editar', 'practicantes.ver', 'reconocimientos.ver']);
     }
@@ -242,7 +873,6 @@ class CertificateOriginsTest extends TestCase
     #[TestWith(['missing_start'])]
     #[TestWith(['missing_end'])]
     #[TestWith(['reversed_period'])]
-    #[TestWith(['missing_policy'])]
     #[TestWith(['active_state'])]
     #[TestWith(['missing_supervisor'])]
     #[TestWith(['supervisor_starts_late'])]
@@ -258,12 +888,12 @@ class CertificateOriginsTest extends TestCase
     {
         Storage::fake('local');
         $this->seedAccreditedOrigin('practica');
+        config(['certification.origins.practica.supervision_required' => true]);
         match ($condition) {
             'future_period' => DB::table('gestion.practica')->update(['fecha_fin' => '2027-01-01']),
             'missing_start' => DB::table('gestion.practica')->update(['fecha_inicio' => null]),
             'missing_end' => DB::table('gestion.practica')->update(['fecha_fin' => null]),
             'reversed_period' => DB::table('gestion.practica')->update(['fecha_inicio' => '2025-07-01']),
-            'missing_policy' => config(['certification.origins.practica.reference' => null]),
             'active_state' => DB::table('gestion.practica')->update(['estado' => 'activo']),
             'missing_supervisor' => DB::table('gestion.practica_supervisor')->delete(),
             'supervisor_starts_late' => DB::table('gestion.practica_supervisor')->update(['fecha_inicio' => '2025-02-01']),
@@ -290,6 +920,7 @@ class CertificateOriginsTest extends TestCase
     {
         Storage::fake('local');
         $this->seedAccreditedOrigin('practica');
+        config(['certification.origins.practica.supervision_required' => true]);
         $review = $this->postJson('/api/certificaciones/practica/1/preparar', ['accion' => 'revisar_documento'])->assertOk()->json('data');
         DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 2)->update(['fecha_fin' => '2025-06-29']);
 
@@ -314,10 +945,53 @@ class CertificateOriginsTest extends TestCase
             'signers' => [], 'certificate' => null, 'code' => str_repeat('a', 30), 'qrDataUri' => 'data:image/svg+xml;base64,',
             'logoDataUri' => 'data:image/png;base64,', 'administrative' => true])->render();
 
-        foreach (['CONSTANCIA DE PRÁCTICAS', 'Ana', 'Institución', 'Sistemas', 'Área', '2025-01-01', '2025-06-30',
+        foreach (['CERTIFICADO DE PRÁCTICAS PREPROFESIONALES', 'Ana', 'Área', '2025-01-01', '2025-06-30',
             str_repeat('a', 30), 'QR de verificación documental'] as $text) {
             self::assertStringContainsString($text, $html);
         }
+    }
+
+    public function test_practice_institutional_presentation_has_one_approved_message_and_an_isolated_pdf(): void
+    {
+        Storage::fake('local');
+        $this->seedAccreditedOrigin('practica');
+        $this->travelTo('2026-11-16 10:00:00');
+        DB::table('gestion.persona')->where('id_persona', 1)->update([
+            'nombres' => 'Ana María', 'apellido_paterno' => 'Pérez', 'apellido_materno' => 'Ramírez',
+        ]);
+        $message = 'Por haber realizado satisfactoriamente sus prácticas preprofesionales en la Gerencia de Desarrollo Social de la Municipalidad Distrital de Morales, fortaleciendo sus conocimientos y competencias profesionales, demostrando compromiso, responsabilidad y dedicación durante el periodo de prácticas.';
+        $review = $this->postJson('/api/certificaciones/practica/1/preparar', ['accion' => 'revisar_documento', 'mensaje' => $message])
+            ->assertOk()->assertJsonPath('data.mensaje', $message)->json('data');
+        $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get('certificados/revisiones/'.hash('sha256', $review['token_revision']).'.manifest')), true, 512, JSON_THROW_ON_ERROR);
+        $html = view('certificates.origins', ['context' => (object) $manifest['context'], 'customMessage' => $message,
+            'certificate' => null, 'signers' => [], 'logoDataUri' => 'data:image/png;base64,'.base64_encode(file_get_contents(resource_path('images/escudo-morales.png'))),
+            'code' => $manifest['code'], 'qrDataUri' => 'data:image/svg+xml;base64,', 'administrative' => true])->render();
+        $this->assertSame(1, substr_count($html, e($message)));
+        $this->assertStringContainsString('Ana María Pérez Ramírez', $html);
+        $this->assertSame(1, substr_count($html, 'Morales, 16 de noviembre de 2026'));
+        foreach (['Institución', 'Sistemas', 'Área:', '01/01/2025', '30/06/2025', 'horas de prácticas'] as $text) {
+            $this->assertStringNotContainsString($text, $html);
+        }
+        $pdf = base64_decode($review['vista_previa_pdf']['contenido_base64'], true);
+        $this->assertSame($review['hash_pdf'], hash('sha256', $pdf));
+        $this->assertStringStartsWith('%PDF-', $pdf);
+        file_put_contents(storage_path('framework/testing/practice-presentation.pdf'), $pdf);
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->assertDatabaseCount('certificado.certificado_documento', 0);
+    }
+
+    public function test_practice_institutional_date_uses_the_supplied_emission_date_without_duplicate_metadata(): void
+    {
+        $this->seedAccreditedOrigin('practica');
+        $this->travelTo('2026-11-16');
+        $context = app(CertificateOrigins::class)->context('practica', 1);
+        $html = view('certificates.origins', ['context' => $context, 'customMessage' => 'Mensaje aprobado sin modificaciones.',
+            'certificate' => (object) ['fecha_emision' => '2026-11-12'], 'signers' => [],
+            'logoDataUri' => 'data:image/png;base64,', 'code' => null, 'qrDataUri' => null, 'administrative' => true])->render();
+
+        $this->assertSame(1, substr_count($html, 'Mensaje aprobado sin modificaciones.'));
+        $this->assertSame(1, substr_count($html, 'Morales, 12 de noviembre de 2026'));
+        $this->assertStringNotContainsString('Morales, 16 de noviembre de 2026', $html);
     }
 
     #[TestWith(['missing'])]
@@ -343,6 +1017,7 @@ class CertificateOriginsTest extends TestCase
         $this->getJson('/api/practices/1/evaluacion-certificacion')->assertOk()
             ->assertJsonPath('data.puede_preparar', false)
             ->assertJsonPath('data.certificados_existentes.0.id_certificado_documento', null);
+        $this->getJson('/api/certificaciones/practica/1/preparar?accion=consultar_preparacion')->assertConflict();
         if ($condition === 'wrong_beneficiary') {
             $this->getJson('/api/certificados-documentos/detail/1?flujo=firmas')->assertNotFound();
         }
@@ -579,6 +1254,100 @@ class CertificateOriginsTest extends TestCase
             'input' => ['accion' => 'revisar_documento', 'modalidad_reconocimiento' => 'sesion', 'id_sesion' => 1,
                 'mensaje' => "Por compartir innovación & servicio.\nGracias por su contribución.",
                 'motivo' => 'Participación como ponente y aporte técnico.']];
+    }
+
+    #[TestWith(['actividad'])]
+    #[TestWith(['sesion'])]
+    public function test_original_recognition_summary_preserves_document_state_and_allows_authorized_download(string $modality): void
+    {
+        if ($modality === 'sesion') {
+            ['url' => $url, 'input' => $input] = $this->editableSessionRecognition();
+        } else {
+            Storage::fake('local');
+            $this->seedActivitySpeaker();
+            $url = '/api/certificaciones/ponente_actividad/1/preparar';
+            $input = ['accion' => 'revisar_documento', 'modalidad_reconocimiento' => 'actividad'];
+        }
+        $review = $this->postJson($url, $input)->assertOk()->json('data');
+        $prepared = $this->postJson($url, array_replace($input, ['accion' => 'confirmar_preparacion',
+            'token_revision' => $review['token_revision'], 'confirmar' => true]))->assertCreated()->json('data');
+        $recognitionId = $prepared['id_reconocimiento'];
+        $documentId = $prepared['id_certificado_documento'];
+        $document = DB::table('certificado.certificado_documento')->where('id_certificado_documento', $documentId)->first();
+        $bytes = Storage::disk('local')->get($document->ruta_archivo);
+        $files = Storage::disk('local')->allFiles();
+        $this->partialMock(CertificateDocumentGenerator::class)->shouldNotReceive('reviewPdf');
+        DB::enableQueryLog();
+        $evaluate = '/api/reconocimientos/'.$recognitionId.'/evaluacion-certificacion';
+        $data = $this->getJson($evaluate)->assertOk()->assertJsonPath('data.puede_preparar', false)
+            ->assertJsonPath('data.modalidad_reconocimiento', $modality)
+            ->assertJsonPath('data.id_certificado_documento', $documentId)
+            ->assertJsonPath('data.estado_certificado', 'PREPARADO')->assertJsonPath('data.estado_documento', 'Vigente')
+            ->assertJsonPath('data.puede_visualizar', true)->assertJsonPath('data.puede_descargar', true)
+            ->assertJsonPath('data.documento_existente.origen', 'ponente_'.$modality)->json('data');
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        $this->assertEmpty(array_filter($queries, fn (array $query): bool => str_contains($query['query'], 'certificado_firma')));
+        $this->get($data['url_documento'])->assertOk()->assertDownload();
+        $this->getJson('/api/certificaciones/reconocimiento/'.$recognitionId.'/preparar?accion=consultar_preparacion')->assertOk()
+            ->assertJsonPath('data.recuperado', true)->assertJsonPath('data.id_certificado_documento', $documentId)
+            ->assertJsonMissingPath('data.vista_previa_pdf')->assertJsonMissingPath('data.token_revision');
+        $base = '/api/certificados-documentos/'.$documentId;
+        $send = $this->postJson($base.'/revisar-envio')->assertOk()->json('data');
+        $this->postJson($base.'/enviar-gerencia', ['token_revision' => $send['token_revision'], 'confirmar' => true])->assertOk();
+        $this->getJson($evaluate)->assertOk()->assertJsonPath('data.estado_certificado', 'PENDIENTE_FIRMA')
+            ->assertJsonPath('data.documento_existente.puede_preparar_como_individual', false);
+        $this->getJson('/api/certificados-documentos/detail/'.$documentId.'?flujo=firmas')->assertOk()
+            ->assertJsonPath('data.origen', 'ponente_'.$modality)->assertJsonPath('data.puede_visualizar', true);
+        $this->assertSame($bytes, Storage::disk('local')->get($document->ruta_archivo));
+        $this->assertSame($files, Storage::disk('local')->allFiles());
+        $this->assertDatabaseCount('certificado.certificado', 1);
+    }
+
+    #[TestWith(['missing_file'])]
+    #[TestWith(['annulled'])]
+    #[TestWith(['missing_document'])]
+    public function test_original_recognition_summary_never_invents_a_pdf_url(string $case): void
+    {
+        ['url' => $url, 'input' => $input] = $this->editableSessionRecognition();
+        $review = $this->postJson($url, $input)->assertOk()->json('data');
+        $prepared = $this->postJson($url, array_replace($input, ['accion' => 'confirmar_preparacion',
+            'token_revision' => $review['token_revision'], 'confirmar' => true]))->assertCreated()->json('data');
+        $documentId = $prepared['id_certificado_documento'];
+        if ($case === 'missing_file') {
+            Storage::disk('local')->delete(DB::table('certificado.certificado_documento')->where('id_certificado_documento', $documentId)->value('ruta_archivo'));
+        } elseif ($case === 'annulled') {
+            DB::table('certificado.certificado_documento')->where('id_certificado_documento', $documentId)->update(['estado' => 'Anulado']);
+        } else {
+            DB::table('certificado.certificado_documento')->where('id_certificado_documento', $documentId)->delete();
+        }
+        $data = $this->getJson('/api/reconocimientos/'.$prepared['id_reconocimiento'].'/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.puede_preparar', false)->assertJsonPath('data.url_documento', null)
+            ->assertJsonPath('data.puede_visualizar', false)->assertJsonPath('data.puede_descargar', false)->json('data');
+        $this->assertNotEmpty($data['motivo_documento']);
+        $this->assertDatabaseCount('certificado.certificado', 1);
+    }
+
+    public function test_original_activity_document_summary_preserves_read_permissions_and_original_area_scope(): void
+    {
+        Storage::fake('local');
+        $this->seedActivitySpeaker();
+        $url = '/api/certificaciones/ponente_actividad/1/preparar';
+        $review = $this->postJson($url, ['accion' => 'revisar_documento', 'modalidad_reconocimiento' => 'actividad'])->assertOk()->json('data');
+        $prepared = $this->postJson($url, ['accion' => 'confirmar_preparacion', 'modalidad_reconocimiento' => 'actividad',
+            'token_revision' => $review['token_revision'], 'confirmar' => true])->assertCreated()->json('data');
+        $evaluate = '/api/reconocimientos/'.$prepared['id_reconocimiento'].'/evaluacion-certificacion';
+        $this->authorize(false, ['reconocimientos.ver']);
+        $this->getJson($evaluate)->assertForbidden();
+        $this->authorize(false, ['emision.ver', 'reconocimientos.ver']);
+        $this->getJson($evaluate)->assertOk()->assertJsonPath('data.puede_visualizar', true)
+            ->assertJsonPath('data.puede_preparar', false);
+        DB::table('gestion.area')->insert(['id_area' => 2, 'nombre' => 'Otra área']);
+        DB::table('certificado.actividad')->where('id_actividad', 1)->update(['id_area' => 2]);
+        $this->getJson($evaluate)->assertOk()->assertJsonPath('data.url_documento', null)
+            ->assertJsonPath('data.puede_visualizar', false)->assertJsonPath('data.puede_descargar', false)
+            ->assertJsonPath('data.motivo_documento', 'El documento original está fuera del ámbito autorizado.');
+        $this->assertDatabaseCount('certificado.certificado', 1);
     }
 
     public function test_session_text_is_previewed_persisted_recovered_and_preserved_through_management(): void

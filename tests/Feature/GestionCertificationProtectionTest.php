@@ -104,7 +104,7 @@ class GestionCertificationProtectionTest extends TestCase
     public function test_all_gestion_routes_require_authentication_and_policies(): void
     {
         $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => in_array(explode('/', $route->uri())[1] ?? '', array_keys(self::MODELS), true)));
-        $this->assertCount(51, $routes);
+        $this->assertCount(53, $routes);
         foreach ($routes as $route) {
             $this->json($route->methods()[0], '/'.preg_replace('/\{[^}]+\}/', '1', $route->uri()))->assertUnauthorized();
         }
