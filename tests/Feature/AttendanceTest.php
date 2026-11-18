@@ -118,6 +118,18 @@ class AttendanceTest extends TestCase
             ->assertJsonPath('data.ID_ACTIVIDAD_SESION_ACTIVIDAD', 10);
     }
 
+    public function test_attendance_list_only_includes_enrollments_from_the_session_activity(): void
+    {
+        $data = $this->attendanceData();
+        DB::table('certificado.actividad_sesion')->insert(['id_actividad_sesion' => 99, 'id_actividad' => 11]);
+        DB::table('certificado.asistencia')->insert($data + ['ID_ASISTENCIA' => 1]);
+        DB::table('certificado.asistencia')->insert(array_replace($data, ['ID_ASISTENCIA' => 2, 'ID_ACTIVIDAD_SESION' => 99]));
+
+        $this->getJson('/api/attendance/list')->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.ID_ASISTENCIA', 1);
+        $this->assertDatabaseCount('certificado.asistencia', 2);
+    }
+
     public function test_partially_updates_without_changing_primary_key_or_other_fields(): void
     {
         $data = $this->attendanceData();

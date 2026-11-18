@@ -42,7 +42,7 @@
         .compact .signature-name { font-size: 9px; }
         .compact .position { font-size: 8px; }
         .compact .footer { margin-top: 6px; }
-        .compact .qr { height: 60px; width: 60px; }
+        .compact .qr { height: 67px; width: 67px; }
         @if($context->origen === 'practica')
         .practice-frame { border: 3px solid #173448; padding: 9px; }
         .practice-certificate { padding: 22px 44px 16px; border-color: #ba9750; }
@@ -58,7 +58,7 @@
         .practice-certificate .signers { margin-top: 18px; }
         .practice-certificate .signature-space { height: 26px; }
         .practice-certificate .footer { margin-top: 10px; }
-        .practice-certificate .qr { height: 60px; width: 60px; }
+        .practice-certificate .qr { height: 67px; width: 67px; }
         .practice-certificate.long-message { padding-top: 12px; padding-bottom: 10px; }
         .practice-certificate.long-message .logo { height: 40px; }
         .practice-certificate.long-message .practice-brand { font-size: 14px; margin-top: 5px; }
@@ -70,7 +70,7 @@
         .practice-certificate.long-message .signers { margin-top: 8px; }
         .practice-certificate.long-message .signature-space { height: 18px; }
         .practice-certificate.long-message .footer { margin-top: 6px; }
-        .practice-certificate.long-message .qr { height: 45px; width: 45px; }
+        .practice-certificate.long-message .qr { height: 50px; width: 50px; }
         @endif
     </style>
 </head>

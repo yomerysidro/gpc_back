@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Role\Role;
 use App\Models\User\User;
 use App\Services\CertificationReadiness;
+use Illuminate\Support\Env;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\TestWith;
@@ -96,13 +97,36 @@ class CertificationReadinessTest extends TestCase
     {
         $this->seedSession('Activo');
         $this->approveTestPolicy();
-        DB::table('gestion.persona')->insert(['id_persona' => 2, 'nombres' => 'No seleccionado']);
+        $this->authorize();
+        DB::table('gestion.persona')->insert([
+            ['id_persona' => 2, 'nombres' => 'Inscrito no seleccionado'],
+            ['id_persona' => 3, 'nombres' => 'Solo ponente'],
+        ]);
+        DB::statement('CREATE TABLE gestion.persona_ponente (id_persona_ponente INTEGER PRIMARY KEY, id_persona INTEGER)');
+        DB::statement('CREATE TABLE certificado.actividad_ponente (id_actividad_ponente INTEGER PRIMARY KEY, id_persona_ponente INTEGER, id_actividad INTEGER, id_actividad_sesion INTEGER)');
+        foreach ([1, 2, 3] as $id) {
+            DB::table('gestion.persona_ponente')->insert(['id_persona_ponente' => $id, 'id_persona' => $id]);
+            DB::table('certificado.actividad_ponente')->insert([
+                'id_actividad_ponente' => $id, 'id_persona_ponente' => $id, 'id_actividad' => 1, 'id_actividad_sesion' => 1,
+            ]);
+        }
         DB::table('certificado.participacion')->insert(['id_participacion' => 2, 'id_actividad' => 1, 'id_persona' => 2, 'estado' => 'Activo']);
         $session = DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 1)->first();
         self::assertSame([], app(CertificationReadiness::class)->closureBlockers($session));
+        $this->getJson('/api/activity-session/1')->assertOk()
+            ->assertJsonPath('data.contadores.inscritos_actividad_vigentes', 2)
+            ->assertJsonPath('data.contadores.participantes_sesion', 1)
+            ->assertJsonPath('data.contadores.presentes', 1)
+            ->assertJsonPath('data.contadores.pendientes', 0);
+        $this->postJson('/api/activity-session/1/finalizar')->assertOk();
+        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()
+            ->assertJsonPath('data.beneficiarios.total', 1)
+            ->assertJsonPath('data.beneficiarios.data.0.id_persona', 1)
+            ->assertJsonPath('data.total_elegibles', 1);
+        $this->assertDatabaseCount('certificado.actividad_ponente', 3);
         $this->assertDatabaseMissing('certificado.asistencia', ['id_participacion' => 2, 'id_actividad_sesion' => 1]);
-        DB::table('certificado.asistencia')->delete();
-        self::assertNotEmpty(app(CertificationReadiness::class)->closureBlockers($session));
+        $otherSession = DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 2)->first();
+        self::assertNotEmpty(app(CertificationReadiness::class)->closureBlockers($otherSession));
     }
 
     public function test_new_routes_require_401(): void
@@ -431,7 +455,8 @@ class CertificationReadinessTest extends TestCase
             ->assertJsonPath('data.contadores.inscritos_actividad_vigentes', 4)
             ->assertJsonPath('data.contadores.presentes', 1)
             ->assertJsonPath('data.contadores.ausentes', 1)
-            ->assertJsonPath('data.contadores.pendientes', 2)
+            ->assertJsonPath('data.contadores.participantes_sesion', 3)
+            ->assertJsonPath('data.contadores.pendientes', 1)
             ->assertJsonPath('data.contadores.por_regularizar', null);
     }
 
@@ -487,12 +512,33 @@ class CertificationReadinessTest extends TestCase
         config(['certification.session_closure' => $proposal]);
         $this->postJson('/api/activity-session/1/finalizar')->assertConflict();
         config(['certification.session_closure.reference' => 'Aprobación exclusiva de pruebas, sin validez institucional']);
-        $this->postJson('/api/activity-session/1/finalizar')->assertConflict();
+        $this->postJson('/api/activity-session/1/finalizar')->assertConflict()
+            ->assertJsonPath('message', 'Falta definir el tratamiento aprobado de regularizaciones. Si deben consultarse, falta un registro institucional compatible.');
         config(['certification.session_closure.regularizations' => 'not_applicable']);
         $this->postJson('/api/activity-session/1/finalizar')->assertOk()->assertJsonPath('data.finalizada', true);
         self::assertSame([], config('certification.eligibility.sesion'));
         $this->assertDatabaseHas('certificado.actividad', ['id_actividad' => 1, 'estado' => 'Activa']);
         $this->assertDatabaseCount('certificado.certificado', 0);
+    }
+
+    public function test_approved_policy_can_be_loaded_from_server_configuration_and_used_by_closure(): void
+    {
+        $this->seedSession('Activo');
+        $this->authorize();
+        $this->approveTestPolicy();
+        $policy = config('certification.session_closure');
+        $key = 'CERTIFICATION_SESSION_CLOSURE_POLICY';
+        $environment = Env::getRepository();
+        self::assertTrue($environment->set($key, json_encode($policy, JSON_THROW_ON_ERROR)));
+        try {
+            $configuration = require config_path('certification.php');
+        } finally {
+            $environment->clear($key);
+        }
+        self::assertSame($policy, $configuration['session_closure']);
+        config(['certification.session_closure' => $configuration['session_closure']]);
+        $this->postJson('/api/activity-session/1/finalizar')->assertOk();
+        $this->assertDatabaseHas('certificado.asistencia', ['id_asistencia' => 1, 'estado' => 'PRESENTE']);
     }
 
     #[TestWith([null])]
@@ -552,7 +598,11 @@ class CertificationReadinessTest extends TestCase
         $this->seedSession('Activo');
         $this->authorize();
         $this->approveTestPolicy($entry, $exit);
-        $this->postJson('/api/activity-session/1/finalizar')->assertConflict();
+        $response = $this->postJson('/api/activity-session/1/finalizar')->assertConflict();
+        self::assertSame(array_values(array_filter([
+            $entry ? 'Faltan horas de entrada exigidas por la política aprobada.' : null,
+            $exit ? 'Faltan horas de salida exigidas por la política aprobada.' : null,
+        ])), $response->json('data.motivos_bloqueo'));
         DB::table('certificado.asistencia')->where('id_asistencia', 1)->update([
             'hora_entrada' => $entry ? '08:00:00' : null, 'hora_salida' => $exit ? '10:00:00' : null,
         ]);

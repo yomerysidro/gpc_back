@@ -6,6 +6,7 @@ use App\Http\Data\GestionIntegrity;
 use App\Services\CertificateAttendanceProtection;
 use App\Services\CertificationReadiness;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -409,8 +410,10 @@ class AttendanceData
     private static function attendanceQuery(): Builder
     {
         return DB::table('certificado.asistencia as asistencia')
-            ->leftJoin('certificado.participacion as participacion', 'participacion.id_participacion', '=', 'asistencia.id_participacion')
-            ->leftJoin('certificado.actividad_sesion as sesion', 'sesion.id_actividad_sesion', '=', 'asistencia.id_actividad_sesion')
+            ->join('certificado.participacion as participacion', 'participacion.id_participacion', '=', 'asistencia.id_participacion')
+            ->join('certificado.actividad_sesion as sesion', fn (JoinClause $join): JoinClause => $join
+                ->on('sesion.id_actividad_sesion', '=', 'asistencia.id_actividad_sesion')
+                ->on('sesion.id_actividad', '=', 'participacion.id_actividad'))
             ->select(
                 'asistencia.id_asistencia as ID_ASISTENCIA',
                 'asistencia.id_participacion as ID_PARTICIPACION',

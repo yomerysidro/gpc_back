@@ -1,6 +1,9 @@
 <?php
 
 $developmentClosureEnabled = (bool) env('CERTIFICATION_DEVELOPMENT_CLOSURE_ENABLED', false);
+$approvedClosure = env('CERTIFICATION_SESSION_CLOSURE_POLICY');
+$approvedClosure = is_string($approvedClosure) && trim($approvedClosure) !== ''
+    ? json_decode($approvedClosure, true) : null;
 $sessionTypes = trim((string) env('CERTIFICATION_DEVELOPMENT_SESSION_TYPE_IDS', ''));
 $preparationTypes = trim((string) env('CERTIFICATION_PREPARATION_SESSION_TYPE_IDS', ''));
 $practiceCompletionState = trim((string) env('CERTIFICATION_PRACTICE_COMPLETION_STATE', ''));
@@ -69,7 +72,7 @@ return [
         'require_entry' => false,
         'require_exit' => false,
         'regularizations' => 'not_applicable',
-    ] : null,
+    ] : $approvedClosure,
     // Inactive proposal. Copy to session_closure only after the municipal decisions are approved.
     'session_closure_proposal' => [
         'reference' => null,

@@ -70,8 +70,11 @@ class CertificationReadiness
                     continue;
                 }
                 $counters['inscritos_actividad_vigentes']++;
-                $counters['participantes_sesion']++;
                 $attendances = $active->whereNotNull('id_asistencia')->unique('id_asistencia');
+                if ($attendances->isEmpty()) {
+                    continue;
+                }
+                $counters['participantes_sesion']++;
                 $counters['asistencias_duplicadas'] += max(0, $attendances->count() - 1);
                 if ($attendances->count() !== 1) {
                     $counters['pendientes']++;
@@ -114,7 +117,12 @@ class CertificationReadiness
         $policy = config('certification.session_closure');
         $configurationBlockers = [];
         if (! $this->validPolicy($policy) || ! $this->validStates($policy['open_states'] ?? null, false)) {
-            $configurationBlockers[] = 'Falta una política aprobada de cierre, estados de asistencia y regularizaciones.';
+            $configurationBlockers[] = match (true) {
+                ! is_string($policy['reference'] ?? null), trim($policy['reference']) === '' => 'Falta una política aprobada de cierre, estados de asistencia y regularizaciones.',
+                ($policy['regularizations'] ?? null) !== 'not_applicable' => 'Falta definir el tratamiento aprobado de regularizaciones. Si deben consultarse, falta un registro institucional compatible.',
+                ! is_bool($policy['require_entry'] ?? null), ! is_bool($policy['require_exit'] ?? null) => 'La política debe indicar expresamente si exige registrar la entrada y la salida.',
+                default => 'La política debe definir estados de origen, inscripciones vigentes y estados de asistencia consolidados sin superposición.',
+            };
         } elseif (($policy['final_state'] ?? null) !== self::FINAL_SESSION_STATE
             || in_array(self::FINAL_SESSION_STATE, $policy['open_states'], true)) {
             $configurationBlockers[] = 'La política debe aprobar Finalizada como estado de destino y excluirlo de los estados de origen.';
@@ -140,15 +148,11 @@ class CertificationReadiness
             ->whereIn('s.id_actividad_sesion', $sessionIds)->whereIn('p.estado', $policy['active_participation_states']);
         $pending = (clone $attendance)
             ->where(function (Builder $query) use ($policy): void {
-                $query->whereNull('a.id_asistencia')->orWhereNull('a.estado')
+                $query->whereNull('a.estado')
                     ->orWhereNotIn('a.estado', array_merge($policy['eligible_attendance_states'], $policy['ineligible_attendance_states']));
-                if ($policy['require_entry']) {
-                    $query->orWhereNull('a.hora_entrada');
-                }
-                if ($policy['require_exit']) {
-                    $query->orWhereNull('a.hora_salida');
-                }
             })->distinct()->pluck('s.id_actividad_sesion')->all();
+        $missingEntries = $policy['require_entry'] ? (clone $attendance)->whereNull('a.hora_entrada')->distinct()->pluck('s.id_actividad_sesion')->all() : [];
+        $missingExits = $policy['require_exit'] ? (clone $attendance)->whereNull('a.hora_salida')->distinct()->pluck('s.id_actividad_sesion')->all() : [];
         $duplicates = (clone $attendance)->whereNotNull('a.id_asistencia')
             ->groupBy('s.id_actividad_sesion', 'p.id_persona')->havingRaw('COUNT(*) > 1')
             ->pluck('s.id_actividad_sesion')->all();
@@ -169,6 +173,12 @@ class CertificationReadiness
             }
             if (in_array($session->id_actividad_sesion, $pending)) {
                 $blockers[] = 'Existen asistencias pendientes de consolidación según la política aprobada.';
+            }
+            if (in_array($session->id_actividad_sesion, $missingEntries)) {
+                $blockers[] = 'Faltan horas de entrada exigidas por la política aprobada.';
+            }
+            if (in_array($session->id_actividad_sesion, $missingExits)) {
+                $blockers[] = 'Faltan horas de salida exigidas por la política aprobada.';
             }
             if (in_array($session->id_actividad_sesion, $duplicates)) {
                 $blockers[] = 'Existen asistencias duplicadas; se requiere revisar la integridad antes de finalizar.';
