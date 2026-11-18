@@ -27,10 +27,7 @@ class CertificationReadiness
             return;
         }
 
-        $policy = config('certification.session_closure');
-        $activeStates = $this->validPolicy($policy)
-            ? $policy['active_participation_states']
-            : config('certification.attendance_summary.active_participation_states', []);
+        $activeStates = config('certification.attendance_summary.active_participation_states', []);
         $presentStates = config('certification.attendance_summary.present_states', []);
         $absentStates = config('certification.attendance_summary.absent_states', []);
         $validMapping = $this->validStates($activeStates, false)
@@ -114,55 +111,21 @@ class CertificationReadiness
         if ($openSessions === [] || $developmentBlockers !== []) {
             return $results;
         }
-        $policy = config('certification.session_closure');
-        $configurationBlockers = [];
-        if (! $this->validPolicy($policy) || ! $this->validStates($policy['open_states'] ?? null, false)) {
-            $configurationBlockers[] = match (true) {
-                ! is_string($policy['reference'] ?? null), trim($policy['reference']) === '' => 'Falta una política aprobada de cierre, estados de asistencia y regularizaciones.',
-                ($policy['regularizations'] ?? null) !== 'not_applicable' => 'Falta definir el tratamiento aprobado de regularizaciones. Si deben consultarse, falta un registro institucional compatible.',
-                ! is_bool($policy['require_entry'] ?? null), ! is_bool($policy['require_exit'] ?? null) => 'La política debe indicar expresamente si exige registrar la entrada y la salida.',
-                default => 'La política debe definir estados de origen, inscripciones vigentes y estados de asistencia consolidados sin superposición.',
-            };
-        } elseif (($policy['final_state'] ?? null) !== self::FINAL_SESSION_STATE
-            || in_array(self::FINAL_SESSION_STATE, $policy['open_states'], true)) {
-            $configurationBlockers[] = 'La política debe aprobar Finalizada como estado de destino y excluirlo de los estados de origen.';
-        }
-        if ($configurationBlockers !== []) {
-            foreach ($openSessions as $session) {
-                $results[$session->id_actividad_sesion] = $configurationBlockers;
-            }
-
-            return $results;
-        }
         $sessionIds = array_map(fn (object $session): int => (int) $session->id_actividad_sesion, $openSessions);
         $activityIds = array_map(fn (object $session): int => (int) $session->id_actividad, $openSessions);
         $activities = DB::table('certificado.actividad')->whereIn('id_actividad', $activityIds)->pluck('estado', 'id_actividad');
         $approved = DB::table('certificado.solicitud_actividad')->whereIn('id_actividad', $activityIds)
             ->where('estado', 'Aprobada')->pluck('id_actividad')->all();
-        $attendance = DB::table('certificado.actividad_sesion as s')
-            ->join('certificado.participacion as p', 'p.id_actividad', '=', 's.id_actividad')
-            ->join('certificado.asistencia as a', function ($join): void {
-                $join->on('a.id_participacion', '=', 'p.id_participacion')
-                    ->on('a.id_actividad_sesion', '=', 's.id_actividad_sesion');
-            })
-            ->whereIn('s.id_actividad_sesion', $sessionIds)->whereIn('p.estado', $policy['active_participation_states']);
-        $pending = (clone $attendance)
-            ->where(function (Builder $query) use ($policy): void {
-                $query->whereNull('a.estado')
-                    ->orWhereNotIn('a.estado', array_merge($policy['eligible_attendance_states'], $policy['ineligible_attendance_states']));
-            })->distinct()->pluck('s.id_actividad_sesion')->all();
-        $missingEntries = $policy['require_entry'] ? (clone $attendance)->whereNull('a.hora_entrada')->distinct()->pluck('s.id_actividad_sesion')->all() : [];
-        $missingExits = $policy['require_exit'] ? (clone $attendance)->whereNull('a.hora_salida')->distinct()->pluck('s.id_actividad_sesion')->all() : [];
-        $duplicates = (clone $attendance)->whereNotNull('a.id_asistencia')
-            ->groupBy('s.id_actividad_sesion', 'p.id_persona')->havingRaw('COUNT(*) > 1')
-            ->pluck('s.id_actividad_sesion')->all();
-        $enrolledSessions = (clone $attendance)->distinct()->pluck('s.id_actividad_sesion')->all();
+        $attendances = DB::table('certificado.asistencia as a')
+            ->leftJoin('certificado.participacion as p', 'p.id_participacion', '=', 'a.id_participacion')
+            ->whereIn('a.id_actividad_sesion', $sessionIds)
+            ->get(['a.id_actividad_sesion', 'a.estado', 'a.hora_entrada', 'a.hora_salida',
+                'p.id_actividad', 'p.id_persona', 'p.estado as estado_inscripcion'])
+            ->groupBy('id_actividad_sesion');
+
         foreach ($openSessions as $session) {
             $blockers = [];
-            if (! in_array($session->id_actividad_sesion, $enrolledSessions)) {
-                $blockers[] = 'La sesión debe tener al menos un participante seleccionado con inscripción vigente para finalizarse.';
-            }
-            if (! in_array($session->estado, $policy['open_states'], true)) {
+            if (! in_array($session->estado, ['Activo', 'activo'], true)) {
                 $blockers[] = 'El estado actual de la sesión no admite finalización.';
             }
             if ($activities->get($session->id_actividad) !== 'Activa') {
@@ -171,22 +134,51 @@ class CertificationReadiness
             if (! in_array($session->id_actividad, $approved)) {
                 $blockers[] = 'La actividad no tiene una solicitud aprobada vinculada.';
             }
-            if (in_array($session->id_actividad_sesion, $pending)) {
-                $blockers[] = 'Existen asistencias pendientes de consolidación según la política aprobada.';
+            $start = $this->normalizedClosureTime($session->hora_inicio);
+            $end = $this->normalizedClosureTime($session->hora_fin);
+            if ($start === null || $end === null || strcmp($end, $start) < 0) {
+                $blockers[] = 'El horario de la sesión está incompleto o es inconsistente.';
             }
-            if (in_array($session->id_actividad_sesion, $missingEntries)) {
-                $blockers[] = 'Faltan horas de entrada exigidas por la política aprobada.';
+
+            $records = $attendances->get($session->id_actividad_sesion, collect());
+            $linked = $records->filter(fn (object $record): bool => $record->id_actividad !== null
+                && (int) $record->id_actividad === (int) $session->id_actividad && $record->id_persona !== null);
+            if ($linked->count() !== $records->count()) {
+                $blockers[] = 'Hay asistencias sin una inscripción válida en la actividad de esta sesión.';
             }
-            if (in_array($session->id_actividad_sesion, $missingExits)) {
-                $blockers[] = 'Faltan horas de salida exigidas por la política aprobada.';
+            $current = $linked->filter(fn (object $record): bool => strtoupper(trim($record->estado_inscripcion ?? '')) === 'ACTIVO');
+            if ($current->isEmpty()) {
+                $blockers[] = 'La sesión debe tener al menos un participante seleccionado con inscripción vigente para finalizarse.';
             }
-            if (in_array($session->id_actividad_sesion, $duplicates)) {
+            if ($linked->pluck('id_persona')->duplicates()->isNotEmpty()) {
                 $blockers[] = 'Existen asistencias duplicadas; se requiere revisar la integridad antes de finalizar.';
+            }
+            if ($current->contains(fn (object $record): bool => ! in_array(strtoupper(trim($record->estado ?? '')), ['PRESENTE', 'AUSENTE'], true))) {
+                $blockers[] = 'Existen asistencias pendientes, por regularizar o con un estado inválido. Registre Presente o Ausente.';
+            }
+            if ($current->contains(function (object $record): bool {
+                $entry = $this->normalizedClosureTime($record->hora_entrada);
+                $exit = $this->normalizedClosureTime($record->hora_salida);
+
+                return ($record->hora_entrada !== null && $entry === null)
+                    || ($record->hora_salida !== null && $exit === null)
+                    || ($entry !== null && $exit !== null && strcmp($exit, $entry) < 0);
+            })) {
+                $blockers[] = 'Existen asistencias con horas inválidas o con salida anterior a la entrada.';
             }
             $results[$session->id_actividad_sesion] = $blockers;
         }
 
         return $results;
+    }
+
+    private function normalizedClosureTime(?string $time): ?string
+    {
+        if ($time === null || ! preg_match('/^(?<minute>(?:[01][0-9]|2[0-3]):[0-5][0-9])(?::(?<second>[0-5][0-9])(?:\.(?<fraction>[0-9]{1,6}))?)?$/D', $time, $parts)) {
+            return null;
+        }
+
+        return $parts['minute'].':'.($parts['second'] ?? '00').'.'.str_pad($parts['fraction'] ?? '', 6, '0');
     }
 
     /** @param list<int>|null $areaIds
@@ -207,18 +199,24 @@ class CertificationReadiness
             $blockers = $this->closureBlockers($session);
             $this->addAttendanceCounters([$session]);
             if ($blockers !== []) {
+                DB::afterCommit(fn () => Log::warning('actividad_sesion.finalizacion_bloqueada', [
+                    'id_usuario' => $userId, 'id_actividad' => (int) $activity->id_actividad, 'id_actividad_sesion' => $id,
+                    'resultado' => 'bloqueada', 'fecha' => now()->toIso8601String(), 'motivos_bloqueo' => $blockers,
+                ]));
+
                 return ['finalizada' => false, 'sesion' => $session, 'motivos_bloqueo' => $blockers];
             }
-            if ($session->estado !== self::FINAL_SESSION_STATE) {
+            $retry = $session->estado === self::FINAL_SESSION_STATE;
+            if (! $retry) {
                 DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $id)->update(['estado' => self::FINAL_SESSION_STATE]);
                 $session->estado = self::FINAL_SESSION_STATE;
                 DB::afterCommit(fn () => Log::info('actividad_sesion.finalizada', [
                     'id_usuario' => $userId, 'id_actividad' => (int) $session->id_actividad,
-                    'id_actividad_sesion' => $id, 'politica' => config('certification.session_closure.reference'),
+                    'id_actividad_sesion' => $id, 'resultado' => 'finalizada', 'fecha' => now()->toIso8601String(),
                 ]));
             }
 
-            return ['finalizada' => true, 'sesion' => $session, 'estado_actividad' => $activity->estado, 'motivos_bloqueo' => []];
+            return ['finalizada' => true, 'reintento' => $retry, 'sesion' => $session, 'estado_actividad' => $activity->estado, 'motivos_bloqueo' => []];
         }, 3);
     }
 
