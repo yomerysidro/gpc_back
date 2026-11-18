@@ -97,10 +97,12 @@ class CertificationReadinessTest extends TestCase
     {
         $this->seedSession('Activo');
         $this->approveTestPolicy();
-        $this->authorize();
+        $this->authorize(permissions: ['actividades.ver', 'actividades.editar', 'emision.ver', 'participantes.ver',
+            'participantes.crear', 'participantes.editar', 'ponentes-firmantes.ver']);
         DB::table('gestion.persona')->insert([
             ['id_persona' => 2, 'nombres' => 'Inscrito no seleccionado'],
             ['id_persona' => 3, 'nombres' => 'Solo ponente'],
+            ['id_persona' => 4, 'nombres' => 'Asistente'],
         ]);
         DB::statement('CREATE TABLE gestion.persona_ponente (id_persona_ponente INTEGER PRIMARY KEY, id_persona INTEGER)');
         DB::statement('CREATE TABLE certificado.actividad_ponente (id_actividad_ponente INTEGER PRIMARY KEY, id_persona_ponente INTEGER, id_actividad INTEGER, id_actividad_sesion INTEGER)');
@@ -112,21 +114,40 @@ class CertificationReadinessTest extends TestCase
         }
         DB::table('certificado.participacion')->insert(['id_participacion' => 2, 'id_actividad' => 1, 'id_persona' => 2, 'estado' => 'Activo']);
         $session = DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 1)->first();
+        self::assertNotEmpty(app(CertificationReadiness::class)->closureBlockers($session));
+        DB::table('certificado.participacion')->insert(['id_participacion' => 4, 'id_actividad' => 1, 'id_persona' => 4, 'estado' => 'Activo']);
+        DB::table('certificado.asistencia')->insert(['id_asistencia' => 4, 'id_participacion' => 4, 'id_actividad_sesion' => 1, 'estado' => 'PRESENTE']);
+        DB::table('certificado.asistencia')->insert(['id_asistencia' => 5, 'id_participacion' => 1, 'id_actividad_sesion' => 2, 'estado' => 'AUSENTE']);
+        DB::statement('CREATE TABLE certificado.reconocimiento (id_reconocimiento INTEGER PRIMARY KEY, id_actividad_ponente INTEGER)');
+        DB::statement('CREATE TABLE certificado.asistencia_ponente_sesion (id_actividad_sesion INTEGER, id_persona INTEGER, estado TEXT, id_usuario_actualizacion INTEGER, actualizado_en TEXT, PRIMARY KEY (id_actividad_sesion, id_persona))');
+        $url = '/api/activity/1/sessions/1/ponentes';
+        $this->getJson($url)->assertOk()->assertJsonPath('data.vinculos.0.estado_asistencia', null);
+        $this->getJson('/api/activity-session/1/participantes')->assertOk()->assertJsonCount(1, 'data.participantes')
+            ->assertJsonPath('data.participantes.0.id_participacion', 4);
+        $this->getJson('/api/activity-session/2/participantes')->assertOk()->assertJsonPath('data.participantes.0.id_participacion', 1);
+        $this->postJson('/api/activity-session/1/participantes', ['ids_participacion' => [1]])->assertConflict();
+        $this->putJson($url.'/1/asistencia', ['estado' => 'PRESENTE'])->assertOk()->assertJsonPath('data.estado_asistencia', 'PRESENTE');
+        $this->putJson($url.'/1/asistencia', ['estado' => 'AUSENTE'])->assertOk()->assertJsonPath('data.estado_asistencia', 'AUSENTE');
+        $this->putJson($url.'/3/asistencia', ['estado' => 'PRESENTE'])->assertOk();
+        $this->assertDatabaseCount('certificado.asistencia_ponente_sesion', 2);
+        $this->assertDatabaseHas('certificado.asistencia_ponente_sesion', ['id_actividad_sesion' => 1, 'id_persona' => 1, 'estado' => 'AUSENTE', 'id_usuario_actualizacion' => 8]);
+        $this->assertDatabaseHas('certificado.asistencia', ['id_asistencia' => 1, 'estado' => 'PRESENTE']);
+        $this->getJson($url)->assertOk()->assertJsonPath('data.vinculos.0.estado_asistencia', 'AUSENTE');
         self::assertSame([], app(CertificationReadiness::class)->closureBlockers($session));
         $this->getJson('/api/activity-session/1')->assertOk()
-            ->assertJsonPath('data.contadores.inscritos_actividad_vigentes', 2)
+            ->assertJsonPath('data.contadores.inscritos_actividad_vigentes', 3)
             ->assertJsonPath('data.contadores.participantes_sesion', 1)
             ->assertJsonPath('data.contadores.presentes', 1)
             ->assertJsonPath('data.contadores.pendientes', 0);
         $this->postJson('/api/activity-session/1/finalizar')->assertOk();
         $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()
-            ->assertJsonPath('data.beneficiarios.total', 1)
+            ->assertJsonPath('data.beneficiarios.total', 2)
             ->assertJsonPath('data.beneficiarios.data.0.id_persona', 1)
-            ->assertJsonPath('data.total_elegibles', 1);
+            ->assertJsonPath('data.total_elegibles', 2);
         $this->assertDatabaseCount('certificado.actividad_ponente', 3);
         $this->assertDatabaseMissing('certificado.asistencia', ['id_participacion' => 2, 'id_actividad_sesion' => 1]);
         $otherSession = DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 2)->first();
-        self::assertNotEmpty(app(CertificationReadiness::class)->closureBlockers($otherSession));
+        self::assertSame([], app(CertificationReadiness::class)->closureBlockers($otherSession));
     }
 
     public function test_new_routes_require_401(): void
@@ -135,6 +156,7 @@ class CertificationReadinessTest extends TestCase
         $this->getJson('/api/activity-session/1/beneficiarios')->assertUnauthorized();
         $this->getJson('/api/activity/1/beneficiarios-certificacion')->assertUnauthorized();
         $this->postJson('/api/activity-session/1/finalizar')->assertUnauthorized();
+        $this->putJson('/api/activity/1/sessions/1/ponentes/1/asistencia', ['estado' => 'PRESENTE'])->assertUnauthorized();
         $this->postJson('/api/activity-session/1/preparar-certificados')->assertUnauthorized();
     }
 

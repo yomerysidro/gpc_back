@@ -27,7 +27,7 @@ class CertificationReadiness
             return;
         }
 
-        $activeStates = config('certification.attendance_summary.active_participation_states', []);
+        $activeStates = $this->activeAttendanceEnrollmentStates();
         $presentStates = config('certification.attendance_summary.present_states', []);
         $absentStates = config('certification.attendance_summary.absent_states', []);
         $validMapping = $this->validStates($activeStates, false)
@@ -45,7 +45,12 @@ class CertificationReadiness
                     ->on('a.id_actividad_sesion', '=', 's.id_actividad_sesion');
             })
             ->whereIn('s.id_actividad_sesion', array_map(fn (object $session): int => (int) $session->id_actividad_sesion, $sessions))
-            ->select('s.id_actividad_sesion', 'p.id_persona', 'p.estado as estado_inscripcion', 'a.id_asistencia', 'a.estado as estado_asistencia')
+            ->when(SessionSpeakers::supportsSessionLinks(), fn (Builder $query) => $query->selectSub(
+                SessionSpeakers::assignments()->selectRaw('1')->whereColumn('ap.id_actividad_sesion', 's.id_actividad_sesion')
+                    ->whereColumn('ap.id_actividad', 's.id_actividad')->whereColumn('pp.id_persona', 'p.id_persona')->limit(1),
+                'es_ponente'
+            ))
+            ->addSelect('s.id_actividad_sesion', 'p.id_persona', 'p.estado as estado_inscripcion', 'a.id_asistencia', 'a.estado as estado_asistencia')
             ->get()->groupBy('id_actividad_sesion');
 
         foreach ($sessions as $session) {
@@ -67,7 +72,7 @@ class CertificationReadiness
                     continue;
                 }
                 $counters['inscritos_actividad_vigentes']++;
-                $attendances = $active->whereNotNull('id_asistencia')->unique('id_asistencia');
+                $attendances = $active->reject(fn (object $record): bool => (bool) ($record->es_ponente ?? false))->whereNotNull('id_asistencia')->unique('id_asistencia');
                 if ($attendances->isEmpty()) {
                     continue;
                 }
@@ -85,6 +90,13 @@ class CertificationReadiness
             }
             $session->contadores = $counters;
         }
+    }
+
+    /** @return list<string> */
+    public function activeAttendanceEnrollmentStates(): array
+    {
+        $states = config('certification.attendance_summary.active_participation_states', []);
+        return $this->validStates($states, false) ? array_map(fn (string $state): string => strtoupper(trim($state)), $states) : [];
     }
 
     /** @return list<string> */
@@ -119,6 +131,10 @@ class CertificationReadiness
         $attendances = DB::table('certificado.asistencia as a')
             ->leftJoin('certificado.participacion as p', 'p.id_participacion', '=', 'a.id_participacion')
             ->whereIn('a.id_actividad_sesion', $sessionIds)
+            ->when(SessionSpeakers::supportsSessionLinks(), fn (Builder $query) => $query->whereNotExists(
+                SessionSpeakers::assignments()->selectRaw('1')->whereColumn('ap.id_actividad_sesion', 'a.id_actividad_sesion')
+                    ->whereColumn('ap.id_actividad', 'p.id_actividad')->whereColumn('pp.id_persona', 'p.id_persona')
+            ))
             ->get(['a.id_actividad_sesion', 'a.estado', 'a.hora_entrada', 'a.hora_salida',
                 'p.id_actividad', 'p.id_persona', 'p.estado as estado_inscripcion'])
             ->groupBy('id_actividad_sesion');

@@ -3,22 +3,64 @@
 namespace App\Services;
 
 use App\Services\RequestSchema as Schema;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class SessionSpeakers
 {
+    public static function supportsSessionLinks(): bool
+    {
+        return Schema::hasTable('certificado.actividad_ponente')
+            && Schema::hasColumn('certificado.actividad_ponente', 'id_actividad_sesion')
+            && Schema::hasTable('gestion.persona_ponente');
+    }
+
+    public static function assignments(): Builder
+    {
+        return DB::table('certificado.actividad_ponente as ap')
+            ->join('gestion.persona_ponente as pp', 'pp.id_persona_ponente', '=', 'ap.id_persona_ponente');
+    }
+
     /** @return Collection<int, object> */
     public function assigned(int $activityId, int $sessionId): Collection
     {
         $this->assertSchema();
 
-        return DB::table('certificado.actividad_ponente as ap')
-            ->join('gestion.persona_ponente as pp', 'pp.id_persona_ponente', '=', 'ap.id_persona_ponente')
+        $query = self::assignments()
             ->join('gestion.persona as p', 'p.id_persona', '=', 'pp.id_persona')
             ->where('ap.id_actividad', $activityId)->where('ap.id_actividad_sesion', $sessionId)
             ->orderBy('ap.id_actividad_ponente')
-            ->get(['ap.*', 'pp.id_persona', 'p.nombres', 'p.apellido_paterno', 'p.apellido_materno']);
+            ->select('ap.*', 'pp.id_persona', 'p.nombres', 'p.apellido_paterno', 'p.apellido_materno');
+        if (Schema::hasTable('certificado.asistencia_ponente_sesion')) {
+            $query->leftJoin('certificado.asistencia_ponente_sesion as aps', function ($join): void {
+                $join->on('aps.id_actividad_sesion', '=', 'ap.id_actividad_sesion')
+                    ->on('aps.id_persona', '=', 'pp.id_persona');
+            })->addSelect('aps.estado as estado_asistencia');
+        }
+
+        return $query->get();
+    }
+
+    public function markAttendance(int $activity, int $session, int $assignment, string $state, int $actor): array
+    {
+        $this->assertSchema();
+        abort_unless(Schema::hasTable('certificado.asistencia_ponente_sesion'), 409, 'El registro de asistencia de ponentes requiere la actualización de la base de datos.');
+
+        return DB::transaction(function () use ($activity, $session, $assignment, $state, $actor): array {
+            $current = $this->lockSession($activity, $session);
+            abort_if($current->estado === CertificationReadiness::FINAL_SESSION_STATE, 409, 'La sesión está finalizada.');
+            $person = self::assignments()->where('ap.id_actividad', $activity)
+                ->where('ap.id_actividad_sesion', $session)->where('ap.id_actividad_ponente', $assignment)
+                ->value('pp.id_persona');
+            abort_unless($person, 404, 'Vínculo de ponente no encontrado en esta sesión.');
+            DB::table('certificado.asistencia_ponente_sesion')->upsert([
+                'id_actividad_sesion' => $session, 'id_persona' => $person, 'estado' => $state,
+                'id_usuario_actualizacion' => $actor, 'actualizado_en' => now(),
+            ], ['id_actividad_sesion', 'id_persona'], ['estado', 'id_usuario_actualizacion', 'actualizado_en']);
+
+            return ['id_actividad_sesion' => $session, 'id_actividad_ponente' => $assignment, 'estado_asistencia' => $state];
+        });
     }
 
     public function link(int $activityId, int $sessionId, int $speakerId): object
@@ -58,13 +100,14 @@ class SessionSpeakers
         });
     }
 
-    private function lockSession(int $activityId, int $sessionId): void
+    private function lockSession(int $activityId, int $sessionId): object
     {
         $activity = DB::table('certificado.actividad')->where('id_actividad', $activityId)->lockForUpdate()->first();
         abort_unless($activity, 404, 'Actividad no encontrada.');
         $session = DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $sessionId)->lockForUpdate()->first();
         abort_unless($session, 404, 'Sesión no encontrada.');
         abort_unless((int) $session->id_actividad === $activityId, 409, 'La sesión no pertenece a la actividad.');
+        return $session;
     }
 
     public function assertSchema(): void
