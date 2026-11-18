@@ -43,10 +43,11 @@ use App\Http\Controllers\User\UserController;
 use App\Http\Middleware\ActivityRequests\AuthorizeActivityRequest;
 use App\Http\Middleware\AuthorizeModuleOperation;
 use App\Http\Middleware\NormalizeAttendanceInput;
+use App\Services\PublicCertificateLookup;
 use Illuminate\Support\Facades\Route;
 
 Route::get('certificados/verificar/{code}', [CertificateDocumentController::class, 'verify'])
-    ->where('code', '[a-f0-9]{30}')->middleware('throttle:30,1')->name('certificates.verify');
+    ->where('code', PublicCertificateLookup::CODE_PATTERN)->middleware('throttle:30,1')->name('certificates.verify');
 Route::post('certificados/consulta-dni', PublicCertificateLookupController::class)
     ->middleware('throttle:public-certificates')->name('certificates.lookup-dni');
 Route::post('portal-certificados/consultar-dni', PublicCertificateLookupController::class)

@@ -310,7 +310,7 @@ class CertificateDocumentGenerator
             ->join('certificado.certificado as c', 'c.id_certificado', '=', 'd.id_certificado')
             ->where('d.codigo_verificacion', $code)
             ->select('d.*', 'c.estado as estado_certificado', 'c.fecha_emision', 'c.id_tipo_certificado', 'c.id_participacion', 'c.id_persona')->first();
-        abort_unless($document, 404, 'Certificado no encontrado.');
+        abort_unless($document && $document->codigo_verificacion === $code, 404, 'Certificado no encontrado.');
         if ($document->estado_certificado === SessionCertificatePreparation::DEMONSTRATION_STATE) {
             $document->demonstration_context = null;
             if (app(SessionCertificatePreparation::class)->identityAvailable()) {

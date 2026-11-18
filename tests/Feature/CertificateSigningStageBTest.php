@@ -22,9 +22,11 @@ class CertificateSigningStageBTest extends TestCase
 {
     private const BASE = '/api/certificados-documentos/1/firma';
 
-    public function test_pending_certificate_never_enables_portal_links_even_with_publication_policy(): void
+    #[TestWith(['0123456789abcdef0123456789abcd'])]
+    #[TestWith(['CertA123'])]
+    public function test_dni_and_code_resolve_the_same_pending_certificate_without_publication(string $code): void
     {
-        $this->assignForPdfRevision();
+        $this->assignForPdfRevision($code);
         $sourceCertificate = DB::table('certificado.certificado')->first();
         $manifestPath = 'certificados/revisiones/aprobado.manifest';
         $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get($manifestPath)), true, 512, JSON_THROW_ON_ERROR);
@@ -47,6 +49,8 @@ class CertificateSigningStageBTest extends TestCase
             'certification.public_lookup.pdf_codes' => []]);
         $portal = '/api/portal-certificados/consultar-dni';
         $private = $this->postJson($portal, ['dni' => $dni])->assertOk()->assertJsonCount(1, 'data.certificados')->json('data.certificados.0');
+        self::assertSame($code, $private['codigo_verificacion']);
+        self::assertSame('Listo para entrega', $private['estado_disponibilidad']);
         self::assertFalse($private['pdf_publicado']);
         self::assertNull($private['url_documento']);
         self::assertNull($private['url_descarga']);
@@ -55,12 +59,34 @@ class CertificateSigningStageBTest extends TestCase
             ->assertJsonPath('data.certificados.0.pdf_publicado', false)
             ->assertJsonPath('data.certificados.0.url_documento', null)
             ->assertJsonPath('data.certificados.0.url_descarga', null);
-        $url = '/api/certificados/verificar/'.$document->codigo_verificacion;
-        $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', false);
+        $url = '/api/certificados/verificar/'.$private['codigo_verificacion'];
+        $this->getJson($url)->assertOk()->assertJsonPath('data.codigo_verificacion', $code)
+            ->assertJsonPath('data.estado_certificado', 'PENDIENTE_FIRMA')
+            ->assertJsonPath('data.integridad_verificada', true)->assertJsonPath('data.vigente', false)
+            ->assertJsonPath('data.firma_verificada', false)->assertJsonPath('data.emision_oficial_verificada', false)
+            ->assertJsonPath('data.puede_ver_documento', false)->assertJsonPath('data.beneficiario', null)
+            ->assertJsonMissingPath('data.dni')->assertJsonMissingPath('data.ruta_archivo');
+        $this->get($url, ['Accept' => 'text/html'])->assertOk()->assertSee($code);
         $this->get($url.'?archivo=1')->assertForbidden();
+        $this->getJson('/api/certificados/verificar/'.strtoupper($code))->assertNotFound();
+        $this->getJson('/api/certificados/verificar/Unknown123')->assertNotFound();
         self::assertSame((array) $document, (array) DB::table('certificado.certificado_documento')->first());
         self::assertSame((array) $certificate, (array) DB::table('certificado.certificado')->first());
         self::assertSame($files, collect(Storage::disk('local')->allFiles())->mapWithKeys(fn (string $path): array => [$path => hash_file('sha256', Storage::disk('local')->path($path))])->all());
+    }
+
+    #[TestWith(['12345'])]
+    #[TestWith(['Cert-123'])]
+    #[TestWith(['Cert%20123'])]
+    #[TestWith(['Cert%2F123'])]
+    #[TestWith(['Cert1234567890123456789012345678'])]
+    #[TestWith(['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'])]
+    public function test_invalid_public_code_formats_are_rejected_even_if_stored(string $code): void
+    {
+        DB::table('certificado.certificado_documento')->where('id_certificado_documento', 1)
+            ->update(['codigo_verificacion' => rawurldecode($code)]);
+
+        $this->getJson('/api/certificados/verificar/'.$code)->assertNotFound();
     }
 
     #[TestWith([false])]
@@ -213,13 +239,16 @@ class CertificateSigningStageBTest extends TestCase
         $this->assertDatabaseCount('certificado.certificado_firma', 0);
     }
 
-    private function assignForPdfRevision(): void
+    private function assignForPdfRevision(?string $code = null): void
     {
         $this->enableRealAssignment();
         DB::statement('ALTER TABLE certificado.certificado_firma ADD COLUMN id_persona_trabajador INTEGER');
         DB::statement('ALTER TABLE certificado.certificado_documento ADD COLUMN motivo_reemision TEXT');
         DB::table('certificado.actividad_sesion')->update(['fecha' => '2026-11-01']);
         DB::table('certificado.firma')->delete();
+        if ($code !== null) {
+            DB::table('certificado.certificado_documento')->where('id_certificado_documento', 1)->update(['codigo_verificacion' => $code]);
+        }
         $document = DB::table('certificado.certificado_documento')->first();
         Storage::disk('local')->put('certificados/revisiones/aprobado.manifest', Crypt::encryptString(json_encode([
             'code' => $document->codigo_verificacion, 'hash' => $document->hash_certificado, 'message' => 'Mensaje aprobado.',
