@@ -181,10 +181,10 @@ class CertificateDocumentGenerator
     }
 
     /** @param list<array<string, mixed>>|null $signers */
-    public function preview(object $context, ?string $message = null, ?array $signers = null): string
+    public function preview(object $context, ?string $message = null, ?array $signers = null, bool $academicDraft = false): string
     {
         return view('certificates.demonstration', [
-            'context' => $context, 'certificate' => null, 'code' => null, 'qrDataUri' => null,
+            'context' => $context, 'certificate' => $academicDraft ? (object) ['fecha_emision' => null] : null, 'code' => null, 'qrDataUri' => null,
             'customMessage' => $message,
             'logoDataUri' => 'data:image/png;base64,'.base64_encode(file_get_contents(resource_path('images/escudo-morales.png'))),
             'signers' => $signers ?? $this->signers((int) $context->id_actividad),

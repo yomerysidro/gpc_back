@@ -61,7 +61,7 @@ class ActivitySessionController extends Controller
         $session->puede_finalizarse = ! $session->finalizada && $blockers === [];
         $session->motivos_bloqueo_finalizacion = $blockers;
         $session->puede_certificarse = false;
-        $session->motivos_bloqueo_certificacion = $readiness->preparationBlockers('sesion');
+        $session->motivos_bloqueo_certificacion = [CertificationReadiness::OFFICIAL_ISSUANCE_BLOCKER];
         if ($readiness->usesDevelopmentPolicy()) {
             $session->motivos_bloqueo_certificacion[] = 'La preparación de desarrollo no habilita emisión oficial ni firma digital.';
         }

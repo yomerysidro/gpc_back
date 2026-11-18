@@ -208,17 +208,17 @@ class CertificationReadinessTest extends TestCase
         $this->postJson('/api/activity-session/1/preparar-certificados')->assertUnauthorized();
     }
 
-    public function test_preparation_is_explicitly_blocked_even_for_eligible_session_and_writes_nothing(): void
+    public function test_academic_evaluation_is_available_without_persistent_schema_and_writes_nothing(): void
     {
         $this->seedSession();
-        $this->approveTestPolicy();
+
         $this->authorize(permissions: ['actividades.ver', 'emision.ver', 'emision.crear', 'participantes.ver']);
         $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')
             ->assertOk()->assertJsonPath('data.finalizada', true)
             ->assertJsonPath('data.tipo_certificado_compatible', true)
             ->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Elegible');
         $this->postJson('/api/activity-session/1/preparar-certificados', ['id_tipo_certificado' => 1])
-            ->assertConflict()->assertJsonPath('data.puede_preparar', false)
+            ->assertOk()->assertJsonPath('data.puede_preparar', true)
             ->assertJsonPath('data.certificado_sesion', null);
         $this->assertDatabaseCount('certificado.certificado', 0);
         $this->assertDatabaseHas('certificado.actividad', ['id_actividad' => 1, 'estado' => 'Activa']);
@@ -236,7 +236,7 @@ class CertificationReadinessTest extends TestCase
         $this->assertDatabaseCount('certificado.certificado', 0);
     }
 
-    public function test_malformed_eligibility_policy_blocks_certification_after_operational_closure(): void
+    public function test_malformed_institutional_policy_does_not_block_an_academic_draft(): void
     {
         $this->seedSession('Activo');
         $this->authorize();
@@ -245,8 +245,9 @@ class CertificationReadinessTest extends TestCase
 
         $this->postJson('/api/activity-session/1/finalizar')->assertOk();
         $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()
-            ->assertJsonPath('data.tipo_certificado_compatible', null)
-            ->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Pendiente de validación');
+            ->assertJsonPath('data.tipo_certificado_compatible', true)
+            ->assertJsonPath('data.beneficiarios.data.0.elegible_tecnicamente', true)
+            ->assertJsonPath('data.emision_oficial_autorizada', false);
     }
 
     public function test_read_permissions_do_not_grant_finalization_and_missing_permissions_return_403(): void
@@ -342,11 +343,11 @@ class CertificationReadinessTest extends TestCase
         $this->assertDatabaseCount('certificado.certificado', 0);
     }
 
-    public function test_present_attendance_without_policy_is_pending_and_open_session_has_no_candidates(): void
+    public function test_present_attendance_without_policy_is_eligible_and_open_session_has_no_candidates(): void
     {
         $this->seedSession();
         $this->authorize();
-        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Pendiente de validación');
+        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Elegible');
         $this->getJson('/api/activity-session/2/beneficiarios?id_tipo_certificado=1')->assertOk()
             ->assertJsonCount(0, 'data.beneficiarios.data')->assertJsonPath('data.total_elegibles', 0)
             ->assertJsonPath('data.finalizada', false)->assertJsonPath('data.puede_consultar_beneficiarios', true);
@@ -354,21 +355,21 @@ class CertificationReadinessTest extends TestCase
 
     #[TestWith([true, false])]
     #[TestWith([false, true])]
-    public function test_entry_or_exit_is_required_only_by_explicit_policy(bool $entry, bool $exit): void
+    public function test_institutional_hour_requirements_do_not_block_an_academic_draft(bool $entry, bool $exit): void
     {
         $this->seedSession();
         $this->authorize();
         $this->approveTestPolicy($entry, $exit);
-        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Pendiente de validación');
+        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Elegible');
     }
 
-    public function test_regularization_requirement_without_persistent_model_stays_pending(): void
+    public function test_institutional_regularization_requirement_does_not_block_an_academic_draft(): void
     {
         $this->seedSession();
         $this->authorize();
         $this->approveTestPolicy();
         config(['certification.eligibility.sesion.1.regularizations' => 'required']);
-        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Pendiente de validación');
+        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Elegible');
     }
 
     public function test_global_evaluation_requires_all_sessions_only_when_policy_defines_it(): void
@@ -384,12 +385,12 @@ class CertificationReadinessTest extends TestCase
         $this->getJson('/api/activity/1/beneficiarios-certificacion?id_tipo_certificado=1')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Pendiente de validación');
     }
 
-    public function test_unmapped_certificate_type_cannot_be_assumed_compatible(): void
+    public function test_recognition_type_is_not_compatible_with_session_participation(): void
     {
         $this->seedSession();
         $this->authorize();
         $this->approveTestPolicy();
-        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=2')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'Pendiente de validación');
+        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=2')->assertOk()->assertJsonPath('data.beneficiarios.data.0.estado_elegibilidad', 'No elegible');
     }
 
     public function test_queue_is_paginated_scoped_and_does_not_attribute_global_certificates_to_sessions(): void

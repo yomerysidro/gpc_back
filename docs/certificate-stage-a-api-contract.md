@@ -1,5 +1,16 @@
 # Contrato vigente de Etapa A con certificados_morales
 
+## Preparación académica por sesión
+
+El borrador requiere una actividad Activa o Cerrada con solicitud Aprobada, sesión Finalizada, inscripción Activo y una asistencia PRESENTE sin duplicados. Una asignación como ponente excluye la preparación de participación solo para su sesión. El borrador no requiere una referencia a una política institucional.
+
+Angular puede usar el contrato existente con estos campos y acciones.
+
+1. **Datos.** `GET /api/activity-session/{id}/beneficiarios` devuelve `tipos_certificado_permitidos`. Al consultar con `id_tipo_certificado`, cada candidato expone `elegible_tecnicamente` y la respuesta distingue `estado_preparacion`, `puede_preparar` y `emision_oficial_autorizada`. El catálogo admite por defecto el tipo vigente Capacitación. `CERTIFICATION_PREPARATION_SESSION_TYPE_IDS` permite definir los IDs técnicos compatibles. Los tipos inactivos y los reservados a reconocimiento o prácticas se rechazan.
+2. **Mensaje y vista previa.** `POST /api/activity-session/{id}/preparar-certificados` con `accion: "vista_previa"`, `id_participacion`, el tipo seleccionado, `mensaje` y `formato: "pdf"` devuelve `modo: "academico"`, `oficial: false` y un PDF de vista previa sin registro de emisión. Puede omitirse el tipo cuando hay un único tipo compatible. Si faltan permisos documentales o identidad persistente, la remisión sigue bloqueada y la respuesta indica el motivo.
+3. **Revisar y enviar.** En el mismo endpoint, `revisar_documento` con el mensaje y el tipo devuelve el PDF exacto y un `token_revision`. Tras revisar ese PDF, enviar `accion: "enviar_gerencia"`, `token_revision` y `confirmar: true`. También se conserva el envío de un documento ya preparado. La huella de una vista previa por sí sola no autoriza el envío.
+4. **Aprobación y emisión.** La remisión conserva el estado existente `PENDIENTE_FIRMA` y devuelve `aprobacion_pendiente: true`, `emision_oficial_autorizada: false` y `fecha_emision: null`. El token, los permisos, la verificación SHA-256, la aprobación de Gerencia, la firma y la publicación mantienen sus controles. La evaluación académica no autoriza ninguna de esas operaciones.
+
 ## Consulta pública por DNI
 
 Ruta del Portal Público: `POST /api/portal-certificados/consultar-dni`, sin JWT, con `Content-Type: application/json` y cuerpo `{"dni":"<ocho dígitos>"}`. Se conserva `POST /api/certificados/consulta-dni` como ruta compatible del mismo controlador y servicio. Ambas comparten los mismos límites; alternarlas no reinicia la cuota. No admite DNI en la URL ni campos adicionales. El DNI debe enviarse como string para conservar ceros iniciales.
@@ -108,7 +119,7 @@ Las operaciones privadas requieren cookie JWT access_token, permisos efectivos d
 
 ## Selección y revisión
 
-GET /api/activity-session/{id}/beneficiarios obtiene candidatos con sus capacidades y motivos de bloqueo. La elegibilidad requiere sesión Finalizada, participación Activo y asistencia PRESENTE en esa sesión, solicitud aprobada y tipo activo configurado en certification.preparation.session_type_ids. Los IDs se obtienen del catálogo y de los candidatos reales.
+GET /api/activity-session/{id}/beneficiarios obtiene candidatos con sus capacidades y motivos de bloqueo. La elegibilidad académica usa las reglas de sesión, asistencia, actividad y tipo descritas en «Preparación académica por sesión». Los IDs se obtienen del catálogo y de los candidatos reales.
 
 POST /api/activity-session/{id}/preparar-certificados acepta el siguiente cuerpo para crear la revisión confirmable.
 
