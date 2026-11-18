@@ -679,6 +679,12 @@ class CertificateManagement
         return array_map(fn (array $signer): array => array_intersect_key($signer, array_flip(['id_firma', 'id_persona', 'id_persona_trabajador', 'nombre', 'cargo', 'orden_firma'])), $signers);
     }
 
+    private function assertSessionParticipationRole(object $context): void
+    {
+        abort_if(SessionSpeakers::hasSessionAssignment((int) $context->id_actividad, (int) $context->id_sesion, (int) $context->id_persona),
+            409, 'La persona está vinculada como ponente de esta sesión. Use el flujo de reconocimiento a ponentes.');
+    }
+
     /**
      * @param  list<array{id_persona_trabajador: int, orden_firma: int}>|null  $workers
      * @return array<string, mixed>
@@ -715,6 +721,7 @@ class CertificateManagement
                 'vista_previa_pdf' => ['contenido_base64' => base64_encode(Storage::disk('local')->get($existing->ruta_archivo)),
                     'tipo_contenido' => 'application/pdf', 'persistido' => true]];
         }
+        $this->assertSessionParticipationRole($context);
         $signers = $workers === null ? ($this->usesMinimalSchema() ? [] : $this->signers((int) $context->id_actividad))
             : $this->selectedSigners($context, $workers);
         abort_if($workers !== null && $mode === null, 422, 'Seleccione una modalidad para los funcionarios.');
@@ -941,6 +948,7 @@ class CertificateManagement
                 DB::table('gestion.persona_trabajador')->whereIn('id_persona_trabajador', array_column($manifest['signers'], 'id_persona_trabajador'))->lockForUpdate()->get();
                 DB::table('gestion.persona')->whereIn('id_persona', [$manifest['context']['id_persona'], ...array_column($manifest['signers'], 'id_persona')])->lockForUpdate()->get();
                 $context = $this->context($sessionId, $participationId, (int) $manifest['context']['id_tipo_certificado'], $actor);
+                $this->assertSessionParticipationRole($context);
                 $signers = ($manifest['workers'] ?? null) === null ? ($minimal ? [] : $this->signers((int) $context->id_actividad))
                     : $this->selectedSigners($context, $manifest['workers']);
                 abort_unless((array) $context === $manifest['context'] && $signers === $manifest['signers']

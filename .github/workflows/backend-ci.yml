@@ -17,7 +17,7 @@ defaults:
 
 jobs:
   php:
-    name: PHP y pruebas
+    name: Ejecutar
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -78,7 +78,8 @@ jobs:
         run: vendor/bin/phpunit -c phpunit.postgresql.xml --fail-on-skipped
 
   docker:
-    name: Imagen Docker
+    name: Construir
+    needs: php
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -90,6 +91,30 @@ jobs:
           source_dir=$(mktemp -d)
           git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$source_dir"
           docker build --tag "gpc-back:$GITHUB_SHA" "$source_dir"
+          docker save "gpc-back:$GITHUB_SHA" | gzip -1 > "$RUNNER_TEMP/gpc-back.tar.gz"
+      - name: Guardar imagen construida
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: ${{ runner.temp }}/gpc-back.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+  verify:
+    name: Verificar
+    needs: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Recuperar imagen construida
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: gpc-back.tar.gz
+          path: ${{ runner.temp }}
+      - name: Cargar imagen y comprobar etiqueta
+        run: |
+          docker load --input "$RUNNER_TEMP/gpc-back.tar.gz"
+          docker image inspect "gpc-back:$GITHUB_SHA" > /dev/null
       - name: Verificar arranque, volumen, salud y parada
         run: |
           docker run --detach --name gpc-ci --publish 127.0.0.1:18087:8087 \

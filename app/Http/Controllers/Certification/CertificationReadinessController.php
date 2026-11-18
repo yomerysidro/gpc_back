@@ -109,6 +109,7 @@ class CertificationReadinessController extends Controller
             $session = $this->session($request, $id, 'view');
 
             $data = $origins->sessionSpeakers($id, (int) $session->id_actividad);
+            $data['documentos_doble_rol'] = app(SessionSpeakers::class)->doubleRoleDocuments($id);
             $data['modalidad_reconocimiento'] = 'sesion';
             foreach ($data['ponentes_sesion'] ?? [] as $speaker) {
                 $speaker->reconocimiento = $this->activitySpeakerEvaluation($origins, (int) $speaker->id_actividad_ponente, true, $speaker->reconocimiento);
