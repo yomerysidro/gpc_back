@@ -109,7 +109,7 @@ jobs:
             exit 1
           fi
           echo "Railway: enviando $GITHUB_SHA y esperando estado terminal."
-          if ! railway up "${target[@]}" --json \
+          if ! railway up . --path-as-root --no-gitignore "${target[@]}" --json \
             --message "gpc_back $GITHUB_SHA (Actions $GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT)" </dev/null 2>/dev/null \
             | jq -se 'last | .status == "success"' >/dev/null; then
             echo "::error::Railway no confirmó la activación. Busca el SHA en Deployments y revisa estado y logs antes de reintentar."

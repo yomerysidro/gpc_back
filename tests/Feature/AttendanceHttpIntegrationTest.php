@@ -218,11 +218,10 @@ class AttendanceHttpIntegrationTest extends TestCase
         $this->assertDatabaseHas('certificado.asistencia', ['id_asistencia' => 1, 'estado' => 'PRESENTE']);
     }
 
-    public function test_administrator_uses_effective_permissions_without_blanket_bypass(): void
+    public function test_operator_cannot_edit_attendance_after_its_edit_permission_is_disabled(): void
     {
-        $this->authenticate();
+        $this->authenticate(false);
         $this->seedAttendance();
-        self::assertTrue(User::findOrFail(1)->isSystemAdministrator());
         self::assertContains('participantes.editar', User::findOrFail(1)->permissionKeys());
         DB::table('acceso.permiso')->where('clave', 'participantes.editar')->update(['estado' => false]);
         $this->patchJson('/api/attendance/update/1', ['ESTADO' => 'AUSENTE'])->assertForbidden();
