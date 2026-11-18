@@ -248,29 +248,30 @@ class CertificateDocumentWorkflow
         return trim(implode(' ', array_filter([$person->nombres, $person->apellido_paterno, $person->apellido_materno])));
     }
 
-    /** @return array{url_documento: ?string, puede_visualizar: bool, puede_descargar: bool, motivo_documento: ?string} */
+    /** @return array{url_documento: ?string, puede_visualizar: bool, puede_descargar: bool, motivo_documento: ?string, integridad_verificada: ?bool} */
     private function administrativeFileAccess(object $document): array
     {
         $reason = null;
+        $integrity = null;
         if ($document->estado !== 'Vigente') {
             $reason = 'El documento no está vigente para visualizar o descargar su PDF.';
         } else {
             try {
-                $current = app(CertificateDocumentVersions::class)->resolve($document, readOnly: true);
-                foreach ([$document->ruta_archivo_original ?? $document->ruta_archivo, $current->ruta_archivo] as $path) {
-                    if (! is_string($path) || ! str_starts_with($path, 'certificados/')
-                        || str_contains($path, '..') || str_contains($path, '\\') || ! Storage::disk('local')->exists($path)) {
-                        $reason = 'El PDF registrado no está disponible en el almacenamiento privado.';
-                    }
+                $this->generator->authorizedArtifact($document, readOnly: true);
+                $integrity = true;
+            } catch (HttpException $exception) {
+                if ($exception->getStatusCode() !== 409) {
+                    throw $exception;
                 }
-            } catch (HttpException) {
-                $reason = 'No se pudo acreditar la versión documental vigente.';
+                $integrity = false;
+                $reason = 'El PDF registrado no está disponible o su integridad no coincide con el registro.';
             }
         }
 
         return ['url_documento' => $reason === null
             ? route('certificates.document.download', ['id' => $document->id_certificado_documento], false).'?flujo=firmas' : null,
-            'puede_visualizar' => $reason === null, 'puede_descargar' => $reason === null, 'motivo_documento' => $reason];
+            'puede_visualizar' => $reason === null, 'puede_descargar' => $reason === null, 'motivo_documento' => $reason,
+            'integridad_verificada' => $integrity];
     }
 
     /**
@@ -308,7 +309,7 @@ class CertificateDocumentWorkflow
                 'id_certificado_documento' => (int) $document->id_certificado_documento,
                 'estado_certificado' => $document->estado_certificado, 'estado_documento' => $document->estado,
                 'fecha_emision' => $document->fecha_emision, 'puede_preparar_como_individual' => false,
-                ...$access, 'integridad_verificada' => null,
+                ...$access,
                 'facultades' => ['ver' => true, 'visualizar' => $access['puede_visualizar'], 'descargar' => $access['puede_descargar']]];
         })->values();
         $current = $summaries->where('estado_documento', 'Vigente');
@@ -484,7 +485,8 @@ class CertificateDocumentWorkflow
     {
         $document = $this->document($id, $actor);
         $detail = $this->describe(collect([$document]))[$id];
-        $detail['facultades']['remitir'] = $document->estado_certificado === CertificateManagement::PREPARED
+        $detail['facultades']['remitir'] = $detail['integridad_verificada'] === true
+            && $document->estado_certificado === CertificateManagement::PREPARED
             && $this->canRemit($document, $actor)
             && $detail['firmas']['registradas'] === 0
             && collect($detail['firmantes'])->unique('id_persona')->count() === count($detail['firmantes'])

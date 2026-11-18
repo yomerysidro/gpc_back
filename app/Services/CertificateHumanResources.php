@@ -152,7 +152,7 @@ class CertificateHumanResources
     }
 
     /** @param list<array<string, mixed>>|null $signers */
-    private function confirmed(object $document, ?array $signers = null): ?object
+    private function confirmed(object $document, ?array $signers = null, ?object $verifiedArtifact = null): ?object
     {
         if ($document->estado !== 'Vigente' || $document->fecha_emision !== null) {
             return null;
@@ -163,14 +163,16 @@ class CertificateHumanResources
             || count(array_unique(array_column($signers, 'id_persona'))) !== count($signers)) {
             return null;
         }
-        $resolved = $this->versions->resolve($document, readOnly: true);
+        $resolved = $verifiedArtifact ?? $this->versions->resolve($document, readOnly: true);
         $metadata = json_decode($document->motivo_reemision ?? '', true);
         $plan = $resolved->plan_pdf_aprobado ?? ((is_array($metadata) && ($metadata['v'] ?? null) === 0) ? ($metadata['p'] ?? null) : null);
         if (! is_string($plan) || ! hash_equals($plan, CertificateSignerRevision::planHash($signers, $document->modalidad_firma))) {
             return null;
         }
-        $this->generator->assertArtifact($document);
-        $this->generator->assertArtifact($resolved);
+        if ($verifiedArtifact === null) {
+            $this->generator->assertArtifact($document);
+            $this->generator->assertArtifact($resolved);
+        }
         $resolved->preparado_entrega = true;
         $resolved->responsables_administrativos = $signers;
 
@@ -216,6 +218,25 @@ class CertificateHumanResources
 
                     continue;
                 }
+                $verifiedArtifact = null;
+                if ($historical) {
+                    try {
+                        if ($document->estado === 'Vigente') {
+                            $verifiedArtifact = $this->generator->authorizedArtifact($document, readOnly: true);
+                            $verifiedArtifact->integridad_verificada = true;
+                        } else {
+                            $document = $this->versions->resolve($document, readOnly: true);
+                        }
+                    } catch (HttpException $exception) {
+                        if ($exception->getStatusCode() !== 409) {
+                            throw $exception;
+                        }
+                        $document->integridad_verificada = false;
+                        yield $document;
+
+                        continue;
+                    }
+                }
                 if (in_array($document->estado_certificado, [CertificateManagement::PREPARED, CertificateManagement::PENDING], true)) {
                     if ((int) $currentCounts->get($document->id_certificado, 0) !== 1) {
                         continue;
@@ -224,17 +245,14 @@ class CertificateHumanResources
                         || $document->estado !== 'Vigente' || $document->fecha_emision !== null)) {
                         continue;
                     }
-                    $confirmed = $this->confirmed($document, $plans[(int) $document->id_certificado_documento] ?? []);
+                    $confirmed = $this->confirmed($document, $plans[(int) $document->id_certificado_documento] ?? [], $verifiedArtifact);
                     if ($confirmed !== null) {
                         yield $confirmed;
                     } elseif ($includePending) {
-                        $this->generator->assertArtifact($document);
-                        $resolved = $this->versions->resolve($document, readOnly: true);
-                        $this->generator->assertArtifact($resolved);
-                        yield $resolved;
+                        yield $verifiedArtifact ?? $this->generator->authorizedArtifact($document, readOnly: true);
                     }
                 } elseif ($historical) {
-                    yield $this->versions->resolve($document, readOnly: true);
+                    yield $verifiedArtifact ?? $document;
                 }
             }
         }
@@ -474,6 +492,7 @@ class CertificateHumanResources
     private function present(object $document): array
     {
         $prepared = (bool) ($document->preparado_entrega ?? false);
+        $integrity = $document->integridad_verificada ?? ($prepared ? true : null);
         $originData = [];
         $activityId = $document->id_actividad ?? null;
         $activityName = $document->actividad ?? null;
@@ -515,9 +534,14 @@ class CertificateHumanResources
             'estado' => $document->estado, 'fecha_generacion' => $document->fecha_generacion,
             'hash_certificado' => $document->hash_certificado, 'motivo_reemision' => $document->motivo_reemision ?? null,
             'preparado_para_entrega' => $prepared, 'disponible_rrhh' => $prepared,
+            'integridad_verificada' => $integrity,
             'estado_preparacion' => $prepared ? 'PREPARADO_ENTREGA' : null,
-            'etiqueta_estado' => $prepared ? 'Listo para entrega'
-                : ($document->estado_certificado === CertificateManagement::PENDING ? 'Pendiente de firma' : $document->estado),
+            'etiqueta_estado' => match (true) {
+                $integrity === false => 'PDF no disponible o con integridad incorrecta',
+                $prepared => 'Listo para entrega',
+                $document->estado_certificado === CertificateManagement::PENDING => 'Pendiente de firma',
+                default => $document->estado,
+            },
             'responsables_administrativos' => $document->responsables_administrativos ?? [],
             'estado_documental' => $document->estado, 'estado_certificado' => $document->estado_certificado,
             'estado_firma' => $document->estado_certificado, 'fecha_emision' => $document->fecha_emision,

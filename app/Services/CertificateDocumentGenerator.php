@@ -19,11 +19,14 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Throwable;
 
 class CertificateDocumentGenerator
 {
+    public const ARTIFACT_MISSING = 1;
+
     public function authorizedArtifact(object $document, bool $readOnly = false): object
     {
         $original = clone $document;
@@ -266,6 +269,9 @@ class CertificateDocumentGenerator
             && ! str_contains($path, '..') && ! str_contains($path, '\\')
             && preg_match('~\.pdf$~iD', $path) === 1, 409, 'Ruta documental no compatible.');
         $file = realpath(Storage::disk('local')->path($path));
+        if ($file === false) {
+            throw new ConflictHttpException('El PDF registrado no está disponible en el almacenamiento privado.', code: self::ARTIFACT_MISSING);
+        }
         $root = realpath(Storage::disk('local')->path('certificados'));
         $base = realpath(Storage::disk('local')->path(''));
         foreach ([public_path(), storage_path('app/public')] as $publicDirectory) {

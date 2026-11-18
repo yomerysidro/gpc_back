@@ -528,6 +528,45 @@ class CertificateSigningStageBTest extends TestCase
         $this->assertDatabaseHas('certificado.certificado', ['estado' => 'PENDIENTE_FIRMA', 'fecha_emision' => null]);
     }
 
+    #[TestWith(['PENDIENTE_FIRMA'])]
+    #[TestWith(['PREPARADO'])]
+    public function test_catalog_reports_missing_pdf_without_offering_delivery(string $state): void
+    {
+        $this->prepareHumanResources();
+        DB::table('certificado.certificado')->update(['estado' => $state]);
+        $original = DB::table('certificado.certificado_documento')->first();
+        Storage::disk('local')->delete($original->ruta_archivo);
+        $this->actor(['emision.ver'], administrator: false, id: 20);
+
+        foreach (['/api/certificados/list', '/api/certificados-documentos/list'] as $route) {
+            $this->getJson($route)->assertOk()->assertJsonPath('data.total', 1)
+                ->assertJsonPath('data.data.0.id_certificado_documento', 1)
+                ->assertJsonPath('data.data.0.estado_certificado', $state)
+                ->assertJsonPath('data.data.0.estado_documental', 'Vigente')
+                ->assertJsonPath('data.data.0.integridad_verificada', false)
+                ->assertJsonPath('data.data.0.pdf_confirmado', false)
+                ->assertJsonPath('data.data.0.disponible_rrhh', false)
+                ->assertJsonPath('data.data.0.emision_oficial_verificada', false);
+            $this->getJson($route.'?estado_preparacion=PREPARADO_ENTREGA')->assertOk()->assertJsonPath('data.total', 0);
+        }
+
+        $this->getJson('/api/certificados-documentos/list?bandeja=por_firmar')->assertOk()
+            ->assertJsonPath('data.total', $state === 'PENDIENTE_FIRMA' ? 1 : 0);
+        $this->getJson(self::BASE.'/progreso')->assertOk()
+            ->assertJsonPath('data.integridad_verificada', false)
+            ->assertJsonPath('data.pdf_confirmado', false)
+            ->assertJsonPath('data.disponible_rrhh', false)
+            ->assertJsonPath('data.facultades.asignar', false)
+            ->assertJsonPath('data.facultades.emitir', false);
+        $this->getJson('/api/certificados-documentos/detail/1')->assertOk()
+            ->assertJsonPath('data.integridad_verificada', false)
+            ->assertJsonPath('data.url_documento', null)
+            ->assertJsonPath('data.facultades.descargar', false)
+            ->assertJsonPath('data.facultades.remitir', false);
+        $this->getJson('/api/certificados-documentos/1/archivo')->assertConflict();
+        self::assertEquals($original, DB::table('certificado.certificado_documento')->first());
+    }
+
     #[TestWith([false])]
     #[TestWith([true])]
     public function test_existing_catalog_enforces_jwt_permissions_scope_and_filter_validation(bool $pending): void
