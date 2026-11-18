@@ -615,7 +615,7 @@ class CertificationReadinessController extends Controller
                     ? 'No se puede evaluar la preparación por sesión.' : 'La preparación por sesión requiere soporte institucional oficial.', 409, $data);
             }
             if ($finalizing && ! $data['finalizada']) {
-                return $this->information('No se puede finalizar la sesión.', 409, $data);
+                return $this->information($data['motivos_bloqueo'][0] ?? 'No se puede finalizar la sesión.', 409, $data);
             }
 
             $message = $finalizing ? 'Sesión finalizada; la actividad conserva su estado.'

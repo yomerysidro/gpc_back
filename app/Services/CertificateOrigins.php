@@ -296,7 +296,19 @@ class CertificateOrigins
         }
         if ($modality === 'individual' && $documents->isNotEmpty()) {
             foreach ($documents as $document) {
-                $approved = app(CertificateDocumentVersions::class)->approvedContent($document);
+                try {
+                    $approved = app(CertificateDocumentVersions::class)->approvedContent($document);
+                } catch (HttpException $exception) {
+                    if ($exception->getStatusCode() !== 409) {
+                        throw $exception;
+                    }
+                    $evaluation['motivos_bloqueo'][] = $exception->getMessage();
+                    $evaluation['estado_elegibilidad'] = 'Pendiente de validación';
+                    $evaluation['puede_preparar'] = false;
+                    $evaluation['puede_generar_pdf'] = false;
+
+                    continue;
+                }
                 if (in_array($approved['context']['origen'] ?? null, ['ponente_actividad', 'ponente_sesion'], true)) {
                     $originalContext = $approved['context'];
                     $modality = $approved['context']['origen'] === 'ponente_sesion' ? 'sesion' : 'actividad';

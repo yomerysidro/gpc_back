@@ -450,6 +450,10 @@ class CertificateDocumentGenerator
 
     private function verificationUrl(string $code, bool $demonstration = false): string
     {
+        if (app()->isProduction()) {
+            return 'https://certificados-morales.aiyond.org/verificar/'.$code;
+        }
+
         $local = app()->environment('local', 'testing');
         $defaultBase = $demonstration && $local
             ? rtrim((string) config('app.url'), '/').dirname(route('certificates.verify', ['code' => $code], false))

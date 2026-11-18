@@ -112,7 +112,7 @@ class CertificateDocumentWorkflow
         return $query;
     }
 
-    public function document(int $id, User $actor): object
+    public function document(int $id, User $actor, bool $resolveVersion = true): object
     {
         $this->authorize($actor);
         $key = self::class.'.document.'.hash('sha256', serialize([$id, $actor->getAuthIdentifier(),
@@ -122,7 +122,7 @@ class CertificateDocumentWorkflow
         abort_unless($document, 404, 'Documento no encontrado en su ámbito.');
         abort_unless(Gate::forUser($actor)->allows('view', (new CertificateDocument)->newFromBuilder((array) $document)), 403, 'No autorizado.');
 
-        return app(CertificateDocumentVersions::class)->resolve($document, readOnly: true);
+        return $resolveVersion ? app(CertificateDocumentVersions::class)->resolve($document, readOnly: true) : $document;
     }
 
     /** @param Collection<int, object> $documents
@@ -153,7 +153,8 @@ class CertificateDocumentWorkflow
         $result = [];
         foreach ($documents as $document) {
             $id = (int) $document->id_certificado_documento;
-            $access = $this->administrativeFileAccess($document);
+            $artifact = null;
+            $access = $this->administrativeFileAccess($document, $artifact);
             $applications = $registered->get($id, collect());
             $signers = $assignments->get($document->id_actividad, collect())->map(function (object $signer) use ($applications): array {
                 $application = $applications->firstWhere('id_firma', $signer->id_firma);
@@ -182,7 +183,7 @@ class CertificateDocumentWorkflow
             }
             $result[$id] = [
                 'id_certificado_documento' => $id, 'id_certificado' => (int) $document->id_certificado,
-                'codigo_verificacion' => $document->codigo_verificacion, 'hash_pdf' => $document->hash_certificado,
+                'codigo_verificacion' => $document->codigo_verificacion, 'hash_pdf' => $artifact->hash_certificado ?? $document->hash_certificado,
                 'estado_documento' => $document->estado, 'estado_certificado' => $document->estado_certificado,
                 'fecha_emision' => $document->fecha_emision, 'fecha_generacion' => $document->fecha_generacion,
                 'origen' => ($document->id_sesion ?? null) !== null ? 'sesion'
@@ -249,7 +250,7 @@ class CertificateDocumentWorkflow
     }
 
     /** @return array{url_documento: ?string, puede_visualizar: bool, puede_descargar: bool, motivo_documento: ?string, integridad_verificada: ?bool} */
-    private function administrativeFileAccess(object $document): array
+    private function administrativeFileAccess(object $document, ?object &$artifact = null): array
     {
         $reason = null;
         $integrity = null;
@@ -257,14 +258,14 @@ class CertificateDocumentWorkflow
             $reason = 'El documento no está vigente para visualizar o descargar su PDF.';
         } else {
             try {
-                $this->generator->authorizedArtifact($document, readOnly: true);
+                $artifact = $this->generator->authorizedArtifact($document, readOnly: true);
                 $integrity = true;
             } catch (HttpException $exception) {
                 if ($exception->getStatusCode() !== 409) {
                     throw $exception;
                 }
                 $integrity = false;
-                $reason = 'El PDF registrado no está disponible o su integridad no coincide con el registro.';
+                $reason = $exception->getMessage();
             }
         }
 
@@ -483,7 +484,7 @@ class CertificateDocumentWorkflow
     /** @return array<string, mixed> */
     public function detail(int $id, User $actor): array
     {
-        $document = $this->document($id, $actor);
+        $document = $this->document($id, $actor, resolveVersion: false);
         $detail = $this->describe(collect([$document]))[$id];
         $detail['facultades']['remitir'] = $detail['integridad_verificada'] === true
             && $document->estado_certificado === CertificateManagement::PREPARED
