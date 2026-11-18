@@ -7,7 +7,14 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class PublicCertificateLookup
 {
+    public const CODE_PATTERN = '(?:[a-f0-9]{30}|(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{2,30})';
+
     public function __construct(private CertificateHumanResources $resources, private CertificateDocumentVersions $versions) {}
+
+    public static function supportsCode(string $code): bool
+    {
+        return preg_match('~\A'.self::CODE_PATTERN.'\z~', $code) === 1;
+    }
 
     /** @return list<array<string, mixed>> */
     public function search(string $dni): array
@@ -24,6 +31,10 @@ class PublicCertificateLookup
         }
         $items = [];
         foreach ($this->resources->publicConfirmedDocuments((int) $people->first()) as $document) {
+            if (! self::supportsCode($document->codigo_verificacion)) {
+                continue;
+            }
+
             try {
                 $context = $this->versions->current($document, readOnly: true)['context'] ?? [];
                 if ($context !== [] && ((int) ($context['id_persona'] ?? 0) !== (int) $document->id_persona
