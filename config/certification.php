@@ -1,9 +1,6 @@
 <?php
 
 $developmentClosureEnabled = (bool) env('CERTIFICATION_DEVELOPMENT_CLOSURE_ENABLED', false);
-$approvedClosure = env('CERTIFICATION_SESSION_CLOSURE_POLICY');
-$approvedClosure = is_string($approvedClosure) && trim($approvedClosure) !== ''
-    ? json_decode($approvedClosure, true) : null;
 $sessionTypes = trim((string) env('CERTIFICATION_DEVELOPMENT_SESSION_TYPE_IDS', ''));
 $preparationTypes = trim((string) env('CERTIFICATION_PREPARATION_SESSION_TYPE_IDS', ''));
 $practiceCompletionState = trim((string) env('CERTIFICATION_PRACTICE_COMPLETION_STATE', ''));
@@ -48,7 +45,7 @@ return [
         'pdf_policy_reference' => env('CERTIFICATION_PUBLIC_PDF_POLICY_REFERENCE'),
         'pdf_codes' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_PUBLIC_PDF_CODES', '')))),
     ],
-    // Configure only from an approved institutional policy, never from HTTP input.
+    // Provisional certification tools for isolated development environments.
     'development_closure_enabled' => $developmentClosureEnabled,
     'development_schema_authorized' => (bool) env('CERTIFICATION_DEVELOPMENT_SCHEMA_AUTHORIZED', false),
     'development_session_type_ids' => preg_match('/^[1-9][0-9]*(,[1-9][0-9]*)*$/D', $sessionTypes)
@@ -64,27 +61,13 @@ return [
     'session_closure' => $developmentClosureEnabled ? [
         'scope' => 'development',
         'reference' => 'DESARROLLO PROVISIONAL: cierre de integracion, sin aprobacion municipal',
-        'final_state' => 'Finalizada',
-        'open_states' => ['Activo'],
         'active_participation_states' => ['Activo'],
         'eligible_attendance_states' => ['PRESENTE'],
         'ineligible_attendance_states' => ['AUSENTE'],
         'require_entry' => false,
         'require_exit' => false,
         'regularizations' => 'not_applicable',
-    ] : $approvedClosure,
-    // Inactive proposal. Copy to session_closure only after the municipal decisions are approved.
-    'session_closure_proposal' => [
-        'reference' => null,
-        'final_state' => 'Finalizada',
-        'open_states' => ['Activo', 'activo'],
-        'active_participation_states' => ['Activo'],
-        'eligible_attendance_states' => ['PRESENTE'],
-        'ineligible_attendance_states' => ['AUSENTE'],
-        'require_entry' => false,
-        'require_exit' => false,
-        'regularizations' => null,
-    ],
+    ] : null,
     'eligibility' => ['sesion' => [], 'actividad' => []],
 
     // Operational labels for reporting only; these do not authorize closure or certification.

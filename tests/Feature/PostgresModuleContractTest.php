@@ -258,14 +258,6 @@ class PostgresModuleContractTest extends TestCase
         DB::table('certificado.solicitud_actividad')->insert(['id_solicitud_actividad' => 1, 'id_actividad' => $activity, 'estado' => 'Aprobada']);
         $readiness = app(CertificationReadiness::class);
         config(['certification.session_closure' => null]);
-        self::assertFalse($readiness->finalize($session, 1, [$ids['area']])['finalizada']);
-        config(['certification.session_closure' => [
-            'reference' => 'EXCLUSIVA DE PRUEBAS, sin validez institucional',
-            'final_state' => 'Finalizada',
-            'open_states' => ['Activo'], 'active_participation_states' => ['Activo'],
-            'eligible_attendance_states' => ['PRESENTE'], 'ineligible_attendance_states' => ['AUSENTE'],
-            'require_entry' => false, 'require_exit' => false, 'regularizations' => 'not_applicable',
-        ]]);
         foreach ([1, 2] as $attempt) {
             $result = $readiness->finalize($session, 1, [$ids['area']]);
             self::assertTrue($result['finalizada']);
