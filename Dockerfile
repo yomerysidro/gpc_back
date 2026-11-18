@@ -15,15 +15,12 @@ WORKDIR /app
 
 COPY package.json package-lock.json .npmrc ./
 
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+RUN npm ci
 
 COPY vite.config.js ./
 COPY resources ./resources
 
-RUN --mount=type=cache,target=/root/.npm \
-    --mount=type=cache,target=/app/node_modules/.cache \
-    npm run build
+RUN npm run build
 
 
 # ============================================================

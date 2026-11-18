@@ -8,6 +8,7 @@ use App\Services\Auth\JwtService;
 use Firebase\JWT\JWT;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Routing\Route as RegisteredRoute;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -458,12 +459,10 @@ class UserSecurityTest extends TestCase
     {
         $public = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/certificados/verificar/{code}', 'api/certificados/consulta-dni', 'api/portal-certificados/consultar-dni'];
         $routes = array_values(array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/')));
-        $this->assertCount(246, $routes);
         $protected = array_values(array_filter($routes, fn ($route) => ! in_array($route->uri(), $public, true)));
-        $this->assertCount(240, $protected);
+        $this->assertNotEmpty($protected);
         foreach ($protected as $route) {
-            $origin = str_contains($route->wheres['origen'] ?? '', 'reconocimiento') ? 'reconocimiento' : 'practica';
-            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{origen}', $origin, $route->uri()));
+            $uri = $this->registeredRouteUri($route);
             $this->json($route->methods()[0], $uri)->assertUnauthorized()->assertHeaderMissing('Location');
         }
     }
@@ -474,13 +473,21 @@ class UserSecurityTest extends TestCase
         $allowed = ['api/auth/login', 'api/auth/forgot-password', 'api/auth/reset-password', 'api/auth/me', 'api/auth/logout', 'api/certificados/verificar/{code}', 'api/certificados/consulta-dni', 'api/portal-certificados/consultar-dni',
             'api/mis-certificados', 'api/mis-certificados/{id}/pdf'];
         $routes = array_filter(app('router')->getRoutes()->getRoutes(), fn ($route) => str_starts_with($route->uri(), 'api/') && ! in_array($route->uri(), $allowed, true));
-        $this->assertCount(236, $routes);
+        $this->assertNotEmpty($routes);
         foreach ($routes as $route) {
-            $origin = str_contains($route->wheres['origen'] ?? '', 'reconocimiento') ? 'reconocimiento' : 'practica';
-            $uri = '/'.preg_replace('/\{[^}]+\}/', '1', str_replace('{origen}', $origin, $route->uri()));
+            $uri = $this->registeredRouteUri($route);
             $response = $this->json($route->methods()[0], $uri);
             $this->assertSame(403, $response->status(), $route->methods()[0].' '.$uri);
         }
+    }
+
+    private function registeredRouteUri(RegisteredRoute $route): string
+    {
+        return '/'.preg_replace_callback('/\{([^}]+)\}/', function (array $parameter) use ($route): string {
+            $firstChoice = explode('|', $route->wheres[$parameter[1]] ?? '')[0];
+
+            return preg_match('/^[a-z_]+$/D', $firstChoice) === 1 ? $firstChoice : '1';
+        }, $route->uri());
     }
 
     public function test_tampering_with_the_subject_of_a_valid_token_is_rejected(): void

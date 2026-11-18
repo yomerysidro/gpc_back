@@ -84,7 +84,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Construir con el Dockerfile del repositorio
-        run: docker build --tag "gpc-back:$GITHUB_SHA" .
+        run: |
+          source_dir=$(mktemp -d)
+          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$source_dir"
+          docker build --tag "gpc-back:$GITHUB_SHA" "$source_dir"
       - name: Verificar arranque, volumen, salud y parada
         run: |
           docker run --detach --name gpc-ci --publish 127.0.0.1:18087:8087 \
