@@ -249,6 +249,7 @@ Route::middleware('auth.cookie')->group(function () {
     Route::post('certificaciones/{origen}/{id}/preparar', [CertificationReadinessController::class, 'prepareOrigin'])->whereIn('origen', ['reconocimiento', 'practica', 'ponente_actividad', 'ponente_sesion'])->whereNumber('id')->middleware('permission:emision.ver');
     Route::get('certificaciones/{origen}/{id}/preparar', [CertificationReadinessController::class, 'prepareOrigin'])->whereIn('origen', ['ponente_sesion', 'practica', 'reconocimiento'])->whereNumber('id')->middleware('permission:emision.ver');
     Route::match(['GET', 'POST', 'DELETE'], 'activity/{activity}/sessions/{id}/ponentes', [CertificationReadinessController::class, 'manageSessionSpeakers'])->whereNumber(['activity', 'id']);
+    Route::put('activity/{activity}/sessions/{id}/ponentes/{assignment}/asistencia', [CertificationReadinessController::class, 'markSpeakerAttendance'])->whereNumber(['activity', 'id', 'assignment']);
     Route::get('activity/{id}/ponentes-certificacion', [CertificationReadinessController::class, 'activitySpeakers'])->whereNumber('id');
     Route::get('activity-session/{id}/ponentes-certificacion', [CertificationReadinessController::class, 'sessionSpeakers'])->whereNumber('id');
     Route::get('practices/{id}/evaluacion-certificacion', [CertificationReadinessController::class, 'practiceReadiness'])->whereNumber('id');

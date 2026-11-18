@@ -15,6 +15,15 @@ class SessionParticipants
             ->leftJoin('certificado.asistencia as a', function (JoinClause $join) use ($session): void {
                 $join->on('a.id_participacion', '=', 'p.id_participacion')->where('a.id_actividad_sesion', $session->id_actividad_sesion);
             })->where('p.id_actividad', $session->id_actividad);
+        if (SessionSpeakers::supportsSessionLinks()) {
+            $query->whereNotExists(SessionSpeakers::assignments()->selectRaw('1')
+                ->where('ap.id_actividad_sesion', $session->id_actividad_sesion)
+                ->where('ap.id_actividad', $session->id_actividad)->whereColumn('pp.id_persona', 'p.id_persona'));
+        }
+        $active = app(CertificationReadiness::class)->activeAttendanceEnrollmentStates();
+        if ($active !== []) {
+            $query->whereIn(DB::raw('upper(trim(cast(p.estado as text)))'), $active);
+        }
         if (! $candidates) {
             $query->whereNotNull('a.id_asistencia');
         }
@@ -44,6 +53,15 @@ class SessionParticipants
             $current = DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $session->id_actividad_sesion)->lockForUpdate()->first();
             abort_unless($current && (int) $current->id_actividad === (int) $session->id_actividad, 409, 'La sesión cambió; vuelva a consultarla.');
             abort_if($current->estado === CertificationReadiness::FINAL_SESSION_STATE, 409, 'La sesión está finalizada.');
+            if (SessionSpeakers::supportsSessionLinks()) {
+                abort_if(SessionSpeakers::assignments()->where('ap.id_actividad_sesion', $current->id_actividad_sesion)
+                    ->where('ap.id_actividad', $current->id_actividad)
+                    ->whereIn('pp.id_persona', $enrollments->pluck('id_persona'))->exists(),
+                    409, 'La asistencia de los ponentes se registra en su propia sección.');
+            }
+            $active = app(CertificationReadiness::class)->activeAttendanceEnrollmentStates();
+            abort_if($active !== [] && $enrollments->contains(fn (object $row): bool => ! in_array(strtoupper(trim($row->estado ?? '')), $active, true)),
+                422, 'Todos los participantes deben tener una inscripción vigente.');
             foreach ($enrollments as $enrollment) {
                 if (DB::table('certificado.asistencia')->where('id_participacion', $enrollment->id_participacion)
                     ->where('id_actividad_sesion', $current->id_actividad_sesion)->exists()) {

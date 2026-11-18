@@ -8,6 +8,7 @@ use App\Models\Activity\Activity;
 use App\Models\ActivitySession\ActivitySession;
 use App\Models\ActivitySpeaker\ActivitySpeaker;
 use App\Models\ActivityType\ActivityType;
+use App\Models\Attendance\Attendance;
 use App\Models\Certificate\Certificate;
 use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\CertificateType\CertificateType;
@@ -84,6 +85,19 @@ class CertificationReadinessController extends Controller
             $speakers->unlink($activity, $id, $input['id_actividad_ponente']);
 
             return ['desvinculado' => true];
+        });
+    }
+
+    public function markSpeakerAttendance(Request $request, int $activity, int $id, int $assignment, SessionSpeakers $speakers): JsonResponse
+    {
+        return $this->respond(function () use ($request, $activity, $id, $assignment, $speakers): array {
+            $session = $this->session($request, $id, 'view');
+            abort_unless((int) $session->id_actividad === $activity, 404, 'La sesión no pertenece a la actividad.');
+            abort_if(Gate::denies('viewAny', ActivitySpeaker::class) || Gate::denies('update', Attendance::class),
+                403, 'No autorizado para registrar asistencia de ponentes.');
+            $input = Validator::make($request->all(), ['estado' => 'required|in:PRESENTE,AUSENTE'])->validate();
+
+            return $speakers->markAttendance($activity, $id, $assignment, $input['estado'], (int) $request->user()->getAuthIdentifier());
         });
     }
 
