@@ -154,24 +154,17 @@ class PublicCertificateLookupPostgresTest extends TestCase
             ->postJson('/api/certificados/consulta-dni', ['dni' => '00000000'])->assertStatus(429);
     }
 
-    public function test_publication_requires_policy_and_only_serves_the_approved_pdf(): void
+    public function test_publication_policy_does_not_expose_a_pending_document(): void
     {
         $document = $this->confirmedIdentity();
         $code = $document->codigo_verificacion;
         config(['certification.public_lookup.pdf_policy_reference' => 'POLITICA_SOLO_EN_PROCESO_DE_PRUEBA',
             'certification.public_lookup.pdf_codes' => [$code]]);
-        $approval = app(CertificateDocumentVersions::class)->current($document, readOnly: true);
-        $this->getJson('/api/certificados/verificar/'.$code)->assertOk()->assertJsonPath('data.puede_ver_documento', true)
-            ->assertJsonPath('data.hash_sha256', $approval['hash'])->assertJsonPath('data.firma_verificada', false)
+        $url = '/api/certificados/verificar/'.$code;
+        $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', false)
+            ->assertJsonPath('data.hash_sha256', null)->assertJsonPath('data.firma_verificada', false)
             ->assertJsonPath('data.emision_oficial_verificada', false);
-        $response = $this->get('/api/certificados/verificar/'.$code.'?archivo=1')->assertOk()->assertHeader('Content-Type', 'application/pdf');
-        $this->assertSame($approval['hash'], hash_file('sha256', $response->baseResponse->getFile()->getPathname()));
-        $download = $this->get('/api/certificados/verificar/'.$code.'?archivo=1&descargar=1')
-            ->assertOk()->assertDownload('certificado-'.$code.'.pdf')
-            ->assertHeader('X-Document-SHA256', $approval['hash']);
-        $this->assertSame($approval['hash'], hash_file('sha256', $download->baseResponse->getFile()->getPathname()));
-        $this->get('/api/certificados/verificar/'.$code, ['Accept' => 'text/html'])->assertOk();
-        config(['certification.public_lookup.pdf_policy_reference' => null]);
-        $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertForbidden();
+        $this->getJson($url.'?archivo=1')->assertForbidden();
+        $this->getJson($url.'?archivo=1&descargar=1')->assertForbidden();
     }
 }

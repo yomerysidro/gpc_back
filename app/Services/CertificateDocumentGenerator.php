@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Throwable;
@@ -26,6 +27,21 @@ use Throwable;
 class CertificateDocumentGenerator
 {
     public const ARTIFACT_MISSING = 1;
+
+    public function privatePdfResponse(object $verifiedDocument, bool $download = false): BinaryFileResponse
+    {
+        return response()->download(
+            Storage::disk('local')->path($verifiedDocument->ruta_archivo),
+            'certificado-'.$verifiedDocument->codigo_verificacion.'.pdf',
+            [
+                'Content-Type' => 'application/pdf',
+                'Cache-Control' => 'private, no-store',
+                'X-Content-Type-Options' => 'nosniff',
+                'X-Document-SHA256' => $verifiedDocument->hash_certificado,
+            ],
+            $download ? 'attachment' : 'inline',
+        )->setPrivate();
+    }
 
     public function authorizedArtifact(object $document, bool $readOnly = false): object
     {
@@ -270,7 +286,7 @@ class CertificateDocumentGenerator
             && preg_match('~\.pdf$~iD', $path) === 1, 409, 'Ruta documental no compatible.');
         $file = realpath(Storage::disk('local')->path($path));
         if ($file === false) {
-            throw new ConflictHttpException('El PDF registrado no está disponible en el almacenamiento privado.', code: self::ARTIFACT_MISSING);
+            throw new ConflictHttpException('Documento no disponible. El PDF registrado no está en el almacenamiento privado.', code: self::ARTIFACT_MISSING);
         }
         $root = realpath(Storage::disk('local')->path('certificados'));
         $base = realpath(Storage::disk('local')->path(''));
@@ -320,25 +336,9 @@ class CertificateDocumentGenerator
     /** @return array<string, mixed> */
     public function verification(object $document): array
     {
-        if (str_starts_with($document->ruta_archivo, 'certificados/preparados/')
+        if (str_starts_with((string) $document->ruta_archivo, 'certificados/preparados/')
             || in_array($document->estado_certificado, [CertificateManagement::PREPARED, CertificateManagement::PENDING,
                 CertificateManagement::SIGNED, CertificateManagement::ISSUED], true)) {
-            $lookup = app(PublicCertificateLookup::class);
-            $published = $lookup->publishedDocument($document->codigo_verificacion);
-            if ($published !== null) {
-                return [
-                    'codigo_verificacion' => $document->codigo_verificacion, 'registro_encontrado' => true,
-                    'estado_certificado' => $document->estado_certificado, 'estado_documento' => $document->estado,
-                    'estado_disponibilidad' => 'Listo para entrega', 'pdf_confirmado' => true,
-                    'vigente' => false, 'puede_ver_documento' => true, 'integridad_verificada' => true,
-                    'emision_oficial_verificada' => false, 'firma_verificada' => false,
-                    'hash_sha256' => $published->hash_certificado, 'url_documento' => $lookup->pdfUrl($document->codigo_verificacion),
-                    'url_descarga' => $lookup->pdfUrl($document->codigo_verificacion).'&descargar=1',
-                    'beneficiario' => null, 'demostracion' => false, 'modo' => 'administrativo',
-                    'fecha_emision' => null, 'fecha_generacion' => $document->fecha_generacion,
-                    'motivos' => ['PDF administrativo confirmado y autorizado para publicación; no acredita firma criptográfica ni emisión oficial.'],
-                ];
-            }
             $integrity = true;
             try {
                 $this->assertArtifact($document);
@@ -350,13 +350,15 @@ class CertificateDocumentGenerator
                 'codigo_verificacion' => $document->codigo_verificacion, 'registro_encontrado' => true,
                 'estado_certificado' => $document->estado_certificado, 'estado_documento' => $document->estado,
                 'estado_flujo' => $document->estado_flujo ?? $document->estado_certificado, 'vigente' => false, 'puede_ver_documento' => false,
+                'pdf_publicado' => false,
                 'emision_oficial_verificada' => false, 'firma_verificada' => false,
                 'hash_sha256' => null, 'url_documento' => null, 'url_descarga' => null, 'beneficiario' => null,
                 'integridad_verificada' => $integrity, 'demostracion' => false, 'modo' => 'administrativo',
                 'fecha_emision' => $document->fecha_emision, 'fecha_generacion' => $document->fecha_generacion,
-                'motivos' => [$document->estado_certificado === CertificateManagement::ISSUED
+                'motivos' => array_values(array_filter([! $integrity ? 'Documento no disponible.' : null,
+                    $document->estado_certificado === CertificateManagement::ISSUED
                     ? 'La emisión registrada requiere verificación criptográfica del PDF final antes de habilitar la consulta pública.'
-                    : 'Documento administrativo en trámite; no emitido ni disponible públicamente.'],
+                    : 'Documento administrativo en trámite; no emitido ni disponible públicamente.'])),
             ];
         }
         $integrity = true;
@@ -371,8 +373,9 @@ class CertificateDocumentGenerator
             ($document->estado_certificado === CertificateManagement::ISSUED && $document->fecha_emision !== null)
             || $document->estado_certificado === 'Vigente'
             || ($demonstration && $identity !== null));
-        $development = str_starts_with($document->ruta_archivo, 'certificados/desarrollo/');
-        $publicPdf = $integrity && $current && (! $development || $demonstration);
+        $development = str_starts_with((string) $document->ruta_archivo, 'certificados/desarrollo/');
+        $lookup = app(PublicCertificateLookup::class);
+        $publicPdf = $integrity && $lookup->isPublishable($document);
 
         return [
             'codigo_verificacion' => $document->codigo_verificacion,
@@ -387,11 +390,14 @@ class CertificateDocumentGenerator
             'actividad' => $identity?->actividad, 'sesion' => $identity?->sesion, 'fecha_sesion' => $identity?->fecha_sesion,
             'beneficiario' => $identity && config('certification.documents.public_beneficiary_name', false)
                 ? trim(implode(' ', array_filter([$identity->nombres, $identity->apellido_paterno, $identity->apellido_materno]))) : null,
-            'url_documento' => $publicPdf ? route('certificates.verify', ['code' => $document->codigo_verificacion], false).'?archivo=1' : null,
+            'url_documento' => $publicPdf ? $lookup->pdfUrl($document->codigo_verificacion) : null,
+            'url_descarga' => $publicPdf ? $lookup->pdfUrl($document->codigo_verificacion).'&descargar=1' : null,
+            'pdf_publicado' => $publicPdf,
             'emision_oficial_verificada' => false, 'firma_verificada' => false,
             'motivos' => array_values(array_filter([
-                ! $integrity ? 'Archivo ausente, no compatible o con integridad incorrecta.' : null,
+                ! $integrity ? 'Documento no disponible.' : null,
                 ! $current ? 'El certificado o su documento no están vigentes.' : null,
+                $integrity && $current && ! $publicPdf ? 'El PDF no está autorizado para publicación.' : null,
                 $development ? 'Documento de desarrollo; no constituye una emisión oficial.' : null,
                 $demonstration ? 'Certificado de demostración; sin firma digital institucional.' : null,
                 $demonstration && $identity === null ? 'No se pudo verificar la identidad persistente de la sesión.' : null,
@@ -444,11 +450,11 @@ class CertificateDocumentGenerator
 
     private function verificationUrl(string $code, bool $demonstration = false): string
     {
-        $defaultBase = $demonstration
+        $local = app()->environment('local', 'testing');
+        $defaultBase = $demonstration && $local
             ? rtrim((string) config('app.url'), '/').dirname(route('certificates.verify', ['code' => $code], false))
             : rtrim((string) config('app.frontend_url'), '/').'/verificar';
-        $base = rtrim((string) (config('certification.documents.verification_base_url')
-            ?: $defaultBase), '/');
+        $base = $local ? rtrim((string) (config('certification.documents.verification_base_url') ?: $defaultBase), '/') : $defaultBase;
         $host = strtolower((string) parse_url($base, PHP_URL_HOST));
         $scheme = parse_url($base, PHP_URL_SCHEME);
         $loopback = in_array($host, ['localhost', '127.0.0.1', '[::1]'], true);
@@ -460,8 +466,9 @@ class CertificateDocumentGenerator
             && ! str_ends_with($host, '.localhost') && filter_var($host, FILTER_VALIDATE_IP) === false
             && (app()->environment('testing') || ! preg_match('/(?:^|\.)(?:test|invalid|example)$/D', $host));
         abort_unless(($localDevelopment || $lanDevelopment || $publicHttps)
+            && ($local || parse_url($base, PHP_URL_PATH) === '/verificar')
             && ! parse_url($base, PHP_URL_USER) && ! parse_url($base, PHP_URL_PASS)
-            && ! parse_url($base, PHP_URL_QUERY) && ! parse_url($base, PHP_URL_FRAGMENT), 409,
+            && ! parse_url($base, PHP_URL_QUERY) && ! parse_url($base, PHP_URL_FRAGMENT), 503,
             'Configure una URL pública HTTPS real de verificación; localhost solo se permite en documentos de desarrollo local.');
 
         return $base.'/'.$code;
@@ -476,7 +483,7 @@ class CertificateDocumentGenerator
             'codigo_verificacion' => $document->codigo_verificacion,
             'hash_certificado' => $document->hash_certificado,
             'url_verificacion' => $this->verificationUrl($document->codigo_verificacion, $demonstration),
-            'url_descarga' => route('certificates.document.download', ['id' => $document->id_certificado_documento], false),
+            'url_descarga' => route('certificates.document.download', ['id' => $document->id_certificado_documento, 'descargar' => 1], false),
             'creado' => $created, 'modo' => $demonstration ? 'demostracion' : 'desarrollo', 'demostracion' => $demonstration, 'oficial' => false,
             'puede_emitir' => false, 'puede_firmar' => false,
         ];

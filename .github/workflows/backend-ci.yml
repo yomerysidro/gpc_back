@@ -2,12 +2,18 @@ name: Backend CI
 
 on:
   push:
-    branches: [main, development, 'dev-*']
+    branches: [main]
   pull_request:
-    branches: [main, development, 'dev-*']
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: backend-ci-${{ github.event_name }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
+  pull-requests: read
 
 defaults:
   run:
@@ -40,14 +46,47 @@ jobs:
       MAIL_MAILER: array
       QUEUE_CONNECTION: sync
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Validar el origen de la promoción a main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            if jq -e --arg repo "$GITHUB_REPOSITORY" '
+              .pull_request | .head.ref == "dev-yomer" and .head.repo.full_name == $repo
+            ' "$GITHUB_EVENT_PATH" >/dev/null; then
+              exit 0
+            fi
+            echo "::error::Los PR a main deben proceder de dev-yomer en este repositorio."
+            exit 1
+          fi
+
+          if [[ "$REF_PROTECTED" != true ]]; then
+            echo "::error::Protege main y exige revisión y los checks de Backend CI."
+            exit 1
+          fi
+
+          for attempt in 1 2 3 4 5; do
+            if gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" |
+              jq -es --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" '
+                any(.[][]; .merged_at != null and .merge_commit_sha == $sha
+                  and .base.ref == "main" and .base.repo.full_name == $repo
+                  and .head.ref == "dev-yomer" and .head.repo.full_name == $repo)
+              ' >/dev/null; then
+              exit 0
+            fi
+            if [[ "$attempt" != 5 ]]; then sleep 3; fi
+          done
+          echo "::error::El SHA de main debe ser el resultado de un merge de dev-yomer."
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.3'
           extensions: mbstring, dom, gd, pdo_sqlite, pdo_pgsql, zip, intl
-          tools: composer:2.9.5
+          tools: composer:2.11.2
           ini-values: memory_limit=512M
           coverage: none
       - name: Validar Composer y obtener ruta de caché
@@ -55,7 +94,7 @@ jobs:
         run: |
           composer validate --strict
           echo "path=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.composer.outputs.path }}
           key: ${{ runner.os }}-php83-composer-${{ hashFiles('composer.lock') }}
@@ -80,7 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Construir con el Dockerfile del repositorio

@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Certification;
 
 use App\Http\Controllers\Controller;
+use App\Services\CertificateDocumentGenerator;
 use App\Services\CertificateHumanResources;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -120,13 +120,8 @@ class CertificateHumanResourcesController extends Controller
         return $this->respond(function () use ($request, $id, $own): Response {
             $input = $this->input($request, ['descargar' => 'sometimes|boolean']);
             $document = $this->service->artifact($id, $request->user(), $own);
-            $headers = ['Content-Type' => 'application/pdf', 'X-Document-SHA256' => $document->hash_certificado];
-            $path = Storage::disk('local')->path($document->ruta_archivo);
-            if ($input['descargar'] ?? false) {
-                return response()->download($path, 'certificado-'.$document->codigo_verificacion.'.pdf', $headers);
-            }
 
-            return response()->file($path, $headers);
+            return app(CertificateDocumentGenerator::class)->privatePdfResponse($document, (bool) ($input['descargar'] ?? false));
         });
     }
 

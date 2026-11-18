@@ -16,7 +16,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
@@ -85,12 +84,11 @@ class CertificateSigningController extends Controller
     public function authorizedPdf(Request $request, int $id, CertificateDocumentWorkflow $workflow, CertificateDocumentGenerator $generator): Response
     {
         try {
-            $document = $generator->authorizedArtifact($workflow->document($id, $request->user()));
+            $document = $workflow->document($id, $request->user());
+            abort_unless($document->estado === 'Vigente', 409, 'El documento no está vigente.');
+            $document = $generator->authorizedArtifact($document, readOnly: true);
 
-            return response()->download(Storage::disk('local')->path($document->ruta_archivo),
-                'certificado-'.$document->codigo_verificacion.'.pdf', ['Content-Type' => 'application/pdf',
-                    'Cache-Control' => 'private, no-store', 'X-Content-Type-Options' => 'nosniff',
-                    'X-Document-SHA256' => $document->hash_certificado]);
+            return $generator->privatePdfResponse($document, $request->boolean('descargar'));
         } catch (HttpException $exception) {
             return $this->error($exception->getMessage(), $exception->getStatusCode());
         } catch (Throwable $exception) {

@@ -191,6 +191,11 @@ class CertificateDocumentGenerationTest extends TestCase
         Storage::disk('local')->move('certificados/desarrollo/'.$code.'.pdf', $path);
         DB::table('certificado.certificado_documento')->where('id_certificado_documento', 1)->update(['ruta_archivo' => $path]);
         DB::table('certificado.certificado')->where('id_certificado', 1)->update(['estado' => 'Vigente']);
+        $url = '/api/certificados/verificar/'.$code;
+        $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', false);
+        $this->getJson($url.'?archivo=1')->assertForbidden();
+        config(['certification.public_lookup.pdf_policy_reference' => 'Autorización de prueba',
+            'certification.public_lookup.pdf_codes' => [$code]]);
         $this->getJson('/api/certificados/verificar/'.$code)->assertOk()
             ->assertJsonPath('data.integridad_verificada', true)->assertJsonPath('data.puede_ver_documento', true)
             ->assertJsonPath('data.url_documento', '/api/certificados/verificar/'.$code.'?archivo=1')
@@ -198,8 +203,13 @@ class CertificateDocumentGenerationTest extends TestCase
             ->assertJsonMissingPath('data.ruta_archivo')->assertJsonMissingPath('data.id_persona')
             ->assertHeader('Cache-Control', 'no-store, private');
         $response = $this->get('/api/certificados/verificar/'.$code.'?archivo=1')->assertOk()
-            ->assertHeader('Content-Type', 'application/pdf')->assertHeader('X-Content-Type-Options', 'nosniff');
+            ->assertHeader('Content-Type', 'application/pdf')->assertHeader('X-Content-Type-Options', 'nosniff')
+            ->assertHeader('Content-Disposition', 'inline; filename=certificado-'.$code.'.pdf');
         self::assertSame(Storage::disk('local')->get($path), file_get_contents($response->baseResponse->getFile()->getPathname()));
+        Storage::disk('local')->delete($path);
+        $this->getJson($url)->assertOk()->assertJsonPath('data.vigente', false)
+            ->assertJsonPath('data.motivos.0', 'Documento no disponible.');
+        $this->getJson($url.'?archivo=1')->assertNotFound()->assertJsonPath('message', 'Documento no disponible.');
     }
 
     #[TestWith(['Vigente', 'Anulado'])]
@@ -231,6 +241,8 @@ class CertificateDocumentGenerationTest extends TestCase
         DB::table('certificado.certificado_documento')->update(['ruta_archivo' => 'certificados/archivo.pdf']);
         Storage::disk('local')->put('certificados/archivo.pdf', Storage::disk('local')->get('certificados/desarrollo/'.$code.'.pdf'));
         DB::table('certificado.certificado')->where('id_certificado', 1)->update(['estado' => $state, 'fecha_emision' => null]);
+        config(['certification.public_lookup.pdf_policy_reference' => 'Autorización de prueba',
+            'certification.public_lookup.pdf_codes' => [$code]]);
 
         $this->getJson('/api/certificados/verificar/'.$code)->assertOk()
             ->assertJsonPath('data.estado_certificado', $state)->assertJsonPath('data.integridad_verificada', true)
@@ -250,7 +262,7 @@ class CertificateDocumentGenerationTest extends TestCase
         $this->isolateDocumentBehavior();
         $this->app['env'] = $environment;
         config(['certification.documents.verification_base_url' => $url]);
-        $this->postJson('/api/certificados/1/generar-documento')->assertConflict();
+        $this->postJson('/api/certificados/1/generar-documento')->assertServiceUnavailable();
         $this->assertDatabaseCount('certificado.certificado_documento', 0);
         self::assertSame([], Storage::disk('local')->allFiles());
     }
@@ -294,25 +306,50 @@ class CertificateDocumentGenerationTest extends TestCase
 
     #[TestWith(['http://localhost:4200'])]
     #[TestWith(['https://municipalidad.test'])]
-    public function test_rendering_real_pdf_with_qr_and_persistence_when_dependencies_are_available(string $frontendUrl): void
+    #[TestWith(['https://certificados-morales.aiyond.org', 'production'])]
+    public function test_rendering_real_pdf_with_qr_and_persistence_when_dependencies_are_available(string $frontendUrl, string $environment = 'testing'): void
     {
         if (! class_exists(Dompdf::class) || ! class_exists(Writer::class)) {
             $this->markTestSkipped('Falta autorizar e instalar las dependencias PDF/QR; no se simula el generador.');
         }
         $this->authorize();
         $this->isolateDocumentBehavior();
+        $this->app['env'] = $environment;
         config(['app.frontend_url' => $frontendUrl]);
+        if ($environment === 'production') {
+            config(['certification.documents.verification_base_url' => 'https://api.example.org/verificar']);
+        }
         $data = $this->postJson('/api/certificados/1/generar-documento')->assertCreated()
             ->assertJsonPath('data.creado', true)->assertJsonPath('data.oficial', false)->json('data');
         self::assertMatchesRegularExpression('/^[a-f0-9]{30}$/D', $data['codigo_verificacion']);
         self::assertSame($frontendUrl.'/verificar/'.$data['codigo_verificacion'], $data['url_verificacion']);
         $document = DB::table('certificado.certificado_documento')->first();
+        self::assertSame('certificados/desarrollo/'.$document->codigo_verificacion.'.pdf', $document->ruta_archivo);
         $content = Storage::disk('local')->get($document->ruta_archivo);
         self::assertStringStartsWith('%PDF-', $content);
         self::assertSame(hash('sha256', $content), $data['hash_certificado']);
+        self::assertSame($data['hash_certificado'], $document->hash_certificado);
         $this->postJson('/api/certificados/1/generar-documento')->assertOk()
             ->assertJsonPath('data.codigo_verificacion', $data['codigo_verificacion']);
-        $this->get('/api/certificados-documentos/'.$document->id_certificado_documento.'/archivo')->assertDownload();
+        // Reopen the persistent directory through a fresh adapter.
+        config(['filesystems.disks.local.root' => Storage::disk('local')->path('')]);
+        Storage::forgetDisk('local');
+        $url = '/api/certificados-documentos/'.$document->id_certificado_documento.'/archivo';
+        $filename = 'certificado-'.$document->codigo_verificacion.'.pdf';
+        $response = $this->get($url)->assertOk()
+            ->assertHeader('Content-Type', 'application/pdf')
+            ->assertHeader('Content-Disposition', 'inline; filename='.$filename)
+            ->assertHeader('X-Document-SHA256', $document->hash_certificado);
+        self::assertTrue($response->headers->hasCacheControlDirective('private'));
+        self::assertTrue($response->headers->hasCacheControlDirective('no-store'));
+        ob_start();
+        try {
+            $response->baseResponse->sendContent();
+            self::assertSame($content, ob_get_contents());
+        } finally {
+            ob_end_clean();
+        }
+        $this->get($url.'?descargar=1')->assertOk()->assertDownload($filename);
         $this->assertDatabaseCount('certificado.certificado_documento', 1);
         $this->assertDatabaseHas('certificado.certificado', ['id_certificado' => 1, 'estado' => 'Registro de prueba']);
     }

@@ -537,7 +537,7 @@ class CertificateHumanResources
             'integridad_verificada' => $integrity,
             'estado_preparacion' => $prepared ? 'PREPARADO_ENTREGA' : null,
             'etiqueta_estado' => match (true) {
-                $integrity === false => 'PDF no disponible o con integridad incorrecta',
+                $integrity === false => 'Documento no disponible',
                 $prepared => 'Listo para entrega',
                 $document->estado_certificado === CertificateManagement::PENDING => 'Pendiente de firma',
                 default => $document->estado,

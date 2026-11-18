@@ -22,7 +22,7 @@ class CertificateSigningStageBTest extends TestCase
 {
     private const BASE = '/api/certificados-documentos/1/firma';
 
-    public function test_academic_configuration_enables_portal_links_and_removal_blocks_previously_shared_urls_without_writes(): void
+    public function test_pending_certificate_never_enables_portal_links_even_with_publication_policy(): void
     {
         $this->assignForPdfRevision();
         $sourceCertificate = DB::table('certificado.certificado')->first();
@@ -51,22 +51,13 @@ class CertificateSigningStageBTest extends TestCase
         self::assertNull($private['url_documento']);
         self::assertNull($private['url_descarga']);
         config(['certification.public_lookup.pdf_codes' => [$document->codigo_verificacion]]);
-        $public = $this->postJson($portal, ['dni' => $dni])->assertOk()->json('data.certificados.0');
-        self::assertTrue($public['pdf_publicado']);
-        $codeUrl = '/api/certificados/verificar/'.$public['codigo_verificacion'];
-        $this->getJson($codeUrl)->assertOk()->assertJsonPath('data.puede_ver_documento', true);
-        $this->get($codeUrl, ['Accept' => 'text/html'])->assertOk()->assertSee('Abrir PDF almacenado');
-        foreach (['url_documento', 'url_descarga'] as $key) {
-            $response = $this->get($public[$key])->assertOk()->assertHeader('Content-Type', 'application/pdf')
-                ->assertHeader('X-Document-SHA256', $review['hash_pdf']);
-            self::assertSame($review['hash_pdf'], hash_file('sha256', $response->baseResponse->getFile()->getPathname()));
-        }
-        config(['certification.public_lookup.pdf_codes' => []]);
-        $this->postJson($portal, ['dni' => $dni])->assertOk()->assertJsonPath('data.certificados.0.pdf_publicado', false)
-            ->assertJsonPath('data.certificados.0.url_documento', null)->assertJsonPath('data.certificados.0.url_descarga', null);
-        $this->getJson($codeUrl)->assertOk()->assertJsonPath('data.url_documento', null)->assertJsonPath('data.url_descarga', null);
-        $this->get($public['url_documento'])->assertForbidden();
-        $this->get($public['url_descarga'])->assertForbidden();
+        $this->postJson($portal, ['dni' => $dni])->assertOk()
+            ->assertJsonPath('data.certificados.0.pdf_publicado', false)
+            ->assertJsonPath('data.certificados.0.url_documento', null)
+            ->assertJsonPath('data.certificados.0.url_descarga', null);
+        $url = '/api/certificados/verificar/'.$document->codigo_verificacion;
+        $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', false);
+        $this->get($url.'?archivo=1')->assertForbidden();
         self::assertSame((array) $document, (array) DB::table('certificado.certificado_documento')->first());
         self::assertSame((array) $certificate, (array) DB::table('certificado.certificado')->first());
         self::assertSame($files, collect(Storage::disk('local')->allFiles())->mapWithKeys(fn (string $path): array => [$path => hash_file('sha256', Storage::disk('local')->path($path))])->all());
@@ -74,9 +65,9 @@ class CertificateSigningStageBTest extends TestCase
 
     #[TestWith([false])]
     #[TestWith([true])]
-    public function test_explicit_publication_serves_identical_confirmed_bytes_for_view_and_download(bool $authenticated): void
+    public function test_explicit_policy_cannot_publish_a_confirmed_pending_certificate(bool $authenticated): void
     {
-        $review = $this->prepareHumanResources();
+        $this->prepareHumanResources();
         $document = DB::table('certificado.certificado_documento')->first();
         config(['certification.public_lookup.pdf_policy_reference' => 'AUTORIZACION DE PRUEBA',
             'certification.public_lookup.pdf_codes' => [$document->codigo_verificacion]]);
@@ -84,20 +75,10 @@ class CertificateSigningStageBTest extends TestCase
             app('auth')->forgetGuards();
         }
         $url = '/api/certificados/verificar/'.$document->codigo_verificacion;
-        $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', true)
+        $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', false)
             ->assertJsonPath('data.estado_certificado', 'PENDIENTE_FIRMA');
-        foreach (['?archivo=1', '?archivo=1&descargar=1'] as $query) {
-            $response = $this->get($url.$query)->assertOk()->assertHeader('Content-Type', 'application/pdf')
-                ->assertHeader('X-Document-SHA256', $review['hash_pdf']);
-            self::assertSame($review['hash_pdf'], hash_file('sha256', $response->baseResponse->getFile()->getPathname()));
-            if (str_contains($query, 'descargar')) {
-                $response->assertDownload('certificado-'.$document->codigo_verificacion.'.pdf');
-            } else {
-                self::assertStringStartsWith('inline;', $response->headers->get('Content-Disposition'));
-            }
-        }
-        config(['certification.public_lookup.pdf_policy_reference' => null]);
-        $this->getJson($url.'?archivo=1')->assertForbidden();
+        $this->get($url.'?archivo=1')->assertForbidden();
+        $this->get($url.'?archivo=1&descargar=1')->assertForbidden();
     }
 
     #[TestWith(['private'])]
@@ -180,7 +161,7 @@ class CertificateSigningStageBTest extends TestCase
         $this->postJson(self::BASE.'/confirmar-pdf', $confirm)->assertConflict();
         $this->postJson(self::BASE.'/asignar', $input + ['confirmar' => true])->assertOk();
         $this->postJson(self::BASE.'/confirmar-pdf', $confirm)->assertOk()->assertJsonPath('data.pdf_revisado_disponible', true);
-        $download = $this->getJson(self::BASE.'/pdf-autorizado')->assertOk()->assertDownload();
+        $download = $this->getJson(self::BASE.'/pdf-autorizado?descargar=1')->assertOk()->assertDownload();
         self::assertSame(base64_decode($review['vista_previa_pdf']['contenido_base64'], true), file_get_contents($download->baseResponse->getFile()->getPathname()));
         $this->assertDatabaseCount('certificado.certificado_documento', 1);
         $this->assertDatabaseHas('certificado.certificado', ['estado' => 'PENDIENTE_FIRMA', 'fecha_emision' => null]);
@@ -288,9 +269,10 @@ class CertificateSigningStageBTest extends TestCase
             'id_persona_trabajador' => 10, 'orden_firma' => 1, 'id_firma' => null, 'fecha_firma' => null]);
         $this->assertDatabaseHas('certificado.certificado', ['estado' => 'PENDIENTE_FIRMA', 'fecha_emision' => null]);
         $this->assertDatabaseCount('certificado.firma', 0);
-        $download = $this->getJson(self::BASE.'/pdf-autorizado')->assertOk()->assertDownload();
+        $download = $this->getJson(self::BASE.'/pdf-autorizado')->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        self::assertStringStartsWith('inline;', $download->headers->get('Content-Disposition'));
         self::assertSame($pdf, file_get_contents($download->baseResponse->getFile()->getPathname()));
-        $this->getJson('/api/certificados-documentos/1/archivo?flujo=firmas')->assertOk()->assertDownload();
+        $this->getJson('/api/certificados-documentos/1/archivo?flujo=firmas&descargar=1')->assertOk()->assertDownload();
         $this->postJson(self::BASE.'/confirmar-pdf', ['token_revision' => $review['token_revision'], 'confirmar' => true])
             ->assertOk()->assertJsonPath('data.reintento', true);
         $this->assertDatabaseCount('certificado.certificado_documento', 1);
@@ -396,7 +378,9 @@ class CertificateSigningStageBTest extends TestCase
         $document = app(CertificateHumanResources::class)->artifact(1, auth('jwt')->user());
         Storage::disk('local')->put($document->ruta_archivo, '%PDF-alterado');
         $this->getJson('/api/rrhh/certificados/1/pdf')->assertConflict();
-        $this->getJson('/api/certificados-documentos/list')->assertConflict();
+        $this->getJson('/api/certificados-documentos/list')->assertOk()
+            ->assertJsonPath('data.data.0.integridad_verificada', false)
+            ->assertJsonPath('data.data.0.disponible_rrhh', false);
         $this->actor([], administrator: false, id: 1);
         $this->getJson('/api/mis-certificados/1/pdf')->assertNotFound();
         $this->getJson('/api/mis-certificados')->assertOk()->assertJsonPath('data.total', 0);
@@ -488,7 +472,7 @@ class CertificateSigningStageBTest extends TestCase
             ->assertJsonPath('data.codigo_verificacion', $original['codigo_verificacion'])
             ->assertJsonPath('data.hash_pdf_original', $original['hash_certificado'])
             ->assertJsonPath('data.hash_pdf', $review['hash_pdf']);
-        $download = $this->getJson('/api/certificados-documentos/1/archivo')->assertOk()->assertDownload();
+        $download = $this->getJson('/api/certificados-documentos/1/archivo?descargar=1')->assertOk()->assertDownload();
         self::assertSame(base64_decode($review['vista_previa_pdf']['contenido_base64'], true), file_get_contents($download->baseResponse->getFile()->getPathname()));
         foreach (['id_actividad=1', 'id_sesion=2', 'id_persona=1', 'estado=PREPARADO_ENTREGA',
             'estado_preparacion=PREPARADO_ENTREGA', 'estado_certificado=PENDIENTE_FIRMA'] as $filter) {
@@ -618,7 +602,7 @@ class CertificateSigningStageBTest extends TestCase
         $this->actor(['emision.ver'], administrator: false, id: 20);
         $this->getJson('/api/certificados-documentos/list?estado_preparacion=PREPARADO_ENTREGA')->assertOk()
             ->assertJsonPath('data.total', 0);
-        $download = $this->getJson('/api/certificados-documentos/1/archivo')->assertOk()->assertDownload();
+        $download = $this->getJson('/api/certificados-documentos/1/archivo?descargar=1')->assertOk()->assertDownload();
         self::assertSame(base64_decode($review['vista_previa_pdf']['contenido_base64'], true), file_get_contents($download->baseResponse->getFile()->getPathname()));
         $this->assertDatabaseHas('certificado.certificado', ['estado' => 'PREPARADO', 'fecha_emision' => null]);
     }
@@ -868,21 +852,21 @@ class CertificateSigningStageBTest extends TestCase
             ->assertJsonPath('data.data.0.etiqueta_estado', 'Pendiente de firma')
             ->assertJsonPath('data.data.0.pdf_confirmado', false)->assertJsonPath('data.data.0.disponible_rrhh', false)->json('data.data.0');
         $originalPdf = Storage::disk('local')->get('certificados/preparados/aislado-6.pdf');
-        $download = $this->getJson($base.'/archivo')->assertOk()->assertDownload();
+        $download = $this->getJson($base.'/archivo?descargar=1')->assertOk()->assertDownload();
         self::assertSame($originalPdf, file_get_contents($download->baseResponse->getFile()->getPathname()));
         $this->actor(['emision.ver'], administrator: false, id: 20);
         $this->getJson('/api/rrhh/certificados')->assertOk()->assertJsonPath('data.total', 3);
         $this->getJson('/api/rrhh/certificados/6/pdf')->assertConflict();
         $this->actor();
         $revision = $this->postJson($base.'/firma/revision-pdf', $input)->assertOk()->json('data');
-        $download = $this->getJson($base.'/archivo')->assertOk()->assertDownload();
+        $download = $this->getJson($base.'/archivo?descargar=1')->assertOk()->assertDownload();
         self::assertSame($originalPdf, file_get_contents($download->baseResponse->getFile()->getPathname()));
         $this->postJson($base.'/firma/asignar', $input + ['confirmar' => true])->assertOk();
         $this->postJson($base.'/firma/asignar', $input + ['confirmar' => true])->assertOk()->assertJsonPath('data.reintento', true);
         $this->getJson('/api/certificados/list')->assertOk()->assertJsonPath('data.total', 4)
             ->assertJsonPath('data.data.0.id_certificado', 6)->assertJsonPath('data.data.0.id_certificado_documento', 6)
             ->assertJsonPath('data.data.0.etiqueta_estado', 'Pendiente de firma')->assertJsonPath('data.data.0.disponible_rrhh', false);
-        $download = $this->getJson($base.'/archivo')->assertOk()->assertDownload()
+        $download = $this->getJson($base.'/archivo?descargar=1')->assertOk()->assertDownload()
             ->assertHeader('X-Document-SHA256', $pending['hash_pdf']);
         self::assertSame($originalPdf, file_get_contents($download->baseResponse->getFile()->getPathname()));
         $confirm = ['token_revision' => $revision['token_revision'], 'confirmar' => true];
@@ -896,7 +880,7 @@ class CertificateSigningStageBTest extends TestCase
         foreach (['id_certificado', 'id_certificado_documento', 'id_participacion', 'id_sesion', 'codigo_verificacion'] as $field) {
             self::assertSame($pending[$field], $ready[$field]);
         }
-        $download = $this->getJson($base.'/archivo')->assertOk()->assertDownload()
+        $download = $this->getJson($base.'/archivo?descargar=1')->assertOk()->assertDownload()
             ->assertHeader('X-Document-SHA256', $ready['hash_pdf']);
         self::assertSame(base64_decode($revision['vista_previa_pdf']['contenido_base64'], true), file_get_contents($download->baseResponse->getFile()->getPathname()));
         $this->actor(['emision.ver'], administrator: false, id: 20);

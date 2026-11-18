@@ -351,7 +351,7 @@ class SessionDemonstrationIssuanceTest extends TestCase
             ->assertJsonPath('data.beneficiarios.data.0.id_certificado', $first['id_certificado']);
     }
 
-    public function test_verification_of_a_demo_uses_its_persisted_session_and_serves_the_actual_pdf_without_claiming_signature(): void
+    public function test_public_verification_of_a_demo_shows_its_persisted_session_and_protects_the_pdf(): void
     {
         $this->demonstration();
         config(['certification.documents.public_beneficiary_name' => true]);
@@ -361,13 +361,11 @@ class SessionDemonstrationIssuanceTest extends TestCase
             ->assertJsonPath('data.identidad_sesion_verificada', true)->assertJsonPath('data.sesion', 'Sesión 1')
             ->assertJsonPath('data.actividad', 'Actividad de prueba')->assertJsonPath('data.tipo_certificado', 'Capacitación')
             ->assertJsonPath('data.beneficiario', 'Persona Prueba')->assertJsonPath('data.integridad_verificada', true)
-            ->assertJsonPath('data.puede_ver_documento', true)->assertJsonPath('data.vigente', false)
+            ->assertJsonPath('data.puede_ver_documento', false)->assertJsonPath('data.vigente', false)
             ->assertJsonPath('data.firma_verificada', false)->assertJsonPath('data.emision_oficial_verificada', false)
             ->assertJsonMissingPath('data.ruta_archivo')->assertJsonMissingPath('data.id_persona');
-        $this->get($url, ['Accept' => 'text/html'])->assertOk()->assertSee('Certificado de demostración')->assertSee('<iframe', false);
-        $response = $this->get($url.'?archivo=1')->assertOk()->assertHeader('Content-Type', 'application/pdf');
-        $document = DB::table('certificado.certificado_documento')->first();
-        self::assertSame(Storage::disk('local')->get($document->ruta_archivo), file_get_contents($response->baseResponse->getFile()->getPathname()));
+        $this->get($url, ['Accept' => 'text/html'])->assertOk()->assertSee('Certificado de demostración')->assertDontSee('<iframe', false);
+        $this->get($url.'?archivo=1')->assertForbidden();
         config(['certification.documents.public_beneficiary_name' => false]);
         $this->getJson($url)->assertOk()->assertJsonPath('data.beneficiario', null);
     }

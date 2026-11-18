@@ -524,10 +524,12 @@ class CertificateManagement
                 $this->writeReviewedPdf($candidate, $pdf, function () use (&$created, $candidate): void {
                     $created = $candidate;
                 });
-                $documentId = DB::table('certificado.certificado_documento')->insertGetId([
+                $documentData = [
                     'id_certificado' => $certificateId, 'codigo_verificacion' => $manifest['code'],
                     'hash_certificado' => $manifest['hash'], 'ruta_archivo' => $candidate, 'estado' => 'Vigente', 'fecha_generacion' => now(),
-                ], 'id_certificado_documento');
+                ];
+                $this->generator->assertArtifact((object) $documentData);
+                $documentId = DB::table('certificado.certificado_documento')->insertGetId($documentData, 'id_certificado_documento');
                 $detail = app(CertificateDocumentWorkflow::class)->detail($documentId, $actor);
                 $committed = true;
 
@@ -961,6 +963,7 @@ class CertificateManagement
                     'id_certificado' => $certificateId, 'codigo_verificacion' => $manifest['code'], 'ruta_archivo' => $candidatePath,
                     'hash_certificado' => $manifest['hash'], 'fecha_generacion' => now(), 'estado' => 'Vigente',
                 ];
+                $this->generator->assertArtifact((object) $documentData);
                 if (! $minimal) {
                     $documentData += ['mensaje_aprobado' => $manifest['message'], 'estado_flujo' => self::PREPARED, 'modalidad_firma' => $manifest['mode']];
                 } elseif (($manifest['workers'] ?? null) !== null) {

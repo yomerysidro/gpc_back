@@ -30,7 +30,6 @@ class PublicCertificateLookup
                     || (int) ($context['id_tipo_certificado'] ?? 0) !== (int) $document->id_tipo_certificado)) {
                     continue;
                 }
-                $published = $this->allowsPdf($document->codigo_verificacion);
                 $items[] = [
                     'referencia_publica' => hash_hmac('sha256', $document->codigo_verificacion, (string) config('app.key')),
                     'codigo_verificacion' => $document->codigo_verificacion,
@@ -43,9 +42,9 @@ class PublicCertificateLookup
                     'fecha_sesion' => $context['fecha_sesion'] ?? $document->fecha_sesion,
                     'estado_disponibilidad' => 'Listo para entrega',
                     'disponible_rrhh' => true,
-                    'pdf_publicado' => $published,
-                    'url_documento' => $published ? $this->pdfUrl($document->codigo_verificacion) : null,
-                    'url_descarga' => $published ? $this->pdfUrl($document->codigo_verificacion).'&descargar=1' : null,
+                    'pdf_publicado' => false,
+                    'url_documento' => null,
+                    'url_descarga' => null,
                 ];
             } catch (HttpException) {
                 continue;
@@ -63,22 +62,16 @@ class PublicCertificateLookup
             && in_array($code, config('certification.public_lookup.pdf_codes', []), true);
     }
 
-    public function publishedDocument(string $code): ?object
+    public function isPublishable(object $document): bool
     {
-        if (! $this->allowsPdf($code)) {
-            return null;
-        }
-        $personId = DB::table('certificado.certificado_documento as d')
-            ->join('certificado.certificado as c', 'c.id_certificado', '=', 'd.id_certificado')
-            ->where('d.codigo_verificacion', $code)->value('c.id_persona');
-        if ($personId === null) {
-            return null;
-        }
-        foreach ($this->resources->publicConfirmedDocuments((int) $personId, $code) as $document) {
-            return $document;
-        }
-
-        return null;
+        return $document->estado === 'Vigente'
+            && $document->estado_certificado === 'Vigente'
+            && in_array($document->estado_flujo ?? null, [null, 'Vigente', CertificateManagement::ISSUED], true)
+            && filled($document->fecha_emision)
+            && ! str_starts_with((string) $document->ruta_archivo, 'certificados/preparados/')
+            && ! str_starts_with((string) $document->ruta_archivo, 'certificados/desarrollo/')
+            && ! str_starts_with((string) $document->ruta_archivo, 'certificados/demostracion/')
+            && $this->allowsPdf($document->codigo_verificacion);
     }
 
     public function pdfUrl(string $code): string

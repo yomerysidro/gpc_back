@@ -18,11 +18,12 @@ if [ "${APP_ENV:-production}" = production ]; then
     [ "${#jwt_secret}" -ge 32 ] || fail 'JWT_SECRET debe tener al menos 32 caracteres.'
 fi
 
-if [ -n "${RAILWAY_ENVIRONMENT_ID:-}" ]; then
-    private_dir=/var/www/httpdocs/storage/app/private
-    mountpoint -q "$private_dir" || fail "Falta el volumen privado en $private_dir."
+private_dir=/var/www/httpdocs/storage/app/private
+if mountpoint -q "$private_dir"; then
     chown www-data:www-data "$private_dir"
     chmod 0700 "$private_dir"
+elif [ -n "${RAILWAY_ENVIRONMENT_ID:-}" ]; then
+    fail "Falta el volumen privado en $private_dir."
 fi
 
 sed -e "s/listen 80;/listen 0.0.0.0:$port;/" -e 's/listen \[::\]:80;/listen [::]:'"$port"';/' \
