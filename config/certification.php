@@ -34,7 +34,7 @@ return [
     'preparation' => [
         'execution_timeout_seconds' => 120,
         'session_type_ids' => preg_match('/^[1-9][0-9]*(,[1-9][0-9]*)*$/D', $preparationTypes)
-            ? array_map('intval', explode(',', $preparationTypes)) : [],
+            ? array_map('intval', explode(',', $preparationTypes)) : ($preparationTypes === '' ? null : []),
     ],
     'documents' => [
         'verification_base_url' => env('CERTIFICATION_PUBLIC_VERIFICATION_BASE_URL'),

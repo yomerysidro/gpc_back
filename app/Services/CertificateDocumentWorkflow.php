@@ -344,7 +344,7 @@ class CertificateDocumentWorkflow
             && (($document->id_sesion ?? null) === null || ($document->fecha_emision === null
                 && $document->estado_sesion === 'Finalizada'
                 && $document->estado_participacion === 'Activo' && $document->estado_asistencia === 'PRESENTE'
-                && in_array((int) $document->id_tipo_certificado, config('certification.preparation.session_type_ids', []), true)))
+                && CertificationReadiness::isAcademicSessionType((int) $document->id_tipo_certificado, $document->tipo_certificado)))
             && $document->estado === 'Vigente'
             && (bool) $document->tipo_activo
             && ! (bool) $document->notificado && $document->fecha_notificacion === null

@@ -8,6 +8,7 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 class CertificationReadiness
@@ -273,14 +274,14 @@ class CertificationReadiness
                 $counts[$evaluation['estado_elegibilidad']]++;
             }
             $certificates = $facts['certificates']->whereIn('id_participacion', $participants->pluck('id_participacion')->all());
-            $compatible = $this->compatibleType($origin, $filters['id_tipo_certificado'] ?? null, $facts['types'], $facts['development_verified']);
+            $compatible = $this->compatibleType($origin, $filters['id_tipo_certificado'] ?? null, $facts);
             $blockers = $baseBlockers;
-            if ($origin === 'sesion' && $this->usesDevelopmentPolicy()) {
+            if ($origin === 'sesion') {
                 if (strtoupper(trim($row->estado_sesion)) !== 'FINALIZADA') {
                     $blockers[] = 'La sesión debe estar Finalizada para preparar certificados.';
                 }
                 if ($compatible !== true) {
-                    $blockers[] = 'Seleccione un tipo vigente autorizado para la preparación provisional por sesión.';
+                    $blockers[] = 'Seleccione un tipo vigente compatible con esta sesión.';
                 }
                 if ($counts['Elegible'] === 0) {
                     $blockers[] = 'No existen beneficiarios elegibles para preparar.';
@@ -290,17 +291,18 @@ class CertificationReadiness
             return array_merge((array) $row, [
                 'origen' => $origin, 'id_sesion' => $row->id_sesion ?? null,
                 'tipo_certificacion' => $origin,
-                'tipos_certificado_permitidos' => $facts['types']->filter(fn (mixed $id): bool => $this->compatibleType($origin, (int) $id, $facts['types'], $facts['development_verified']) === true)->values()->all(),
-                'tipo_certificado_compatible' => $this->compatibleType($origin, $filters['id_tipo_certificado'] ?? null, $facts['types'], $facts['development_verified']),
+                'tipos_certificado_permitidos' => $facts['types']->filter(fn (mixed $id): bool => $this->compatibleType($origin, (int) $id, $facts) === true)->values()->all(),
+                'tipo_certificado_compatible' => $compatible,
                 'total_participantes_inscritos' => $candidates->count(),
                 'total_elegibles' => $counts['Elegible'], 'total_no_elegibles' => $counts['No elegible'],
                 'total_pendientes' => $counts['Pendiente de validación'],
                 'estado_preparacion' => $blockers === [] ? 'Disponible' : 'Bloqueada',
                 'preparaciones' => [],
-                'modo_certificacion' => $origin === 'sesion' && $this->usesDevelopmentPolicy() ? 'desarrollo_provisional' : 'institucional',
-                'puede_preparar' => $origin === 'sesion' && $this->usesDevelopmentPolicy() && $blockers === [],
+                'modo_certificacion' => $origin === 'sesion' && $this->usesDevelopmentPolicy() ? 'desarrollo_provisional' : ($origin === 'sesion' ? 'academico' : 'institucional'),
+                'puede_preparar' => $origin === 'sesion' && $blockers === [],
                 'puede_consultar_beneficiarios' => true, 'preparacion_persistida' => false,
-                'puede_certificarse' => false, 'puede_generar_pdf' => false, 'puede_emitir' => false,
+                'puede_certificarse' => false, 'puede_generar_pdf' => $origin === 'sesion' && ! $this->usesDevelopmentPolicy() && $blockers === [], 'puede_emitir' => false,
+                'aprobacion_pendiente' => null, 'emision_oficial_autorizada' => false,
                 'certificados_registrados_participaciones' => $certificates->count(),
                 'identidad_sesion_disponible' => $facts['identity_available'],
                 'puede_emitir_demostracion' => $origin === 'sesion' && $facts['identity_available'] && $this->usesDevelopmentPolicy() && $blockers === [],
@@ -376,22 +378,23 @@ class CertificationReadiness
                 'id_certificado' => $certificate ? (int) $certificate->id_certificado : null, 'estado_certificado' => $certificate?->estado,
                 'estado_generacion' => $origin === 'sesion' && ! $facts['identity_available'] ? 'No determinable por esquema' : ($document ? 'Documento generado' : 'No generado'),
                 'id_certificado_documento' => $document ? (int) $document->id_certificado_documento : null, 'estado_documento' => $document?->estado,
-                'modo_elegibilidad' => $origin === 'sesion' && $this->usesDevelopmentPolicy() ? 'desarrollo_provisional' : 'institucional',
+                'elegible_tecnicamente' => $origin === 'sesion' ? $evaluation['estado_elegibilidad'] === 'Elegible' : null,
+                'modo_elegibilidad' => $origin === 'sesion' && $this->usesDevelopmentPolicy() ? 'desarrollo_provisional' : ($origin === 'sesion' ? 'academico' : 'institucional'),
             ], $evaluation);
         }));
 
         $blockers = $this->preparationBlockers($origin);
-        $compatible = $this->compatibleType($origin, $filters['id_tipo_certificado'] ?? null, $facts['types'], $facts['development_verified']);
+        $compatible = $this->compatibleType($origin, $filters['id_tipo_certificado'] ?? null, $facts);
         $candidates = $this->participationCandidates($facts['participants'], $context, $origin, $facts);
         $eligible = $candidates->filter(fn (object $participant): bool => $this->evaluate($participant, $context,
             $origin, $filters['id_tipo_certificado'] ?? null, $facts)['estado_elegibilidad'] === 'Elegible');
         $eligibleCount = $eligible->count();
-        if ($origin === 'sesion' && $this->usesDevelopmentPolicy()) {
+        if ($origin === 'sesion') {
             if (strtoupper(trim($context->estado_sesion)) !== 'FINALIZADA') {
                 $blockers[] = 'La sesión debe estar Finalizada para preparar certificados.';
             }
             if ($compatible !== true) {
-                $blockers[] = 'Seleccione un tipo vigente autorizado para la preparación provisional por sesión.';
+                $blockers[] = 'Seleccione un tipo vigente compatible con esta sesión.';
             }
             if ($eligibleCount === 0) {
                 $blockers[] = 'No existen beneficiarios elegibles para preparar.';
@@ -404,49 +407,75 @@ class CertificationReadiness
             'finalizada' => $origin === 'sesion' ? strtoupper(trim($context->estado_sesion)) === 'FINALIZADA' : null,
             'tipo_certificado_compatible' => $compatible,
             'total_elegibles' => $eligibleCount,
+            'tipos_certificado_permitidos' => $facts['types']->filter(fn (mixed $id): bool => $this->compatibleType($origin, (int) $id, $facts) === true)->values()->all(),
+            'estado_preparacion' => $blockers === [] ? 'Disponible' : 'Bloqueada',
+            'aprobacion_pendiente' => null,
+            'emision_oficial_autorizada' => false,
             'identidad_sesion_disponible' => $facts['identity_available'],
             'puede_emitir_demostracion' => $origin === 'sesion' && $facts['identity_available'] && $this->usesDevelopmentPolicy() && $blockers === [],
             'codigo_bloqueo_preparacion' => null,
             'preparaciones' => [],
-            'modo_certificacion' => $origin === 'sesion' && $this->usesDevelopmentPolicy() ? 'desarrollo_provisional' : 'institucional',
-            'puede_preparar' => $origin === 'sesion' && $this->usesDevelopmentPolicy() && $blockers === [],
+            'modo_certificacion' => $origin === 'sesion' && $this->usesDevelopmentPolicy() ? 'desarrollo_provisional' : ($origin === 'sesion' ? 'academico' : 'institucional'),
+            'puede_preparar' => $origin === 'sesion' && $blockers === [],
             'puede_consultar_beneficiarios' => true,
             'preparacion_persistida' => false,
-            'puede_generar_pdf' => false, 'puede_emitir' => false, 'puede_firmar' => false,
+            'puede_generar_pdf' => $origin === 'sesion' && ! $this->usesDevelopmentPolicy() && $blockers === [], 'puede_emitir' => false, 'puede_firmar' => false,
             'motivos_bloqueo' => $blockers,
             'motivos_bloqueo_emision' => $origin === 'sesion' && ! $facts['identity_available'] ? [self::SESSION_IDENTITY_BLOCKER, self::OFFICIAL_ISSUANCE_BLOCKER] : [self::OFFICIAL_ISSUANCE_BLOCKER],
         ];
     }
 
-    private function compatibleType(string $origin, ?int $typeId, Collection $activeTypes, bool $developmentVerified = false): ?bool
+    private function compatibleType(string $origin, ?int $typeId, array $facts): ?bool
     {
         if ($typeId === null) {
             return null;
         }
-        if (! $activeTypes->contains($typeId)) {
+        if (! $facts['types']->contains($typeId)) {
             return false;
         }
         if ($origin === 'sesion' && $this->usesDevelopmentPolicy()) {
-            return $developmentVerified && in_array($typeId, config('certification.development_session_type_ids', []), true);
+            return $facts['development_verified'] && in_array($typeId, config('certification.development_session_type_ids', []), true);
         }
-        $policy = $this->eligibilityPolicy($origin, $typeId, $developmentVerified);
+        if ($origin === 'sesion') {
+            return $facts['academic_types']->contains($typeId);
+        }
+
+        $policy = $this->eligibilityPolicy($origin, $typeId, $facts['development_verified']);
 
         return $this->validPolicy($policy) && is_bool($policy['require_closed_activity'] ?? null)
             && ($origin !== 'actividad' || ($policy['required_sessions'] ?? null) === 'all') ? true : null;
     }
 
+    public static function isAcademicSessionType(int $typeId, ?string $name): bool
+    {
+        $configured = config('certification.preparation.session_type_ids');
+        $name = Str::lower(Str::ascii(trim($name ?? '')));
+
+        return $name !== '' && ! in_array($name, ['reconocimiento', 'practicas'], true)
+            && ($configured === null ? $name === 'capacitacion' : in_array($typeId, $configured, true));
+    }
+
+    public function resolveAcademicSessionType(?int $typeId): int
+    {
+        $types = DB::table('certificado.tipo_certificado')->where('estado', true)
+            ->when($typeId !== null, fn (Builder $query) => $query->where('id_tipo_certificado', $typeId))
+            ->get(['id_tipo_certificado', 'nombre_tipo'])
+            ->filter(fn (object $type): bool => self::isAcademicSessionType((int) $type->id_tipo_certificado, $type->nombre_tipo));
+        abort_unless($types->count() === 1, 422, $typeId === null
+            ? 'Seleccione un tipo vigente compatible con la preparación por sesión.'
+            : 'El tipo seleccionado no está vigente o no es compatible con la preparación por sesión.');
+
+        return (int) $types->first()->id_tipo_certificado;
+    }
+
     /** @return list<string> */
     public function preparationBlockers(string $origin): array
     {
-        if ($origin === 'sesion' && $this->usesDevelopmentPolicy()) {
-            return $this->developmentClosureBlockers();
-        }
-        $reasons = ['No existe un procedimiento oficial integrado de preparación y emisión ni una política institucional configurada por defecto.'];
         if ($origin === 'sesion') {
-            $reasons[] = 'El certificado no dispone de una relación persistente con la sesión; requiere extensión de esquema autorizada.';
+            return $this->usesDevelopmentPolicy() ? $this->developmentClosureBlockers() : [];
         }
 
-        return $reasons;
+        return [self::OFFICIAL_ISSUANCE_BLOCKER];
     }
 
     /** @param list<int> $activityIds
@@ -460,6 +489,8 @@ class CertificationReadiness
         $ids = $participants->pluck('id_participacion')->all();
         $developmentBlockers = $this->usesDevelopmentPolicy() ? $this->developmentClosureBlockers() : [];
         $identityAvailable = app(SessionCertificatePreparation::class)->identityAvailable();
+
+        $types = DB::table('certificado.tipo_certificado')->where('estado', true)->get(['id_tipo_certificado', 'nombre_tipo']);
 
         return [
             'participants' => $participants,
@@ -479,7 +510,8 @@ class CertificationReadiness
                 })
                 ->select('id_certificado', 'id_participacion', 'id_tipo_certificado', 'estado', 'fecha_emision')
                 ->when($identityAvailable, fn (Builder $query) => $query->addSelect('id_actividad_sesion'))->get(),
-            'types' => DB::table('certificado.tipo_certificado')->where('estado', true)->pluck('id_tipo_certificado'),
+            'types' => $types->pluck('id_tipo_certificado'),
+            'academic_types' => $types->filter(fn (object $type): bool => self::isAcademicSessionType((int) $type->id_tipo_certificado, $type->nombre_tipo))->pluck('id_tipo_certificado'),
             'authorized' => DB::table('certificado.solicitud_actividad')->whereIn('id_actividad', $activityIds)->where('estado', 'Aprobada')->pluck('id_actividad'),
             'development_verified' => $this->usesDevelopmentPolicy() && $developmentBlockers === [],
             'development_blockers' => $developmentBlockers,
@@ -507,10 +539,35 @@ class CertificationReadiness
             return $ineligible('La sesión no está finalizada.');
         }
         if ($typeId === null) {
-            return $pending('Falta seleccionar un tipo de certificado con política institucional aprobada.');
+            return $pending($origin === 'sesion' ? 'Seleccione el tipo de certificado para evaluar la preparación.'
+                : 'Falta seleccionar un tipo de certificado con política institucional aprobada.');
         }
         if (! $facts['types']->contains($typeId)) {
             return $ineligible('El tipo de certificado no está vigente.');
+        }
+        if ($origin === 'sesion' && ! $this->usesDevelopmentPolicy()) {
+            if (! $facts['academic_types']->contains($typeId)) {
+                return $ineligible('El tipo de certificado no es compatible con la preparación por sesión.');
+            }
+            if (! in_array($context->estado_actividad, ['Activa', 'Cerrada'], true) || $participant->estado !== 'Activo') {
+                return $ineligible('La preparación requiere una actividad Activa o Cerrada y una inscripción vigente.');
+            }
+            if (empty($facts['sessions']->firstWhere('id_actividad_sesion', $context->id_sesion)?->fecha)) {
+                return $ineligible('La sesión debe tener una fecha registrada.');
+            }
+            $enrollments = $facts['participants']->where('id_actividad', $context->id_actividad)
+                ->where('id_persona', $participant->id_persona);
+            $attendances = $facts['attendances']->whereIn('id_participacion', $enrollments->pluck('id_participacion'))
+                ->where('id_actividad_sesion', $context->id_sesion);
+            if ($attendances->count() > 1) {
+                return $pending('Existen asistencias duplicadas para la persona en la sesión.');
+            }
+            $attendance = $attendances->first();
+            if ($attendance?->estado !== 'PRESENTE' || $attendance->id_participacion !== $participant->id_participacion) {
+                return $ineligible('La preparación requiere una asistencia PRESENTE en esta sesión.');
+            }
+
+            return ['estado_elegibilidad' => 'Elegible', 'motivos' => []];
         }
         if ($origin === 'sesion' && $this->usesDevelopmentPolicy()
             && ! in_array($typeId, config('certification.development_session_type_ids', []), true)) {
@@ -612,7 +669,7 @@ class CertificationReadiness
         $facts = $this->facts([(int) $context->id_actividad]);
 
         return [
-            'compatible' => $this->compatibleType('sesion', $typeId, $facts['types'], $facts['development_verified']),
+            'compatible' => $this->compatibleType('sesion', $typeId, $facts),
             'beneficiaries' => $this->participationCandidates($facts['participants'], $context, 'sesion', $facts)->map(fn (object $participant): array => [
                 'id_participacion' => (int) $participant->id_participacion,
                 'id_persona' => (int) $participant->id_persona,

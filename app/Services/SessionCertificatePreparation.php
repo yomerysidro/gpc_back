@@ -248,12 +248,13 @@ class SessionCertificatePreparation
         $data = $readiness->beneficiaries($context, 'sesion', ['id_tipo_certificado' => $typeId]);
 
         return [
-            ...$data, 'modo' => 'desarrollo', 'oficial' => false,
+            ...$data, 'modo' => $readiness->usesDevelopmentPolicy() ? 'desarrollo' : 'academico', 'oficial' => false,
             'id_actividad' => (int) $session->id_actividad, 'id_sesion' => $sessionId,
             'id_tipo_certificado' => $typeId,
             'estado_preparacion' => $data['puede_preparar'] ? 'Evaluada sin persistencia' : 'Bloqueada',
             'preparaciones_creadas' => 0, 'preparaciones_existentes' => 0,
             'preparacion_persistida' => false,
+            'certificado_sesion' => null,
         ];
     }
 

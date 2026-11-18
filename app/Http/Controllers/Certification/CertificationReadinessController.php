@@ -435,17 +435,23 @@ class CertificationReadinessController extends Controller
                 abort_if($unexpected !== [], 422, 'La operación solo acepta selección y confirmación; los datos del certificado los obtiene el servidor.');
                 $this->validateContext($input, (int) $session->id_actividad, $id, 'sesion');
                 $service = app(SessionCertificatePreparation::class);
-                $typeId = $service->resolveType(isset($input['id_tipo_certificado']) ? (int) $input['id_tipo_certificado'] : null);
+                $requestedType = isset($input['id_tipo_certificado']) ? (int) $input['id_tipo_certificado'] : null;
+                $academic = $input['accion'] !== 'emitir_demostracion' && ! $this->readiness->usesDevelopmentPolicy();
+                $typeId = $academic ? $this->readiness->resolveAcademicSessionType($requestedType) : $service->resolveType($requestedType);
                 if (in_array($input['accion'], ['vista_previa', 'enviar_gerencia'], true)
                     && Gate::allows('create', CertificateDocument::class)) {
                     $management = app(CertificateManagement::class);
                     $existing = $management->recoverPreparation($id, (int) $input['id_participacion'], $typeId, $request->user());
                     if ($existing !== null) {
-                        return ['modo' => 'administrativo', 'accion' => $input['accion'], ...($input['accion'] === 'enviar_gerencia'
-                            ? $management->remit((int) $existing['id_certificado_documento'], $request->user(), $id) : $existing)];
+                        return $this->sessionDraftResponse(['modo' => 'administrativo', 'accion' => $input['accion'], ...($input['accion'] === 'enviar_gerencia'
+                            ? $management->remit((int) $existing['id_certificado_documento'], $request->user(), $id) : $existing)]);
                     }
                 }
                 if ($input['accion'] === 'vista_previa') {
+                    if ($academic) {
+                        return app(CertificateManagement::class)->previewAcademicSession($id, (int) $input['id_participacion'],
+                            $typeId, $input['mensaje'] ?? null, ($input['formato'] ?? 'html') === 'pdf', $request->user());
+                    }
                     $data = $service->preview($id, (int) $input['id_participacion'], $typeId, $this->areas($request), $input['mensaje'] ?? null, ($input['formato'] ?? 'html') === 'pdf');
                     $data['puede_emitir_demostracion'] = $data['puede_emitir_demostracion'] && Gate::allows('create', CertificateDocument::class);
                     if (Gate::denies('create', CertificateDocument::class)) {
@@ -458,6 +464,8 @@ class CertificationReadinessController extends Controller
                 }
                 abort_if(Gate::denies('create', CertificateDocument::class), 403, 'No autorizado para registrar documentos de demostración.');
                 if ($input['accion'] === 'enviar_gerencia') {
+                    abort_if($academic, 409, 'Revise el PDF con revisar_documento y envíe el token de revisión o el documento preparado a Gerencia.');
+
                     return $service->sendToManagement($id, (int) $input['id_participacion'], $typeId, $this->areas($request), $input['mensaje'], $input['huella_composicion']);
                 }
 
@@ -475,32 +483,22 @@ class CertificationReadinessController extends Controller
             ])->validate();
             $this->validateContext($input, (int) $session->id_actividad, $id, 'sesion');
 
-            if ($this->readiness->usesDevelopmentPolicy()) {
-                $blockers = $this->readiness->preparationBlockers('sesion');
-                if ($blockers !== []) {
-                    return [
-                        'origen' => 'sesion', 'modo' => 'desarrollo', 'oficial' => false,
-                        'id_actividad' => (int) $session->id_actividad, 'id_sesion' => $id,
-                        'id_tipo_certificado' => (int) $input['id_tipo_certificado'],
-                        'estado_preparacion' => 'Bloqueada', 'preparaciones' => [],
-                        'codigo_bloqueo' => null,
-                        'puede_preparar' => false, 'puede_generar_pdf' => false, 'puede_emitir' => false, 'puede_firmar' => false,
-                        'motivos_bloqueo' => $blockers,
-                        'motivos_bloqueo_emision' => [CertificationReadiness::OFFICIAL_ISSUANCE_BLOCKER],
-                    ];
-                }
-
-                return app(SessionCertificatePreparation::class)->prepare($id, (int) $input['id_tipo_certificado'],
-                    (int) $request->user()->getAuthIdentifier(), $this->areas($request), (int) $session->id_actividad);
+            $blockers = $this->readiness->preparationBlockers('sesion');
+            if ($blockers !== []) {
+                return [
+                    'origen' => 'sesion', 'modo' => 'desarrollo', 'oficial' => false,
+                    'id_actividad' => (int) $session->id_actividad, 'id_sesion' => $id,
+                    'id_tipo_certificado' => (int) $input['id_tipo_certificado'],
+                    'estado_preparacion' => 'Bloqueada', 'preparaciones' => [],
+                    'codigo_bloqueo' => null,
+                    'puede_preparar' => false, 'puede_generar_pdf' => false, 'puede_emitir' => false, 'puede_firmar' => false,
+                    'motivos_bloqueo' => $blockers,
+                    'motivos_bloqueo_emision' => [CertificationReadiness::OFFICIAL_ISSUANCE_BLOCKER],
+                ];
             }
 
-            return [
-                'origen' => 'sesion', 'id_actividad' => (int) $session->id_actividad,
-                'id_sesion' => $id, 'id_tipo_certificado' => $input['id_tipo_certificado'],
-                'puede_preparar' => false, 'puede_emitir' => false, 'puede_firmar' => false,
-                'estado_preparacion' => 'Bloqueada', 'certificado_sesion' => null,
-                'motivos_bloqueo' => $this->readiness->preparationBlockers('sesion'),
-            ];
+            return app(SessionCertificatePreparation::class)->prepare($id, (int) $input['id_tipo_certificado'],
+                (int) $request->user()->getAuthIdentifier(), $this->areas($request), (int) $session->id_actividad);
         }, preparing: true)->header('Cache-Control', 'private, no-store')->header('X-Content-Type-Options', 'nosniff');
     }
 
@@ -543,13 +541,22 @@ class CertificationReadinessController extends Controller
         $input = Validator::make($request->all(), $rules)->validate();
         $service = app(CertificateManagement::class);
         if ($reviewing) {
-            return $service->review($sessionId, (int) $input['id_participacion'], (int) $input['id_tipo_certificado'],
-                $input['mensaje'], $input['modalidad_firma'] ?? null, $request->user(), $input['firmantes'] ?? null);
+            return $this->sessionDraftResponse($service->review($sessionId, (int) $input['id_participacion'], (int) $input['id_tipo_certificado'],
+                $input['mensaje'], $input['modalidad_firma'] ?? null, $request->user(), $input['firmantes'] ?? null));
         }
         $result = $byDocument ? $service->remit((int) $input['id_certificado_documento'], $request->user(), $sessionId)
             : $service->confirm($sessionId, $input['token_revision'], $request->user(), $input['accion'] === 'enviar_gerencia');
 
-        return ['modo' => 'administrativo', 'accion' => $input['accion'], ...$result];
+        return $this->sessionDraftResponse(['modo' => 'administrativo', 'accion' => $input['accion'], ...$result]);
+    }
+
+    /** @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private function sessionDraftResponse(array $data): array
+    {
+        return [...$data, 'oficial' => false, 'emision_oficial_autorizada' => false,
+            'aprobacion_pendiente' => ($data['enviado'] ?? false) || ($data['estado_flujo'] ?? null) === CertificateManagement::PENDING];
     }
 
     private function authorizeBeneficiaries(): void
@@ -566,6 +573,8 @@ class CertificationReadinessController extends Controller
         }
         if (($data['puede_preparar'] ?? false) && Gate::denies('create', Certificate::class)) {
             $data['puede_preparar'] = false;
+            $data['puede_generar_pdf'] = false;
+            $data['estado_preparacion'] = 'Bloqueada';
             $data['motivos_bloqueo'][] = 'No dispone del permiso efectivo para preparar certificados.';
         }
     }
@@ -624,6 +633,11 @@ class CertificationReadinessController extends Controller
             }
             if (($data['accion'] ?? null) === 'enviar_gerencia') {
                 return $this->information('La vista previa no es un documento registrado. Confirme la preparación y use revisar-envio y enviar-gerencia.', 409, $data);
+            }
+            if (($data['modo'] ?? null) === 'academico') {
+                return ($data['puede_preparar'] ?? false)
+                    ? $this->ok($data, 'Borrador académico disponible para revisión.')
+                    : $this->information($data['motivos_bloqueo'][0] ?? 'La preparación académica está bloqueada.', 409, $data);
             }
             if ($preparing && ($data['modo'] ?? null) !== 'demostracion' && (($data['modo'] ?? null) !== 'desarrollo' || ! ($data['puede_preparar'] ?? false))) {
                 return $this->information(($data['modo'] ?? null) === 'desarrollo'

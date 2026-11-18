@@ -644,7 +644,7 @@ class CertificateManagement
             ->where('id_actividad_sesion', $sessionId)->where('estado', 'PRESENTE')->exists(), 409, 'La preparación requiere asistencia PRESENTE de esta sesión.');
         abort_unless(DB::table('certificado.solicitud_actividad')->where('id_actividad', $context->id_actividad)->where('estado', 'Aprobada')->exists(), 409, 'La actividad no tiene una solicitud aprobada.');
         $type = DB::table('certificado.tipo_certificado')->where('id_tipo_certificado', $typeId)->where('estado', true)->first();
-        abort_unless($type && trim($type->nombre_tipo) !== '' && in_array($typeId, config('certification.preparation.session_type_ids', []), true),
+        abort_unless($type && CertificationReadiness::isAcademicSessionType($typeId, $type->nombre_tipo),
             422, 'El tipo no está vigente o no está configurado para certificados por sesión.');
         $context->id_tipo_certificado = $typeId;
         $context->tipo_certificado = $type->nombre_tipo;
@@ -679,10 +679,52 @@ class CertificateManagement
         return array_map(fn (array $signer): array => array_intersect_key($signer, array_flip(['id_firma', 'id_persona', 'id_persona_trabajador', 'nombre', 'cargo', 'orden_firma'])), $signers);
     }
 
-    private function assertSessionParticipationRole(object $context): void
+    private function assertAcademicPreparationContext(object $context): string
     {
         abort_if(SessionSpeakers::hasSessionAssignment((int) $context->id_actividad, (int) $context->id_sesion, (int) $context->id_persona),
             409, 'La persona está vinculada como ponente de esta sesión. Use el flujo de reconocimiento a ponentes.');
+        $activityState = DB::table('certificado.actividad')->where('id_actividad', $context->id_actividad)->value('estado');
+        abort_unless(in_array($activityState, ['Activa', 'Cerrada'], true), 409, 'La preparación requiere una actividad Activa o Cerrada.');
+        abort_if(empty($context->fecha_sesion), 409, 'La sesión debe tener una fecha registrada.');
+        $attendanceCount = DB::table('certificado.asistencia as a')->join('certificado.participacion as p', 'p.id_participacion', '=', 'a.id_participacion')
+            ->where('a.id_actividad_sesion', $context->id_sesion)->where('p.id_actividad', $context->id_actividad)
+            ->where('p.id_persona', $context->id_persona)->count();
+        abort_unless($attendanceCount === 1, 409, 'Existen asistencias duplicadas para la persona en la sesión.');
+
+        return $activityState;
+    }
+
+    /** @return array<string, mixed> */
+    public function previewAcademicSession(int $sessionId, int $participationId, int $typeId, ?string $message, bool $pdf, User $actor): array
+    {
+        $context = $this->context($sessionId, $participationId, $typeId, $actor);
+        $activityState = $this->assertAcademicPreparationContext($context);
+        $signers = $this->generator->signers((int) $context->id_actividad);
+        $html = $this->generator->preview($context, $message, $signers, academicDraft: true);
+        $bytes = $pdf ? $this->generator->previewPdf($html) : null;
+        $availability = $this->preparationAvailability();
+        $canRegister = Gate::forUser($actor)->allows('create', CertificateDocument::class);
+        $registrationBlockers = $canRegister ? $availability['motivos'] : ['No dispone de permiso para registrar documentos.'];
+
+        return [
+            'accion' => 'vista_previa', 'modo' => 'academico', 'oficial' => false,
+            'contexto' => [...(array) $context, 'estado_actividad' => $activityState], 'mensaje' => $message, 'mensaje_persistido' => false,
+            'firmantes_configurados' => $signers,
+            'vista_previa_html' => $html, 'huella_composicion' => hash('sha256', $html), 'formato' => $pdf ? 'pdf' : 'html',
+            'vista_previa_pdf' => $bytes === null ? null : ['contenido_base64' => base64_encode($bytes),
+                'hash_pdf' => hash('sha256', $bytes), 'tipo_contenido' => 'application/pdf',
+                'nombre_archivo' => 'borrador-academico.pdf', 'persistido' => false],
+            'elegible_tecnicamente' => true, 'puede_preparar' => true, 'estado_preparacion' => 'Disponible',
+            'persistido' => false, 'creado' => false, 'emitida' => false, 'aprobacion_pendiente' => null,
+            'emision_oficial_autorizada' => false, 'puede_emitir' => false, 'puede_firmar' => false,
+            'puede_enviar_gerencia' => false, 'puede_emitir_demostracion' => false, 'puede_entregar' => false,
+            'identidad_sesion_disponible' => app(SessionCertificatePreparation::class)->identityAvailable(),
+            'puede_revisar_documento_para_firma' => $availability['disponible'] && $canRegister,
+            'siguiente_accion_preparacion' => $availability['disponible'] && $canRegister ? 'revisar_documento' : null,
+            'motivos_bloqueo_preparacion_persistente' => $registrationBlockers,
+            'motivos_bloqueo_envio' => [...$registrationBlockers, 'Revise y confirme el PDF exacto antes de remitirlo a Gerencia.'],
+            'motivos_bloqueo_emision' => [CertificationReadiness::OFFICIAL_ISSUANCE_BLOCKER],
+        ];
     }
 
     /**
@@ -721,7 +763,7 @@ class CertificateManagement
                 'vista_previa_pdf' => ['contenido_base64' => base64_encode(Storage::disk('local')->get($existing->ruta_archivo)),
                     'tipo_contenido' => 'application/pdf', 'persistido' => true]];
         }
-        $this->assertSessionParticipationRole($context);
+        $this->assertAcademicPreparationContext($context);
         $signers = $workers === null ? ($this->usesMinimalSchema() ? [] : $this->signers((int) $context->id_actividad))
             : $this->selectedSigners($context, $workers);
         abort_if($workers !== null && $mode === null, 422, 'Seleccione una modalidad para los funcionarios.');
@@ -948,7 +990,7 @@ class CertificateManagement
                 DB::table('gestion.persona_trabajador')->whereIn('id_persona_trabajador', array_column($manifest['signers'], 'id_persona_trabajador'))->lockForUpdate()->get();
                 DB::table('gestion.persona')->whereIn('id_persona', [$manifest['context']['id_persona'], ...array_column($manifest['signers'], 'id_persona')])->lockForUpdate()->get();
                 $context = $this->context($sessionId, $participationId, (int) $manifest['context']['id_tipo_certificado'], $actor);
-                $this->assertSessionParticipationRole($context);
+                $this->assertAcademicPreparationContext($context);
                 $signers = ($manifest['workers'] ?? null) === null ? ($minimal ? [] : $this->signers((int) $context->id_actividad))
                     : $this->selectedSigners($context, $manifest['workers']);
                 abort_unless((array) $context === $manifest['context'] && $signers === $manifest['signers']

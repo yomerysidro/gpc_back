@@ -40,6 +40,65 @@ class CertificateManagementStageATest extends TestCase
         $this->assertDatabaseCount('certificado.asistencia', 1);
     }
 
+    public function test_academic_preview_and_remission_without_institutional_policy_leave_the_document_unsigned(): void
+    {
+        $this->minimalSessionSchema();
+        $this->seedCertificateContext(0);
+        $this->actor();
+        config(['certification.preparation.session_type_ids' => null, 'certification.eligibility.sesion' => []]);
+        $message = 'Participación en la sesión de capacitación.';
+        $selection = ['id_participacion' => 1, 'mensaje' => $message];
+        DB::table('certificado.tipo_certificado')->insert([
+            ['id_tipo_certificado' => 2, 'nombre_tipo' => 'Reconocimiento', 'estado' => true],
+            ['id_tipo_certificado' => 3, 'nombre_tipo' => 'Capacitación', 'estado' => false],
+        ]);
+
+        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()
+            ->assertJsonPath('data.tipos_certificado_permitidos', [1])
+            ->assertJsonPath('data.beneficiarios.data.0.elegible_tecnicamente', true)
+            ->assertJsonPath('data.estado_preparacion', 'Disponible')
+            ->assertJsonPath('data.emision_oficial_autorizada', false);
+        foreach ([2, 3] as $typeId) {
+            $this->postJson(self::URL, ['accion' => 'vista_previa', 'id_tipo_certificado' => $typeId, ...$selection])->assertUnprocessable();
+        }
+        $this->postJson(self::URL, ['accion' => 'vista_previa', 'formato' => 'pdf', ...$selection])->assertOk()
+            ->assertJsonPath('data.modo', 'academico')->assertJsonPath('data.contexto.id_tipo_certificado', 1)
+            ->assertJsonPath('data.mensaje', $message)->assertJsonPath('data.vista_previa_pdf.persistido', false)
+            ->assertJsonPath('data.siguiente_accion_preparacion', 'revisar_documento')
+            ->assertJsonPath('data.emision_oficial_autorizada', false);
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->assertDatabaseCount('certificado.certificado_documento', 0);
+        $review = $this->postJson(self::URL, ['accion' => 'revisar_documento', 'id_tipo_certificado' => 1, ...$selection])->assertOk()
+            ->assertJsonPath('data.oficial', false)->assertJsonPath('data.aprobacion_pendiente', false)->json('data');
+        $submitted = $this->postJson(self::URL, ['accion' => 'enviar_gerencia', 'token_revision' => $review['token_revision'], 'confirmar' => true])
+            ->assertCreated()->assertJsonPath('data.estado_flujo', 'PENDIENTE_FIRMA')->assertJsonPath('data.aprobacion_pendiente', true)
+            ->assertJsonPath('data.emision_oficial_autorizada', false)->assertJsonPath('data.fecha_emision', null)->json('data');
+        $this->getJson('/api/certificados/verificar/'.$submitted['codigo_verificacion'].'?archivo=1')->assertForbidden();
+        $this->postJson('/api/certificados-documentos/'.$submitted['id_certificado_documento'].'/emitir', ['confirmar' => true])
+            ->assertConflict()->assertJsonPath('data.completada', false);
+        $this->assertDatabaseCount('certificado.certificado_firma', 0);
+        $this->assertDatabaseHas('certificado.certificado_documento', ['id_certificado_documento' => $submitted['id_certificado_documento'],
+            'hash_certificado' => $review['hash_pdf']]);
+    }
+
+    public function test_duplicate_attendance_blocks_academic_eligibility_and_preview(): void
+    {
+        $this->minimalSessionSchema();
+        $this->seedCertificateContext(0);
+        $this->actor();
+        DB::table('certificado.participacion')->insert(['id_participacion' => 2, 'id_persona' => 1, 'id_actividad' => 1, 'estado' => 'Activo']);
+        DB::table('certificado.asistencia')->insert(['id_asistencia' => 2, 'id_participacion' => 2, 'id_actividad_sesion' => 1, 'estado' => 'PRESENTE']);
+        $reason = 'Existen asistencias duplicadas para la persona en la sesión.';
+
+        $this->getJson('/api/activity-session/1/beneficiarios?id_tipo_certificado=1')->assertOk()
+            ->assertJsonPath('data.total_elegibles', 0)->assertJsonPath('data.puede_preparar', false)
+            ->assertJsonPath('data.beneficiarios.data.0.motivos.0', $reason);
+        $this->postJson(self::URL, ['accion' => 'vista_previa', 'id_participacion' => 1, 'id_tipo_certificado' => 1])
+            ->assertConflict()->assertJsonPath('message', $reason);
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->assertDatabaseCount('certificado.asistencia', 2);
+    }
+
     private function administrativeWorkers(): void
     {
         $this->minimalSessionSchema();
