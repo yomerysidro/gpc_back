@@ -7,6 +7,7 @@
 **/auth.json
 **/.env
 **/.env.*
+**/gpc-utf8-repair-*.csv
 .gitignore
 .gitlab-ci.yml
 .gitattributes

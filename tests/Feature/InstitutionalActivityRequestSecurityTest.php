@@ -125,6 +125,27 @@ class InstitutionalActivityRequestSecurityTest extends TestCase
         return $id;
     }
 
+    public function test_my_requests_preserve_spanish_characters_from_the_database(): void
+    {
+        [$owner] = $this->actors();
+        $this->cookieFor($owner);
+        $title = 'Capacitación: á, é, í, ó, ú, ñ y Ñ';
+        DB::table('gestion.area')->where('id_area', 1)->update(['nombre' => 'Alcaldía']);
+        DB::table('gestion.persona')->where('id_persona', $owner->id_persona)->update([
+            'nombres' => 'Antón',
+            'apellido_paterno' => 'Nuñez',
+        ]);
+
+        $this->postJson('/api/activity-requests', array_replace($this->payload(), ['nombre' => $title]))
+            ->assertCreated();
+
+        $this->getJson('/api/activity-requests/mine')
+            ->assertOk()
+            ->assertJsonPath('data.data.0.nombre', $title)
+            ->assertJsonPath('data.data.0.area_nombre', 'Alcaldía')
+            ->assertJsonPath('data.data.0.solicitante_nombre', 'Antón Nuñez');
+    }
+
     public function test_cookie_authenticated_http_flow_records_manager_and_links_one_activity(): void
     {
         $actors = $this->actors();

@@ -1,4 +1,5 @@
 *.log
+gpc-utf8-repair-*.csv
 .DS_Store
 .env
 .env.*
