@@ -251,9 +251,9 @@ class CertificateDocumentGenerationTest extends TestCase
         $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertForbidden();
     }
 
-    #[TestWith(['http://localhost:4200/verificar', 'production'])]
-    #[TestWith(['https://localhost/verificar', 'production'])]
-    #[TestWith(['https://127.0.0.1/verificar', 'production'])]
+    #[TestWith(['http://localhost:4200', 'staging'])]
+    #[TestWith(['https://localhost', 'staging'])]
+    #[TestWith(['https://127.0.0.1', 'staging'])]
     #[TestWith(['https://user:password@municipalidad.test/verificar', 'testing'])]
     #[TestWith(['https://municipalidad.test/verificar?code=forged', 'testing'])]
     public function test_generation_rejects_invalid_deployment_urls_without_registering_a_file(string $url, string $environment): void
@@ -261,7 +261,7 @@ class CertificateDocumentGenerationTest extends TestCase
         $this->authorize();
         $this->isolateDocumentBehavior();
         $this->app['env'] = $environment;
-        config(['certification.documents.verification_base_url' => $url]);
+        config([$environment === 'staging' ? 'app.frontend_url' : 'certification.documents.verification_base_url' => $url]);
         $this->postJson('/api/certificados/1/generar-documento')->assertServiceUnavailable();
         $this->assertDatabaseCount('certificado.certificado_documento', 0);
         self::assertSame([], Storage::disk('local')->allFiles());
@@ -306,7 +306,7 @@ class CertificateDocumentGenerationTest extends TestCase
 
     #[TestWith(['http://localhost:4200'])]
     #[TestWith(['https://municipalidad.test'])]
-    #[TestWith(['https://certificados-morales.aiyond.org', 'production'])]
+    #[TestWith(['http://localhost:4200', 'production'])]
     public function test_rendering_real_pdf_with_qr_and_persistence_when_dependencies_are_available(string $frontendUrl, string $environment = 'testing'): void
     {
         if (! class_exists(Dompdf::class) || ! class_exists(Writer::class)) {
@@ -322,7 +322,8 @@ class CertificateDocumentGenerationTest extends TestCase
         $data = $this->postJson('/api/certificados/1/generar-documento')->assertCreated()
             ->assertJsonPath('data.creado', true)->assertJsonPath('data.oficial', false)->json('data');
         self::assertMatchesRegularExpression('/^[a-f0-9]{30}$/D', $data['codigo_verificacion']);
-        self::assertSame($frontendUrl.'/verificar/'.$data['codigo_verificacion'], $data['url_verificacion']);
+        $publicFrontend = $environment === 'production' ? 'https://certificados-morales.aiyond.org' : $frontendUrl;
+        self::assertSame($publicFrontend.'/verificar/'.$data['codigo_verificacion'], $data['url_verificacion']);
         $document = DB::table('certificado.certificado_documento')->first();
         self::assertSame('certificados/desarrollo/'.$document->codigo_verificacion.'.pdf', $document->ruta_archivo);
         $content = Storage::disk('local')->get($document->ruta_archivo);

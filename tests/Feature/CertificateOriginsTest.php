@@ -721,6 +721,20 @@ class CertificateOriginsTest extends TestCase
         $this->assertDatabaseCount('certificado.certificado', 1);
         $this->postJson($url, ['accion' => 'revisar_documento', 'mensaje' => 'Otro texto.'])->assertConflict();
         $this->assertDatabaseHas('certificado.reconocimiento', ['id_reconocimiento' => 1, 'motivo' => 'Servicio acreditado']);
+
+        $disk = Storage::disk('local');
+        $disk->delete([...$disk->files('certificados/revisiones'), substr($document->ruta_archivo, 0, -4).'.manifest']);
+        $this->getJson('/api/reconocimientos/1/evaluacion-certificacion')->assertOk()
+            ->assertJsonPath('data.puede_visualizar', true)
+            ->assertJsonPath('data.puede_preparar', false);
+        $historical = $this->getJson($url.'?accion=consultar_preparacion')->assertOk()
+            ->assertJsonPath('data.texto_editable', false)
+            ->assertJsonPath('data.mensaje_aprobado', null)
+            ->assertJsonPath('data.puede_enviar_gerencia', false)
+            ->assertJsonPath('data.hash_pdf', hash('sha256', $pdf))
+            ->json('data');
+        $this->get($historical['url_documento'])->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        $this->postJson($url, ['accion' => 'revisar_documento', 'mensaje' => 'Otro texto.'])->assertConflict();
     }
 
     #[TestWith([''])]

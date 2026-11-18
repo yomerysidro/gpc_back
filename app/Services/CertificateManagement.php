@@ -365,10 +365,22 @@ class CertificateManagement
                 : 'El reconocimiento no tiene un documento vigente e inequívoco del beneficiario recuperable.');
         $idDocument = (int) $certificates->first()->id_certificado_documento;
         $workflow = app(CertificateDocumentWorkflow::class);
-        $document = $this->generator->authorizedArtifact($workflow->document($idDocument, $actor), readOnly: true);
-        $approved = app(CertificateDocumentVersions::class)->approvedContent($document);
-        $saved = $origin === 'practica' ? $origins->savedPracticeText($approved) : $origins->savedSessionRecognitionText($approved);
         $detail = $workflow->detail($idDocument, $actor);
+        try {
+            $document = $this->generator->authorizedArtifact($workflow->document($idDocument, $actor, resolveVersion: false), readOnly: true);
+            $approved = app(CertificateDocumentVersions::class)->approvedContent($document);
+        } catch (HttpException $exception) {
+            if ($exception->getStatusCode() !== 409) {
+                throw $exception;
+            }
+
+            return [...$evaluation, ...$detail, 'origen' => $origin, 'id_origen' => $id,
+                'estado_flujo' => $detail['estado_certificado'], 'creado' => false, 'persistido' => true, 'recuperado' => true,
+                'texto_editable' => false, 'puede_preparar' => false, 'puede_generar_pdf' => false, 'puede_emitir' => false,
+                'puede_enviar_gerencia' => false, 'token_revision' => null,
+                'motivos_bloqueo' => array_values(array_unique([...$evaluation['motivos_bloqueo'], $exception->getMessage()]))];
+        }
+        $saved = $origin === 'practica' ? $origins->savedPracticeText($approved) : $origins->savedSessionRecognitionText($approved);
         $state = $detail['estado_certificado'];
         $prepared = in_array($state, [self::PREPARED, self::PENDING], true)
             ? $this->preparationResult($idDocument, $actor, false, knownDetail: $detail)
@@ -438,9 +450,10 @@ class CertificateManagement
             abort_if($text !== null, 409, 'El texto no corresponde a la revisión; revise nuevamente el PDF.');
         }
         $created = null;
+        $createdApproval = null;
         $committed = false;
         try {
-            return DB::transaction(function () use ($origin, $id, $actor, $manifest, $path, $text, $token, &$created, &$committed): array {
+            return DB::transaction(function () use ($origin, $id, $actor, $manifest, $path, $text, $token, &$created, &$createdApproval, &$committed): array {
                 if ($origin === 'ponente_sesion' && DB::connection()->getDriverName() === 'pgsql') {
                     DB::statement("SET LOCAL lock_timeout = '3s'");
                 }
@@ -511,16 +524,7 @@ class CertificateManagement
                     'fecha_emision' => null, 'estado' => self::PREPARED, 'notificado' => false, 'fecha_notificacion' => null,
                 ], 'id_certificado');
                 $candidate = 'certificados/preparados/'.$manifest['code'].'.pdf';
-                if (in_array($origin, ['ponente_sesion', 'practica', 'reconocimiento'], true)) {
-                    $approvedPath = 'certificados/preparados/'.$manifest['code'].'.manifest';
-                    if (Storage::disk('local')->exists($approvedPath)) {
-                        abort_unless(json_decode(Crypt::decryptString(Storage::disk('local')->get($approvedPath)), true, 512, JSON_THROW_ON_ERROR) === $manifest,
-                            409, 'La aprobación existente pertenece a otra revisión.');
-                    } else {
-                        app(CertificateDocumentVersions::class)->writeExclusive($approvedPath,
-                            Crypt::encryptString(json_encode($manifest, JSON_THROW_ON_ERROR)));
-                    }
-                }
+                $createdApproval = app(CertificateDocumentVersions::class)->retainApproval($manifest);
                 $this->writeReviewedPdf($candidate, $pdf, function () use (&$created, $candidate): void {
                     $created = $candidate;
                 });
@@ -538,6 +542,7 @@ class CertificateManagement
             });
         } catch (Throwable $exception) {
             $this->generator->discardFailedArtifact($created, $exception, $committed);
+            $this->generator->discardFailedArtifact($createdApproval, $exception, $committed);
             throw $exception;
         }
     }
@@ -883,9 +888,10 @@ class CertificateManagement
         abort_unless($manifest['actor'] === (int) $actor->getAuthIdentifier(), 403, 'La revisión pertenece a otro usuario.');
         abort_unless((int) $manifest['context']['id_sesion'] === $sessionId, 422, 'La revisión pertenece a otra sesión.');
         $createdPath = null;
+        $createdApproval = null;
         $commitMayHaveSucceeded = false;
         try {
-            return DB::transaction(function () use ($sessionId, $actor, $send, $minimal, $manifest, $path, $key, &$createdPath, &$commitMayHaveSucceeded): array {
+            return DB::transaction(function () use ($sessionId, $actor, $send, $minimal, $manifest, $path, $key, &$createdPath, &$createdApproval, &$commitMayHaveSucceeded): array {
                 $participationId = (int) $manifest['context']['id_participacion'];
                 DB::table('certificado.participacion')->where('id_participacion', $participationId)->lockForUpdate()->first();
                 DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $sessionId)->lockForUpdate()->first();
@@ -954,6 +960,7 @@ class CertificateManagement
                         $createdPath = $candidatePath;
                     });
                 }
+                $createdApproval = app(CertificateDocumentVersions::class)->retainApproval($manifest);
                 $certificateId = DB::table('certificado.certificado')->insertGetId([
                     'id_persona' => $context->id_persona, 'id_participacion' => $participationId, 'id_actividad_sesion' => $sessionId,
                     'id_tipo_certificado' => $context->id_tipo_certificado, 'id_practica' => null, 'id_reconocimiento' => null,
@@ -1007,6 +1014,7 @@ class CertificateManagement
             });
         } catch (Throwable $exception) {
             $this->generator->discardFailedArtifact($createdPath, $exception, $commitMayHaveSucceeded);
+            $this->generator->discardFailedArtifact($createdApproval, $exception, $commitMayHaveSucceeded);
             throw $exception;
         }
     }

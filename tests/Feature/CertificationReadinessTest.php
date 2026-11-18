@@ -171,7 +171,10 @@ class CertificationReadinessTest extends TestCase
     {
         $this->seedSession('Activo');
         $this->authorize();
-        $this->postJson('/api/activity-session/1/finalizar')->assertConflict()->assertJsonPath('success', false);
+        $response = $this->postJson('/api/activity-session/1/finalizar')->assertConflict()
+            ->assertJsonPath('success', false);
+        $response->assertJsonPath('message', 'Falta una política aprobada de cierre, estados de asistencia y regularizaciones.')
+            ->assertJsonPath('data.motivos_bloqueo.0', $response->json('message'));
         $this->assertDatabaseHas('certificado.actividad_sesion', ['id_actividad_sesion' => 1, 'estado' => 'Activo']);
         $this->assertDatabaseCount('certificado.certificado', 0);
     }

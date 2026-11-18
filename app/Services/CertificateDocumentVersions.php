@@ -98,8 +98,7 @@ class CertificateDocumentVersions
         $disk = Storage::disk('local');
         $originalHash = $document->hash_certificado_original ?? $document->hash_certificado;
         $indexed = 'certificados/preparados/'.$document->codigo_verificacion.'.manifest';
-        $paths = $disk->exists($indexed) ? [$indexed] : $disk->files('certificados/revisiones');
-        foreach ($paths as $path) {
+        foreach ($this->approvalCandidates($indexed) as $path) {
             if (! str_ends_with($path, '.manifest')) {
                 continue;
             }
@@ -108,12 +107,40 @@ class CertificateDocumentVersions
             } catch (HttpException) {
                 continue;
             }
-            if (($source['code'] ?? null) === $document->codigo_verificacion && ($source['hash'] ?? null) === $originalHash
+            if (! ($source['recuperacion'] ?? false)
+                && ($source['code'] ?? null) === $document->codigo_verificacion && ($source['hash'] ?? null) === $originalHash
                 && is_string($source['message'] ?? null) && is_array($source['context'] ?? null)) {
                 return ['message' => $source['message'], 'context' => $source['context']];
             }
         }
         abort(409, 'No se localizó el texto aprobado vinculado al hash original. No se sustituye por texto del cliente.');
+    }
+
+    /** @return iterable<string> */
+    private function approvalCandidates(string $indexed): iterable
+    {
+        $disk = Storage::disk('local');
+        if ($disk->exists($indexed)) {
+            yield $indexed;
+        }
+
+        yield from $disk->files('certificados/revisiones');
+    }
+
+    /** @param array<string, mixed> $manifest */
+    public function retainApproval(array $manifest): ?string
+    {
+        $disk = Storage::disk('local');
+        $path = 'certificados/preparados/'.$manifest['code'].'.manifest';
+        if ($disk->exists($path)) {
+            abort_unless($this->decode($disk->get($path)) === $manifest, 409, 'La aprobación existente pertenece a otra revisión.');
+
+            return null;
+        }
+
+        $this->writeExclusive($path, Crypt::encryptString(json_encode($manifest, JSON_THROW_ON_ERROR)));
+
+        return $path;
     }
 
     public function writeExclusive(string $path, string $bytes): void
@@ -156,7 +183,7 @@ class CertificateDocumentVersions
     }
 
     /** @return array<string, mixed> */
-    private function decode(string $bytes): array
+    private function decode(?string $bytes): array
     {
         try {
             $result = json_decode(Crypt::decryptString($bytes), true, 512, JSON_THROW_ON_ERROR);

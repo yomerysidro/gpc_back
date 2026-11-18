@@ -279,6 +279,12 @@ class CertificateManagementStageATest extends TestCase
         $this->patchJson('/api/certificados-documentos/update/'.$id, ['estado' => 'Anulado'])->assertConflict();
         $this->postJson(self::URL, $confirmation)->assertOk()->assertJsonPath('data.id_certificado_documento', $id)
             ->assertJsonPath('data.mensaje_aprobado', $message);
+        $disk = Storage::disk('local');
+        $disk->delete($disk->files('certificados/revisiones'));
+        $this->postJson(self::URL, ['accion' => 'revisar_documento', 'id_participacion' => 1,
+            'id_tipo_certificado' => 1, 'mensaje' => 'Texto del cliente'])->assertOk()
+            ->assertJsonPath('data.mensaje_aprobado', $message)
+            ->assertJsonPath('data.hash_pdf', hash('sha256', $pdf));
         $managementReview = $this->postJson('/api/certificados-documentos/'.$id.'/revisar-envio')->assertOk()->json('data');
         self::assertSame($pdf, base64_decode($managementReview['vista_previa_pdf']['contenido_base64'], true));
         $payload = ['token_revision' => $managementReview['token_revision'], 'confirmar' => true];
