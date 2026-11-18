@@ -96,6 +96,7 @@ class CertificationReadiness
     public function activeAttendanceEnrollmentStates(): array
     {
         $states = config('certification.attendance_summary.active_participation_states', []);
+
         return $this->validStates($states, false) ? array_map(fn (string $state): string => strtoupper(trim($state)), $states) : [];
     }
 
@@ -266,7 +267,8 @@ class CertificationReadiness
         $page->setCollection($page->getCollection()->map(function (object $row) use ($origin, $filters, $facts, $baseBlockers): array {
             $participants = $facts['participants']->where('id_actividad', $row->id_actividad);
             $counts = ['Elegible' => 0, 'No elegible' => 0, 'Pendiente de validación' => 0];
-            foreach ($participants as $participant) {
+            $candidates = $this->participationCandidates($participants, $row, $origin, $facts);
+            foreach ($candidates as $participant) {
                 $evaluation = $this->evaluate($participant, $row, $origin, $filters['id_tipo_certificado'] ?? null, $facts);
                 $counts[$evaluation['estado_elegibilidad']]++;
             }
@@ -290,7 +292,7 @@ class CertificationReadiness
                 'tipo_certificacion' => $origin,
                 'tipos_certificado_permitidos' => $facts['types']->filter(fn (mixed $id): bool => $this->compatibleType($origin, (int) $id, $facts['types'], $facts['development_verified']) === true)->values()->all(),
                 'tipo_certificado_compatible' => $this->compatibleType($origin, $filters['id_tipo_certificado'] ?? null, $facts['types'], $facts['development_verified']),
-                'total_participantes_inscritos' => $participants->count(),
+                'total_participantes_inscritos' => $candidates->count(),
                 'total_elegibles' => $counts['Elegible'], 'total_no_elegibles' => $counts['No elegible'],
                 'total_pendientes' => $counts['Pendiente de validación'],
                 'estado_preparacion' => $blockers === [] ? 'Disponible' : 'Bloqueada',
@@ -328,6 +330,10 @@ class CertificationReadiness
                 ->where('s.id_actividad_sesion', $context->id_sesion)
                 ->whereRaw("UPPER(TRIM(s.estado)) = 'FINALIZADA'")
                 ->whereRaw("UPPER(TRIM(p.estado)) = 'ACTIVO'")
+                ->when(SessionSpeakers::supportsSessionLinks(), fn (Builder $participants) => $participants->whereNotExists(
+                    SessionSpeakers::assignments()->selectRaw('1')->whereColumn('ap.id_actividad_sesion', 's.id_actividad_sesion')
+                        ->whereColumn('ap.id_actividad', 'p.id_actividad')->whereColumn('pp.id_persona', 'p.id_persona')
+                ))
                 ->whereExists(function (Builder $attendance): void {
                     $attendance->selectRaw('1')->from('certificado.asistencia as a')
                         ->whereColumn('a.id_participacion', 'p.id_participacion')
@@ -376,7 +382,8 @@ class CertificationReadiness
 
         $blockers = $this->preparationBlockers($origin);
         $compatible = $this->compatibleType($origin, $filters['id_tipo_certificado'] ?? null, $facts['types'], $facts['development_verified']);
-        $eligible = $facts['participants']->filter(fn (object $participant): bool => $this->evaluate($participant, $context,
+        $candidates = $this->participationCandidates($facts['participants'], $context, $origin, $facts);
+        $eligible = $candidates->filter(fn (object $participant): bool => $this->evaluate($participant, $context,
             $origin, $filters['id_tipo_certificado'] ?? null, $facts)['estado_elegibilidad'] === 'Elegible');
         $eligibleCount = $eligible->count();
         if ($origin === 'sesion' && $this->usesDevelopmentPolicy()) {
@@ -456,6 +463,11 @@ class CertificationReadiness
 
         return [
             'participants' => $participants,
+            'session_speakers' => SessionSpeakers::supportsSessionLinks()
+                ? SessionSpeakers::assignments()->join('certificado.actividad_sesion as s', 's.id_actividad_sesion', '=', 'ap.id_actividad_sesion')
+                    ->whereColumn('s.id_actividad', 'ap.id_actividad')->whereIn('ap.id_actividad', $activityIds)
+                    ->get(['ap.id_actividad_sesion', 'pp.id_persona'])->groupBy('id_actividad_sesion')
+                : collect(),
             'sessions' => DB::table('certificado.actividad_sesion')->whereIn('id_actividad', $activityIds)->get(),
             'attendances' => DB::table('certificado.asistencia')->whereIn('id_participacion', $ids)
                 ->select('id_asistencia', 'id_participacion', 'id_actividad_sesion', 'estado', 'hora_entrada', 'hora_salida')->get(),
@@ -585,13 +597,23 @@ class CertificationReadiness
     }
 
     /** @return array{compatible: ?bool, beneficiaries: Collection} */
+    private function participationCandidates(Collection $participants, object $context, string $origin, array $facts): Collection
+    {
+        if ($origin !== 'sesion') {
+            return $participants;
+        }
+        $speakers = $facts['session_speakers']->get($context->id_sesion, collect())->keyBy('id_persona');
+
+        return $participants->reject(fn (object $participant): bool => $speakers->has($participant->id_persona))->values();
+    }
+
     public function sessionPreparationCandidates(object $context, int $typeId): array
     {
         $facts = $this->facts([(int) $context->id_actividad]);
 
         return [
             'compatible' => $this->compatibleType('sesion', $typeId, $facts['types'], $facts['development_verified']),
-            'beneficiaries' => $facts['participants']->map(fn (object $participant): array => [
+            'beneficiaries' => $this->participationCandidates($facts['participants'], $context, 'sesion', $facts)->map(fn (object $participant): array => [
                 'id_participacion' => (int) $participant->id_participacion,
                 'id_persona' => (int) $participant->id_persona,
                 ...$this->evaluate($participant, $context, 'sesion', $typeId, $facts),

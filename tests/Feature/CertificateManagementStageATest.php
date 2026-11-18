@@ -19,6 +19,27 @@ class CertificateManagementStageATest extends TestCase
 {
     private const URL = '/api/activity-session/1/preparar-certificados';
 
+    public function test_session_speaker_cannot_prepare_or_confirm_a_new_participation_certificate(): void
+    {
+        $this->minimalSessionSchema();
+        $this->seedCertificateContext(0);
+        $this->actor();
+        DB::statement('CREATE TABLE gestion.persona_ponente (id_persona_ponente INTEGER PRIMARY KEY, id_persona INTEGER)');
+        DB::statement('CREATE TABLE certificado.actividad_ponente (id_actividad_ponente INTEGER PRIMARY KEY, id_persona_ponente INTEGER, id_actividad INTEGER, id_actividad_sesion INTEGER)');
+        $input = ['accion' => 'revisar_documento', 'id_participacion' => 1, 'id_tipo_certificado' => 1, 'mensaje' => 'Mensaje de prueba.'];
+        $review = $this->postJson(self::URL, $input)->assertOk()->json('data');
+        DB::table('gestion.persona_ponente')->insert(['id_persona_ponente' => 1, 'id_persona' => 1]);
+        DB::table('certificado.actividad_ponente')->insert(['id_actividad_ponente' => 1, 'id_persona_ponente' => 1, 'id_actividad' => 1, 'id_actividad_sesion' => 1]);
+
+        $message = 'La persona está vinculada como ponente de esta sesión. Use el flujo de reconocimiento a ponentes.';
+        $this->postJson(self::URL, $input)->assertConflict()->assertJsonPath('message', $message);
+        $this->postJson(self::URL, ['accion' => 'confirmar_preparacion', 'token_revision' => $review['token_revision'], 'confirmar' => true])
+            ->assertConflict()->assertJsonPath('message', $message);
+        $this->assertDatabaseCount('certificado.certificado', 0);
+        $this->assertDatabaseCount('certificado.certificado_documento', 0);
+        $this->assertDatabaseCount('certificado.asistencia', 1);
+    }
+
     private function administrativeWorkers(): void
     {
         $this->minimalSessionSchema();

@@ -22,6 +22,41 @@ class SessionSpeakers
             ->join('gestion.persona_ponente as pp', 'pp.id_persona_ponente', '=', 'ap.id_persona_ponente');
     }
 
+    public static function hasSessionAssignment(int $activityId, int $sessionId, int $personId): bool
+    {
+        return self::supportsSessionLinks() && self::assignments()
+            ->where('ap.id_actividad', $activityId)->where('ap.id_actividad_sesion', $sessionId)
+            ->where('pp.id_persona', $personId)->exists();
+    }
+
+    public function doubleRoleDocuments(?int $sessionId = null): Collection
+    {
+        if (! self::supportsSessionLinks()
+            || ! Schema::hasColumn('certificado.certificado', 'id_actividad_sesion')
+            || ! Schema::hasColumn('certificado.reconocimiento', 'id_actividad_ponente')
+            || ! Schema::hasTable('certificado.certificado_documento')) {
+            return collect();
+        }
+
+        return self::assignments()
+            ->join('certificado.actividad_sesion as s', 's.id_actividad_sesion', '=', 'ap.id_actividad_sesion')
+            ->whereColumn('s.id_actividad', 'ap.id_actividad')
+            ->join('certificado.participacion as p', 'p.id_persona', '=', 'pp.id_persona')
+            ->whereColumn('p.id_actividad', 'ap.id_actividad')
+            ->join('certificado.certificado as cp', 'cp.id_participacion', '=', 'p.id_participacion')
+            ->whereColumn('cp.id_persona', 'pp.id_persona')->whereColumn('cp.id_actividad_sesion', 's.id_actividad_sesion')
+            ->join('certificado.reconocimiento as r', 'r.id_actividad_ponente', '=', 'ap.id_actividad_ponente')
+            ->join('certificado.certificado as cr', 'cr.id_reconocimiento', '=', 'r.id_reconocimiento')
+            ->whereColumn('cr.id_persona', 'pp.id_persona')
+            ->join('certificado.certificado_documento as dp', 'dp.id_certificado', '=', 'cp.id_certificado')
+            ->join('certificado.certificado_documento as dr', 'dr.id_certificado', '=', 'cr.id_certificado')
+            ->whereColumn('dp.id_certificado_documento', '<>', 'dr.id_certificado_documento')
+            ->when($sessionId !== null, fn (Builder $query) => $query->where('s.id_actividad_sesion', $sessionId))
+            ->distinct()->orderBy('s.id_actividad_sesion')->orderBy('pp.id_persona')
+            ->get(['s.id_actividad_sesion', 'pp.id_persona', 'dp.id_certificado_documento as id_documento_participacion',
+                'dr.id_certificado_documento as id_documento_ponente']);
+    }
+
     /** @return Collection<int, object> */
     public function assigned(int $activityId, int $sessionId): Collection
     {
@@ -107,6 +142,7 @@ class SessionSpeakers
         $session = DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $sessionId)->lockForUpdate()->first();
         abort_unless($session, 404, 'Sesión no encontrada.');
         abort_unless((int) $session->id_actividad === $activityId, 409, 'La sesión no pertenece a la actividad.');
+
         return $session;
     }
 
