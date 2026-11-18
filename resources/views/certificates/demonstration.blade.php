@@ -42,7 +42,7 @@
         .compact .signature-name { font-size: 9px; }
         .compact .position { font-size: 8px; }
         .compact .footer { margin-top: 6px; }
-        .compact .qr { height: 60px; width: 60px; }
+        .compact .qr { height: 67px; width: 67px; }
     </style>
 </head>
 <body>
