@@ -1,8 +1,9 @@
 -- psql -X -f /path/to/repair_cp850_mojibake.sql -v mode=preview
 -- Review both private preview CSVs and copy only approved entries (with headers)
 -- to gpc-utf8-repair-approved.csv and gpc-utf8-repair-checks-approved.csv.
--- After authorization, run with -v mode=apply. Keep both backup CSVs securely.
--- To undo, run with -v mode=revert. Apply and revert lock tables with repaired CHECKs.
+-- After authorization, run with -v mode=apply -v expected_database=NAME.
+-- To undo, run with -v mode=revert -v expected_database=NAME using the same directory.
+-- Keep both backup CSVs securely. Apply and revert lock tables with repaired CHECKs.
 -- Use a separate private working directory for each batch. Never commit the CSVs.
 \set ON_ERROR_STOP on
 \if :{?mode}
@@ -14,6 +15,19 @@ SELECT :'mode' = 'preview' AS preview, :'mode' = 'apply' AS apply,
 \if :valid_mode
 \else
     DO $$ BEGIN RAISE EXCEPTION 'Expected mode: preview, apply or revert'; END $$;
+\endif
+
+\if :preview
+\else
+    \if :{?expected_database}
+        SELECT :'expected_database' = current_database() AS confirmed_database \gset
+    \else
+        \set confirmed_database false
+    \endif
+    \if :confirmed_database
+    \else
+        DO $$ BEGIN RAISE EXCEPTION 'Specify the connected database with -v expected_database=NAME'; END $$;
+    \endif
 \endif
 
 BEGIN;
@@ -64,7 +78,7 @@ DECLARE
         'hex'), 'UTF8');
     octets text;
 BEGIN
-    IF strpos(input, chr(9500)) = 0 OR strpos(input, chr(65533)) > 0 THEN
+    IF input !~ '[\u2500-\u259f]' OR strpos(input, chr(65533)) > 0 THEN
         RETURN NULL;
     END IF;
     SELECT CASE WHEN min(octet) >= 0 THEN string_agg(lpad(to_hex(octet), 2, '0'), '' ORDER BY position) END
@@ -132,6 +146,7 @@ CREATE TEMP TABLE utf8_checks (
     ) v
     WHERE c.contype = 'c' AND c.convalidated AND v.repaired IS NOT NULL;
     SELECT table_name, column_name, count(*) AS proposed_cells FROM utf8_rows GROUP BY 1, 2 ORDER BY 1, 2;
+    SELECT count(*) AS proposed_cells, count(DISTINCT (table_name, row_id)) AS proposed_rows FROM utf8_rows;
     SELECT table_name, check_name FROM utf8_checks ORDER BY 1, 2;
     \copy (SELECT * FROM pg_temp.utf8_rows ORDER BY table_name, column_name, row_id) TO 'gpc-utf8-repair-preview.csv' WITH (FORMAT csv, HEADER true)
     \copy (SELECT * FROM pg_temp.utf8_checks ORDER BY table_name, check_name) TO 'gpc-utf8-repair-checks-preview.csv' WITH (FORMAT csv, HEADER true)

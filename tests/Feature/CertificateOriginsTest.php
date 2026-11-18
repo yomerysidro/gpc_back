@@ -1023,7 +1023,7 @@ class CertificateOriginsTest extends TestCase
         }
     }
 
-    public function test_confirmed_practice_appears_in_the_public_portal_and_pdf_requires_explicit_publication(): void
+    public function test_confirmed_pending_practice_appears_in_the_public_portal_without_exposing_its_pdf(): void
     {
         Storage::fake('local');
         $this->seedAccreditedOrigin('practica');
@@ -1059,6 +1059,8 @@ class CertificateOriginsTest extends TestCase
         $this->postJson($base.'/firma/confirmar-pdf', ['token_revision' => $revision['token_revision'], 'confirmar' => true])->assertOk();
         $this->getJson($base.'/firma/progreso')->assertOk()->assertJsonPath('data.disponible_rrhh', true)
             ->assertJsonPath('data.etiqueta_estado', 'Listo para entrega');
+        $pdf = $this->get($base.'/archivo?flujo=firmas')->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        self::assertSame($revision['hash_pdf'], hash_file('sha256', $pdf->baseResponse->getFile()->getPathname()));
         app('auth')->forgetGuards();
         $this->postJson('/api/portal-certificados/consultar-dni', ['dni' => '00000001'])->assertOk()->assertJsonCount(1, 'data.certificados')
             ->assertJsonPath('data.certificados.0.origen', 'practica')->assertJsonPath('data.certificados.0.pdf_publicado', false)
@@ -1068,18 +1070,14 @@ class CertificateOriginsTest extends TestCase
         $this->getJson($verification.'?archivo=1')->assertForbidden();
         config(['certification.public_lookup.pdf_policy_reference' => 'PUBLICACION EXCLUSIVA DE PRUEBA AISLADA',
             'certification.public_lookup.pdf_codes' => [$prepared['codigo_verificacion']]]);
-        $public = $this->postJson('/api/portal-certificados/consultar-dni', ['dni' => '00000001'])->assertOk()
-            ->assertJsonPath('data.certificados.0.pdf_publicado', true)->json('data.certificados.0');
+        $this->postJson('/api/portal-certificados/consultar-dni', ['dni' => '00000001'])->assertOk()
+            ->assertJsonPath('data.certificados.0.pdf_publicado', false)
+            ->assertJsonPath('data.certificados.0.url_documento', null)
+            ->assertJsonPath('data.certificados.0.url_descarga', null);
         $this->getJson($verification)->assertOk()->assertJsonPath('data.firma_verificada', false)
-            ->assertJsonPath('data.emision_oficial_verificada', false);
-        foreach (['url_documento', 'url_descarga'] as $field) {
-            $response = $this->get($public[$field])->assertOk()->assertHeader('Content-Type', 'application/pdf');
-            self::assertSame($revision['hash_pdf'], hash_file('sha256', $response->baseResponse->getFile()->getPathname()));
-            if ($field === 'url_descarga') {
-                $response->assertDownload('certificado-'.$prepared['codigo_verificacion'].'.pdf');
-            }
-        }
-        config(['certification.public_lookup.pdf_codes' => []]);
+            ->assertJsonPath('data.emision_oficial_verificada', false)
+            ->assertJsonPath('data.puede_ver_documento', false);
+        $this->getJson($verification.'?archivo=1')->assertForbidden();
         $this->getJson($verification.'?archivo=1&descargar=1')->assertForbidden();
         $original = DB::table('certificado.certificado_documento')->where('id_certificado_documento', $id)->first();
         self::assertSame($review['hash_pdf'], $original->hash_certificado);

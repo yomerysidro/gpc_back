@@ -3,17 +3,13 @@ name: Backend CI
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
 
 concurrency:
-  group: backend-ci-${{ github.event_name }}-${{ github.ref }}-${{ github.sha }}
+  group: backend-ci-main-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
   contents: read
-  pull-requests: read
 
 defaults:
   run:
@@ -46,39 +42,6 @@ jobs:
       MAIL_MAILER: array
       QUEUE_CONNECTION: sync
     steps:
-      - name: Validar el origen de la promoción a main
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REF_PROTECTED: ${{ github.ref_protected }}
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            if jq -e --arg repo "$GITHUB_REPOSITORY" '
-              .pull_request | .head.ref == "dev-yomer" and .head.repo.full_name == $repo
-            ' "$GITHUB_EVENT_PATH" >/dev/null; then
-              exit 0
-            fi
-            echo "::error::Los PR a main deben proceder de dev-yomer en este repositorio."
-            exit 1
-          fi
-
-          if [[ "$REF_PROTECTED" != true ]]; then
-            echo "::error::Protege main y exige revisión y los checks de Backend CI."
-            exit 1
-          fi
-
-          for attempt in 1 2 3 4 5; do
-            if gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" |
-              jq -es --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" '
-                any(.[][]; .merged_at != null and .merge_commit_sha == $sha
-                  and .base.ref == "main" and .base.repo.full_name == $repo
-                  and .head.ref == "dev-yomer" and .head.repo.full_name == $repo)
-              ' >/dev/null; then
-              exit 0
-            fi
-            if [[ "$attempt" != 5 ]]; then sleep 3; fi
-          done
-          echo "::error::El SHA de main debe ser el resultado de un merge de dev-yomer."
-          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

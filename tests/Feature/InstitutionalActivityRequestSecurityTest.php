@@ -129,7 +129,7 @@ class InstitutionalActivityRequestSecurityTest extends TestCase
     {
         [$owner] = $this->actors();
         $this->cookieFor($owner);
-        $title = 'Capacitación: á, é, í, ó, ú, ñ y Ñ';
+        $title = 'Capacitación N.º 1 (20°): á, é, í, ó, ú, ñ y Ñ';
         DB::table('gestion.area')->where('id_area', 1)->update(['nombre' => 'Alcaldía']);
         DB::table('gestion.persona')->where('id_persona', $owner->id_persona)->update([
             'nombres' => 'Antón',

@@ -4,12 +4,12 @@
 
 ## GitHub Actions
 
-`backend-ci.yml` valida los PR hacia `main` y cada SHA nuevo de `main` después del merge. El job de PHP comprueba el origen del PR y, en el push, que el SHA corresponda al merge de `dev-yomer` hacia la rama protegida. Los jobs validan PHP 8.3, Composer, PHPUnit con SQLite y PostgreSQL aislado, y el arranque de la imagen Docker con un volumen de prueba. Las pruebas de diagnóstico que requieren acceso explícito a sistemas externos se ejecutan por separado.
+`backend-ci.yml` se ejecuta solo al recibir un push en `main`. Las reglas de GitHub gestionan la revisión del PR y la protección de la rama. Los jobs validan PHP 8.3, Composer, PHPUnit con SQLite y PostgreSQL aislado, y el arranque de la imagen Docker con un volumen de prueba. Las pruebas de diagnóstico que requieren acceso explícito a sistemas externos se ejecutan por separado.
 
 ## Preparar GitHub
 
-1. Protege `main` con una regla activa aplicada también a administradores y sin bypasses. Exige un PR con al menos una aprobación, descarta aprobaciones obsoletas y requiere los checks de GitHub Actions **PHP y pruebas** e **Imagen Docker**. Exige que la rama del PR esté actualizada antes de mergear. [Protección de ramas](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
-2. Usa **Create a merge commit** o **Squash and merge** para que el SHA final sea distinto del probado en la rama del PR y quede asociado al merge. Evita directivas que omitan CI. Si GitHub ofrece **Restrict commit metadata**, agrega a `main` una restricción **Must not match a given regex pattern** sobre el mensaje de commit con `(?im)\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|^skip-checks:[ \t]*true[ \t]*$`. [Directivas que omiten workflows](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs)
+1. Protege `main` con una regla activa aplicada también a administradores y sin bypasses. Exige un PR con al menos una aprobación y descarta aprobaciones obsoletas. Retira **PHP y pruebas** e **Imagen Docker** de los checks exigidos antes del merge, si estaban configurados. Ambos se ejecutan después del merge y Railway espera su resultado. [Checks obligatorios en GitHub](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)
+2. Usa **Create a merge commit** o **Squash and merge** para generar un SHA nuevo asociado al PR. Evita directivas que omitan CI. Si GitHub ofrece **Restrict commit metadata**, agrega a `main` una restricción **Must not match a given regex pattern** sobre el mensaje de commit con `(?im)\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|^skip-checks:[ \t]*true[ \t]*$`. [Directivas que omiten workflows](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs)
 3. La integración nativa usa los permisos de la app de Railway en GitHub. Retira el token GitHub Actions `RAILWAY_TOKEN` del flujo anterior si se creó exclusivamente para este backend.
 
 ## Preparar Railway
