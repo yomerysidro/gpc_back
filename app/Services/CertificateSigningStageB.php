@@ -60,10 +60,18 @@ class CertificateSigningStageB
     public function progress(int $id, User $actor): array
     {
         $document = $this->workflow->document($id, $actor);
-        $this->generator->assertArtifact($document);
+        $integrity = true;
+        try {
+            $this->generator->authorizedArtifact($document, readOnly: true);
+        } catch (HttpException $exception) {
+            if ($exception->getStatusCode() !== 409 || $exception->getCode() !== CertificateDocumentGenerator::ARTIFACT_MISSING) {
+                throw $exception;
+            }
+            $integrity = false;
+        }
         $detail = $this->workflow->detail($id, $actor);
 
-        $result = $this->present($detail, true);
+        $result = $this->present($detail, $integrity);
         $result['firmantes_asignados'] = $this->assignedSigners($id);
         $result['modalidad'] = $document->modalidad_firma ?? null;
         $result['modalidad_persistida'] = $result['modalidad'] !== null;
@@ -79,7 +87,7 @@ class CertificateSigningStageB
             $metadata = ['p' => $document->plan_pdf_aprobado];
             $initialApproval = true;
         }
-        $result['pdf_revisado_disponible'] = ($parent !== null || $initialApproval)
+        $result['pdf_revisado_disponible'] = $integrity && ($parent !== null || $initialApproval)
             && hash_equals($metadata['p'], CertificateSignerRevision::planHash($result['firmantes_asignados'], $result['modalidad']));
         $result['pdf_confirmado'] = $result['pdf_revisado_disponible'];
         $result['requiere_nueva_revision_pdf'] = $result['asignacion_documental_persistida'] && ! $result['pdf_revisado_disponible'];
@@ -93,12 +101,12 @@ class CertificateSigningStageB
         $result['preparado_para_entrega'] = $prepared;
         $result['disponible_rrhh'] = $prepared;
         $result['estado_preparacion'] = $prepared ? 'PREPARADO_ENTREGA' : null;
-        $result['etiqueta_estado'] = $prepared ? 'Listo para entrega' : null;
+        $result['etiqueta_estado'] = $prepared ? 'Listo para entrega' : $detail['motivo_documento'];
         $result['documento']['hash_pdf'] = $document->hash_certificado;
         $result['documento']['revision_pdf'] = $document->revision_pdf ?? null;
         $result['documento']['codigo_verificacion'] = $document->codigo_verificacion;
         $result['documento']['hash_pdf_original'] = $document->hash_certificado_original ?? $document->hash_certificado;
-        $result['facultades']['asignar'] = $this->requirements()['firmantes_pendientes_individuales']
+        $result['facultades']['asignar'] = $integrity && $this->requirements()['firmantes_pendientes_individuales']
             && $this->requirements()['habilitacion_global_administrativa']
             && $this->requirements()['modalidad_documental']
             && $this->requirements()['asignacion_sin_credencial']
@@ -290,7 +298,8 @@ class CertificateSigningStageB
         $results = [];
         foreach ($ids as $id) {
             $results[] = isset($details[$id])
-                ? ['id_certificado_documento' => $id, 'status' => 200, 'success' => true, 'data' => $this->present($details[$id], null)]
+                ? ['id_certificado_documento' => $id, 'status' => 200, 'success' => true,
+                    'data' => $this->present($details[$id], $details[$id]['integridad_verificada'])]
                 : ['id_certificado_documento' => $id, 'status' => 404, 'success' => false, 'message' => 'Documento no encontrado en su ámbito.'];
         }
 
