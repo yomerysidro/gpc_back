@@ -72,6 +72,8 @@ services:
 
     ports:
       - "5017:80"
+    volumes:
+      - certificate_private:/var/www/httpdocs/storage/app/private
 
 
 # ============================================================
@@ -79,4 +81,6 @@ services:
 # ============================================================
 volumes:
   db_data:
+    driver: local
+  certificate_private:
     driver: local

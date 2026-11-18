@@ -17,7 +17,7 @@
 <a href="{{ $verification['url_documento'] }}" target="_blank" rel="noopener noreferrer">Abrir PDF almacenado</a>
 <iframe src="{{ $verification['url_documento'] }}" title="PDF almacenado del certificado"></iframe>
 @else
-<p class="notice">El PDF no está disponible para consulta.</p>
+<p class="notice">Documento no disponible para consulta pública.</p>
 @endif
 <p>Esta consulta comprueba el registro y la integridad del archivo. No acredita firma criptográfica ni emisión institucional.</p>
 </main></body></html>

@@ -1288,7 +1288,8 @@ class CertificateOriginsTest extends TestCase
         $queries = DB::getQueryLog();
         DB::disableQueryLog();
         $this->assertEmpty(array_filter($queries, fn (array $query): bool => str_contains($query['query'], 'certificado_firma')));
-        $this->get($data['url_documento'])->assertOk()->assertDownload();
+        $preview = $this->get($data['url_documento'])->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        self::assertStringStartsWith('inline;', $preview->headers->get('Content-Disposition'));
         $this->getJson('/api/certificaciones/reconocimiento/'.$recognitionId.'/preparar?accion=consultar_preparacion')->assertOk()
             ->assertJsonPath('data.recuperado', true)->assertJsonPath('data.id_certificado_documento', $documentId)
             ->assertJsonMissingPath('data.vista_previa_pdf')->assertJsonMissingPath('data.token_revision');

@@ -6,7 +6,6 @@ use App\Models\User\User;
 use App\Services\CertificateDocumentGenerator;
 use App\Services\CertificateDocumentVersions;
 use App\Services\CertificateHumanResources;
-use App\Services\PublicCertificateLookup;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -54,14 +53,11 @@ class PublicCertificateDocumentDiagnosticPostgresTest extends TestCase
             $this->assertSame($confirmed->hash_certificado, $confirmedHash);
             $this->assertSame('%PDF-', file_get_contents($confirmedPath, false, null, 0, 5));
             $url = '/api/certificados/verificar/'.$code;
-            $published = app(PublicCertificateLookup::class)->allowsPdf($code);
-            $metadata = $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', $published);
+            $metadata = $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', false);
             $this->assertStringNotContainsString('ruta_archivo', $metadata->getContent());
             $this->assertStringNotContainsString(storage_path(), $metadata->getContent());
-            if (! $published) {
-                $this->getJson($url.'?archivo=1')->assertForbidden();
-                $this->getJson($url.'?archivo=1&descargar=1')->assertForbidden();
-            }
+            $this->getJson($url.'?archivo=1')->assertForbidden();
+            $this->getJson($url.'?archivo=1&descargar=1')->assertForbidden();
             $dni = DB::table('gestion.persona_documento as pd')->join('gestion.tipo_documento as td', 'td.id_tipo_documento', '=', 'pd.id_tipo_documento')
                 ->where('pd.id_persona', $document->id_persona)->whereRaw('UPPER(TRIM(td.nombre)) = ?', ['DNI'])
                 ->whereRaw('LOWER(TRIM(pd.estado)) = ?', ['activo'])->value('pd.numero_documento');
@@ -69,22 +65,14 @@ class PublicCertificateDocumentDiagnosticPostgresTest extends TestCase
             $items = $this->postJson('/api/portal-certificados/consultar-dni', ['dni' => $dni])->assertOk()->json('data.certificados');
             $item = collect($items)->firstWhere('codigo_verificacion', $code);
             $this->assertNotNull($item);
-            $this->assertSame($published, $item['pdf_publicado']);
+            $this->assertFalse($item['pdf_publicado']);
 
             config(['certification.public_lookup.pdf_policy_reference' => 'PRUEBA AISLADA EN MEMORIA: NO AUTORIZA PUBLICACION REAL', 'certification.public_lookup.pdf_codes' => [$code]]);
-            foreach (['archivo=1', 'archivo=1&descargar=1'] as $query) {
-                $response = $this->get($url.'?'.$query)->assertOk()->assertHeader('Content-Type', 'application/pdf')
-                    ->assertHeader('X-Document-SHA256', $confirmedHash);
-                $this->assertSame($confirmedHash, hash_file('sha256', $response->baseResponse->getFile()->getPathname()));
-                if (str_contains($query, 'descargar')) {
-                    $response->assertDownload('certificado-'.$code.'.pdf');
-                } else {
-                    $this->assertStringStartsWith('inline', $response->headers->get('Content-Disposition'));
-                }
-            }
+            $this->getJson($url.'?archivo=1')->assertForbidden();
+            $this->getJson($url.'?archivo=1&descargar=1')->assertForbidden();
             $actor = User::findOrFail(1);
             $this->assertTrue($actor->isSystemAdministrator());
-            $this->actingAs($actor)->get($url.'?archivo=1')->assertOk()->assertHeader('X-Document-SHA256', $confirmedHash);
+            $this->actingAs($actor)->getJson($url.'?archivo=1')->assertForbidden();
             $this->assertSame($before, (array) $generator->documentByCode($code));
             $this->assertSame($document->hash_certificado, hash_file('sha256', $originalPath));
             $this->assertSame($confirmedHash, hash_file('sha256', $confirmedPath));
