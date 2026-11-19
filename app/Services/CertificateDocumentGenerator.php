@@ -334,31 +334,36 @@ class CertificateDocumentGenerator
     }
 
     /** @return array<string, mixed> */
-    public function verification(object $document): array
+    public function verification(object $document, ?object $publicArtifact = null): array
     {
         if (str_starts_with((string) $document->ruta_archivo, 'certificados/preparados/')
             || in_array($document->estado_certificado, [CertificateManagement::PREPARED, CertificateManagement::PENDING,
                 CertificateManagement::SIGNED, CertificateManagement::ISSUED], true)) {
             $integrity = true;
-            try {
-                $this->assertArtifact($document);
-            } catch (HttpException) {
-                $integrity = false;
+            if ($publicArtifact === null) {
+                try {
+                    $this->assertArtifact($document);
+                } catch (HttpException) {
+                    $integrity = false;
+                }
             }
+            $publicUrl = $publicArtifact === null ? null : app(PublicCertificateLookup::class)->pdfUrl($document->codigo_verificacion);
 
             return [
                 'codigo_verificacion' => $document->codigo_verificacion, 'registro_encontrado' => true,
                 'estado_certificado' => $document->estado_certificado, 'estado_documento' => $document->estado,
-                'estado_flujo' => $document->estado_flujo ?? $document->estado_certificado, 'vigente' => false, 'puede_ver_documento' => false,
-                'pdf_publicado' => false,
+                'estado_flujo' => $document->estado_flujo ?? $document->estado_certificado, 'vigente' => $publicUrl !== null,
+                'puede_ver_documento' => $publicUrl !== null, 'pdf_publicado' => $publicUrl !== null,
                 'emision_oficial_verificada' => false, 'firma_verificada' => false,
-                'hash_sha256' => null, 'url_documento' => null, 'url_descarga' => null, 'beneficiario' => null,
+                'hash_sha256' => $publicArtifact?->hash_certificado, 'url_documento' => $publicUrl,
+                'url_descarga' => $publicUrl === null ? null : $publicUrl.'&descargar=1', 'beneficiario' => null,
                 'integridad_verificada' => $integrity, 'demostracion' => false, 'modo' => 'administrativo',
                 'fecha_emision' => $document->fecha_emision, 'fecha_generacion' => $document->fecha_generacion,
                 'motivos' => array_values(array_filter([! $integrity ? 'Documento no disponible.' : null,
                     $document->estado_certificado === CertificateManagement::ISSUED
                     ? 'La emisión registrada requiere verificación criptográfica del PDF final antes de habilitar la consulta pública.'
-                    : 'Documento administrativo en trámite; no emitido ni disponible públicamente.'])),
+                    : ($publicUrl === null ? 'Documento administrativo en trámite; no emitido ni disponible públicamente.'
+                        : 'PDF confirmado para entrega; la firma digital y la emisión oficial siguen pendientes.')])),
             ];
         }
         $integrity = true;

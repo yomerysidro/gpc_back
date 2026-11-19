@@ -169,13 +169,15 @@ class CertificateDocumentController extends Controller
     {
         return $this->developmentResponse(function () use ($request, $code, $generator): Response {
             $document = $generator->documentByCode($code);
-            $verification = $generator->verification($document);
+            $lookup = app(PublicCertificateLookup::class);
+            $publicArtifact = $lookup->confirmedPublicArtifact($document);
+            $verification = $generator->verification($document, $publicArtifact);
             if ($request->boolean('archivo')) {
                 if (! $verification['puede_ver_documento']) {
                     Log::notice('certificado_documento.acceso_publico_denegado', [
                         'referencia' => hash_hmac('sha256', $code, (string) config('app.key')),
                     ]);
-                    abort_if(app(PublicCertificateLookup::class)->isPublishable($document), 404, 'Documento no disponible.');
+                    abort_if($lookup->isPublishable($document), 404, 'Documento no disponible.');
                     abort(403, 'El documento no está disponible para consulta pública.');
                 }
                 Log::info('certificado_documento.acceso_publico', [
@@ -183,7 +185,7 @@ class CertificateDocumentController extends Controller
                     'descarga' => $request->boolean('descargar'),
                 ]);
 
-                $response = $generator->privatePdfResponse($document, $request->boolean('descargar'));
+                $response = $generator->privatePdfResponse($publicArtifact ?? $document, $request->boolean('descargar'));
                 $response->headers->set('Referrer-Policy', 'no-referrer');
                 $response->headers->set('X-Robots-Tag', 'noindex, nofollow');
 

@@ -107,6 +107,30 @@ class CertificateSigningStageBTest extends TestCase
         $this->get($url.'?archivo=1&descargar=1')->assertForbidden();
     }
 
+    public function test_publication_by_qr_serves_only_the_confirmed_pdf_without_claiming_official_issuance(): void
+    {
+        $this->prepareHumanResources();
+        $document = DB::table('certificado.certificado_documento')->first();
+        $confirmed = app(CertificateDocumentVersions::class)->resolve($document, readOnly: true);
+        config(['certification.public_lookup.publish_all_eligible_pdfs' => true]);
+        app('auth')->forgetGuards();
+
+        $url = '/api/certificados/verificar/'.$document->codigo_verificacion;
+        $this->getJson($url)->assertOk()
+            ->assertJsonPath('data.estado_certificado', 'PENDIENTE_FIRMA')
+            ->assertJsonPath('data.pdf_publicado', true)
+            ->assertJsonPath('data.url_documento', $url.'?archivo=1')
+            ->assertJsonPath('data.hash_sha256', $confirmed->hash_certificado)
+            ->assertJsonPath('data.firma_verificada', false)
+            ->assertJsonPath('data.emision_oficial_verificada', false);
+        $response = $this->get($url.'?archivo=1')->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        self::assertSame(Storage::disk('local')->get($confirmed->ruta_archivo), file_get_contents($response->baseResponse->getFile()->getPathname()));
+
+        DB::table('certificado.certificado_firma')->delete();
+        $this->getJson($url)->assertOk()->assertJsonPath('data.pdf_publicado', false);
+        $this->get($url.'?archivo=1')->assertForbidden();
+    }
+
     #[TestWith(['private'])]
     #[TestWith(['prepared'])]
     #[TestWith(['cancelled'])]
