@@ -27,8 +27,6 @@ use Illuminate\Validation\ValidationException;
  */
 class AuthController extends Controller
 {
-    private const MAX_ATTEMPTS = 5;
-
     private const LOCK_MINUTES = 30;
 
     public function __construct(private JwtService $jwt) {}
@@ -80,7 +78,7 @@ class AuthController extends Controller
                 return $this->serverError($response);
             }
 
-            if ($response['data']['attempts'] >= self::MAX_ATTEMPTS) {
+            if ($response['data']['attempts'] >= config('auth.login_max_attempts')) {
                 $lockedUntil = now()->addMinutes(self::LOCK_MINUTES);
 
                 $response = AuthData::lockAccount($user->id_usuario, $lockedUntil);

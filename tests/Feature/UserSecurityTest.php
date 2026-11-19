@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -446,15 +447,52 @@ class UserSecurityTest extends TestCase
         $this->assertDatabaseHas('acceso.usuario', ['id_usuario' => 1, 'intentos_fallidos' => 0]);
     }
 
-    public function test_login_rejects_bad_credentials_and_locks_after_five_attempts(): void
+    public function test_login_rejects_bad_credentials_and_locks_after_three_attempts(): void
     {
         $this->actor();
-        for ($attempt = 1; $attempt <= 4; $attempt++) {
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
             $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'wrong'])->assertUnauthorized();
         }
         $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'wrong'])->assertStatus(423);
         $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'fixture-password'])->assertStatus(423);
-        $this->assertDatabaseHas('acceso.usuario', ['id_usuario' => 1, 'intentos_fallidos' => 5]);
+        $this->assertDatabaseHas('acceso.usuario', ['id_usuario' => 1, 'intentos_fallidos' => 3]);
+    }
+
+    public function test_administrator_can_unlock_a_user_before_the_lock_expires(): void
+    {
+        $this->freezeSecond();
+        $admin = $this->actor('Administrador');
+        $this->grant(['usuarios.ver', 'usuarios.editar']);
+        DB::table('acceso.usuario')->insert([
+            'id_usuario' => 2,
+            'id_persona' => $admin->id_persona,
+            'correo' => 'locked@example.test',
+            'password_hash' => Hash::make('fixture-password'),
+            'estado' => true,
+            'intentos_fallidos' => 3,
+            'bloqueado_hasta' => now()->addMinutes(30),
+        ]);
+        $credentials = ['email' => 'locked@example.test', 'password' => 'fixture-password'];
+
+        $this->postJson('/api/auth/login', $credentials)->assertStatus(423);
+
+        $this->cookieFor($admin);
+        $this->getJson('/api/usuarios/2')->assertOk()
+            ->assertJsonPath('data.bloqueado', true)
+            ->assertJsonPath('data.intentosFallidos', 3)
+            ->assertJsonPath('data.limiteIntentos', 3);
+        $this->patchJson('/api/usuarios/2/desbloquear')->assertOk()
+            ->assertJsonPath('data.bloqueado', false)
+            ->assertJsonPath('data.intentosFallidos', 0)
+            ->assertJsonPath('data.estado', true);
+        $this->assertDatabaseHas('acceso.usuario', [
+            'id_usuario' => 2,
+            'bloqueado_hasta' => null,
+            'intentos_fallidos' => 0,
+        ]);
+
+        $this->postJson('/api/auth/login', $credentials)->assertOk();
+        $this->getJson('/api/usuarios/2')->assertOk()->assertJsonPath('data.ultimoAcceso', now()->toIso8601String());
     }
 
     public function test_password_recovery_resets_the_institutional_password_and_consumes_the_token(): void
@@ -495,10 +533,49 @@ class UserSecurityTest extends TestCase
         $hash = User::findOrFail($id)->password_hash;
         $this->putJson('/api/usuarios/'.$id, ['correo' => 'updated@example.test', 'idRol' => 2])->assertOk();
         $this->assertSame($hash, User::findOrFail($id)->password_hash);
+        $this->putJson('/api/usuarios/'.$id, [
+            'correo' => 'updated@example.test',
+            'password' => 'new-fixture-password',
+            'password_confirmation' => 'new-fixture-password',
+        ])->assertForbidden();
+        $this->putJson('/api/usuarios/'.$id, ['correo' => 'updated@example.test'])
+            ->assertOk()->assertJsonPath('data.rol.id', 2);
         $this->patchJson('/api/usuarios/'.$id.'/estado', ['estado' => false])->assertOk();
         $this->assertFalse(User::findOrFail($id)->estado);
         $this->getJson('/api/usuarios/999')->assertNotFound();
-        $this->putJson('/api/usuarios/'.$id, ['correo' => 'updated@example.test'])->assertUnprocessable();
+        $this->putJson('/api/usuarios/'.$id, ['correo' => 'updated@example.test', 'idRol' => null])
+            ->assertUnprocessable()->assertJsonValidationErrors('idRol');
+    }
+
+    public function test_administrator_can_change_credentials_without_reassigning_the_role(): void
+    {
+        $admin = $this->actor('Administrador');
+        $this->grant(['usuarios.editar']);
+        $this->cookieFor($admin);
+        $target = User::findOrFail(1);
+        $token = Password::createToken($target);
+        $payload = [
+            'correo' => 'new-address@example.test',
+            'password' => 'new-fixture-password',
+        ];
+
+        $this->putJson('/api/usuarios/1', $payload + ['password_confirmation' => 'incorrect'])
+            ->assertUnprocessable()->assertJsonValidationErrors('password');
+        $this->assertSame('actor@example.test', $target->refresh()->correo);
+
+        $this->putJson('/api/usuarios/1', $payload + ['password_confirmation' => $payload['password']])
+            ->assertOk()->assertJsonPath('data.correo', $payload['correo'])
+            ->assertJsonPath('data.rol.id', 1)
+            ->assertJsonMissingPath('data.password')
+            ->assertJsonMissingPath('data.password_hash');
+        $this->assertFalse(Password::tokenExists($target, $token));
+
+        $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'fixture-password'])
+            ->assertUnauthorized();
+        $this->postJson('/api/auth/login', ['email' => $payload['correo'], 'password' => 'fixture-password'])
+            ->assertUnauthorized();
+        $this->postJson('/api/auth/login', ['email' => $payload['correo'], 'password' => $payload['password']])
+            ->assertOk();
     }
 
     public function test_logout_expires_the_cookie_and_legacy_bearer_is_not_accepted(): void

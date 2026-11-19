@@ -7,6 +7,7 @@ use App\Models\User\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -194,7 +195,7 @@ class UserData
     }
 
     /**
-     * Actualizar el correo y el rol del usuario (un rol por usuario).
+     * Actualizar el correo y, cuando se envían, el rol y la contraseña.
      *
      * No se permite si el cambio de rol deja al sistema sin ningún
      * Administrador activo.
@@ -216,9 +217,9 @@ class UserData
                 ];
             }
 
-            $newRole = Role::find($data['idRol']);
+            $newRole = isset($data['idRol']) ? Role::find($data['idRol']) : null;
 
-            if (! $newRole->isAdministrator() && self::isLastActiveAdmin($user)) {
+            if ($newRole && ! $newRole->isAdministrator() && self::isLastActiveAdmin($user)) {
                 DB::rollBack();
 
                 return [
@@ -228,8 +229,30 @@ class UserData
                 ];
             }
 
-            $user->update(['correo' => $data['correo']]);
-            $user->roles()->sync([$data['idRol']]);
+            $emailChanged = $user->correo !== $data['correo'];
+            $password = $data['password'] ?? null;
+
+            if ($emailChanged || $password !== null) {
+                Password::deleteToken($user);
+            }
+
+            $user->correo = $data['correo'];
+
+            if ($password !== null) {
+                $user->password_hash = Hash::make($password);
+                $user->intentos_fallidos = 0;
+                $user->bloqueado_hasta = null;
+            }
+
+            $user->save();
+
+            if ($emailChanged) {
+                Password::deleteToken($user);
+            }
+
+            if ($newRole) {
+                $user->roles()->sync([$newRole->id_rol]);
+            }
 
             DB::commit();
 
@@ -379,6 +402,8 @@ class UserData
     private static function format(User $user): array
     {
         $role = $user->roles->first();
+        $lockedUntil = $user->bloqueado_hasta;
+        $isLocked = (bool) $lockedUntil?->isFuture();
 
         return [
             'id' => $user->id_usuario,
@@ -387,7 +412,9 @@ class UserData
             'correo' => $user->correo,
             'rol' => $role ? ['id' => $role->id_rol, 'nombre' => $role->nombre] : null,
             'estado' => $user->estado,
-            'bloqueado' => (bool) $user->bloqueado_hasta?->isFuture(),
+            'bloqueado' => $isLocked,
+            'intentosFallidos' => $lockedUntil && ! $isLocked ? 0 : (int) $user->intentos_fallidos,
+            'limiteIntentos' => config('auth.login_max_attempts'),
             'ultimoAcceso' => $user->ultimo_acceso?->toIso8601String(),
         ];
     }

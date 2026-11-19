@@ -70,7 +70,7 @@ class UserController extends Controller
     }
 
     /**
-     * Update email and role.
+     * Update account credentials and role.
      */
     public function update(UserUpdateRequest $request, int $id): JsonResponse
     {

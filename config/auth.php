@@ -4,6 +4,8 @@ use App\Models\User\User;
 
 return [
 
+    'login_max_attempts' => 3,
+
     /*
     |--------------------------------------------------------------------------
     | Authentication Defaults
