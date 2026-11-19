@@ -42,6 +42,7 @@ return [
         'public_beneficiary_name' => (bool) env('CERTIFICATION_PUBLIC_BENEFICIARY_NAME', false),
     ],
     'public_lookup' => [
+        'publish_all_eligible_pdfs' => (bool) env('CERTIFICATION_PUBLIC_PDF_PUBLISH_ALL_ELIGIBLE', false),
         'pdf_policy_reference' => env('CERTIFICATION_PUBLIC_PDF_POLICY_REFERENCE'),
         'pdf_codes' => array_values(array_filter(explode('|', (string) env('CERTIFICATION_PUBLIC_PDF_CODES', '')))),
     ],
