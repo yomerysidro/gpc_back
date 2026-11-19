@@ -34,8 +34,8 @@ class AttendanceHttpIntegrationTest extends TestCase
             'acceso.rol_modulo' => 'id_rol INTEGER, id_modulo INTEGER',
             'acceso.rol_modulo_permiso' => 'id_rol INTEGER, id_modulo INTEGER, id_permiso INTEGER',
             'certificado.actividad' => 'id_actividad INTEGER PRIMARY KEY, id_area INTEGER, nombre TEXT, estado TEXT',
-            'certificado.actividad_sesion' => 'id_actividad_sesion INTEGER PRIMARY KEY, id_actividad INTEGER, nombre TEXT, estado TEXT',
-            'certificado.participacion' => 'id_participacion INTEGER PRIMARY KEY, id_actividad INTEGER, id_persona INTEGER, estado TEXT',
+            'certificado.actividad_sesion' => 'id_actividad_sesion INTEGER PRIMARY KEY, id_actividad INTEGER, nombre TEXT, estado TEXT, fecha DATE',
+            'certificado.participacion' => 'id_participacion INTEGER PRIMARY KEY, id_actividad INTEGER, id_persona INTEGER, estado TEXT, fecha_inscripcion DATE',
             'certificado.asistencia' => 'id_asistencia INTEGER PRIMARY KEY, id_participacion INTEGER, id_actividad_sesion INTEGER, estado TEXT NOT NULL, hora_entrada TEXT, hora_salida TEXT, UNIQUE(id_participacion,id_actividad_sesion)',
             'certificado.certificado' => 'id_certificado INTEGER PRIMARY KEY, id_participacion INTEGER, id_persona INTEGER, id_tipo_certificado INTEGER, estado TEXT, fecha_emision DATE',
             'certificado.tipo_certificado' => 'id_tipo_certificado INTEGER PRIMARY KEY, nombre_tipo TEXT, estado BOOLEAN',
@@ -121,12 +121,16 @@ class AttendanceHttpIntegrationTest extends TestCase
     public function test_session_selection_is_explicit_additive_idempotent_and_does_not_mark_presence(): void
     {
         $this->prepareIndependentSessions();
+        DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 3)->update(['fecha' => '2026-12-03']);
+        DB::table('certificado.participacion')->where('id_participacion', 1)->update(['fecha_inscripcion' => '2026-11-19']);
         $this->getJson('/api/activity-session/3/participantes/candidatos')->assertOk()->assertJsonCount(2, 'data.participantes')
-            ->assertJsonPath('data.participantes.0.seleccionado', false);
+            ->assertJsonPath('data.participantes.0.seleccionado', false)
+            ->assertJsonPath('data.participantes.0.fecha_inscripcion', '2026-11-19');
         $this->getJson('/api/activity-session/3/participantes')->assertOk()->assertJsonCount(0, 'data.participantes');
         foreach ([1, 2] as $attempt) {
             $this->postJson('/api/activity-session/3/participantes', ['ids_participacion' => [1]])->assertOk()
                 ->assertJsonCount(1, 'data.participantes')->assertJsonPath('data.participantes.0.estado_asistencia', 'AUSENTE')
+                ->assertJsonPath('data.participantes.0.fecha_inscripcion', '2026-11-19')
                 ->assertJsonPath('data.participantes.0.hora_entrada', null);
         }
         $this->assertDatabaseCount('certificado.asistencia', 2);
