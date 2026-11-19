@@ -19,6 +19,12 @@ class LoginRequest extends FormRequest
         return [
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
+            'turnstileToken' => [config('services.turnstile.enabled') ? 'required' : 'nullable', 'string', 'max:2048'],
         ];
+    }
+
+    public function messages(): array
+    {
+        return ['turnstileToken.required' => 'Completa la verificación de seguridad para continuar.'];
     }
 }
