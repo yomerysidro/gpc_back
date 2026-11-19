@@ -73,6 +73,22 @@ class PublicCertificateLookup
             && in_array($code, config('certification.public_lookup.pdf_codes', []), true);
     }
 
+    public function confirmedPublicArtifact(object $document): ?object
+    {
+        if (config('certification.public_lookup.publish_all_eligible_pdfs') !== true
+            || $document->estado !== 'Vigente' || $document->estado_certificado !== CertificateManagement::PENDING) {
+            return null;
+        }
+
+        foreach ($this->resources->publicConfirmedDocuments((int) $document->id_persona, $document->codigo_verificacion) as $confirmed) {
+            if ((int) $confirmed->id_certificado_documento === (int) $document->id_certificado_documento) {
+                return $confirmed;
+            }
+        }
+
+        return null;
+    }
+
     public function isPublishable(object $document): bool
     {
         return $document->estado === 'Vigente'
