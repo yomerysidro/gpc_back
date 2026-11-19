@@ -184,7 +184,9 @@ class CertificateDocumentGenerationTest extends TestCase
         $this->getJson('/api/certificados/verificar/'.$code.'?archivo=1')->assertForbidden();
     }
 
-    public function test_public_verification_returns_the_stored_pdf_without_login_or_development_mode(): void
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_public_verification_returns_the_stored_pdf_without_login_or_development_mode(bool $publishAllEligible): void
     {
         $code = $this->existingDocument();
         $path = 'certificados/archivo/'.$code.'.pdf';
@@ -194,8 +196,10 @@ class CertificateDocumentGenerationTest extends TestCase
         $url = '/api/certificados/verificar/'.$code;
         $this->getJson($url)->assertOk()->assertJsonPath('data.puede_ver_documento', false);
         $this->getJson($url.'?archivo=1')->assertForbidden();
-        config(['certification.public_lookup.pdf_policy_reference' => 'Autorización de prueba',
-            'certification.public_lookup.pdf_codes' => [$code]]);
+        config($publishAllEligible
+            ? ['certification.public_lookup.publish_all_eligible_pdfs' => true]
+            : ['certification.public_lookup.pdf_policy_reference' => 'Autorización de prueba',
+                'certification.public_lookup.pdf_codes' => [$code]]);
         $this->getJson('/api/certificados/verificar/'.$code)->assertOk()
             ->assertJsonPath('data.integridad_verificada', true)->assertJsonPath('data.puede_ver_documento', true)
             ->assertJsonPath('data.url_documento', '/api/certificados/verificar/'.$code.'?archivo=1')
@@ -218,6 +222,10 @@ class CertificateDocumentGenerationTest extends TestCase
     public function test_public_verification_preserves_revoked_states_and_rejects_the_pdf(string $certificateState, string $documentState): void
     {
         $code = $this->existingDocument($documentState);
+        $path = 'certificados/archivo/'.$code.'.pdf';
+        Storage::disk('local')->move('certificados/desarrollo/'.$code.'.pdf', $path);
+        DB::table('certificado.certificado_documento')->where('id_certificado_documento', 1)->update(['ruta_archivo' => $path]);
+        config(['certification.public_lookup.publish_all_eligible_pdfs' => true]);
         DB::table('certificado.certificado')->where('id_certificado', 1)->update(['estado' => $certificateState]);
         $this->getJson('/api/certificados/verificar/'.$code)->assertOk()
             ->assertJsonPath('data.estado_certificado', $certificateState)->assertJsonPath('data.estado_documento', $documentState)

@@ -82,7 +82,8 @@ class PublicCertificateLookup
             && ! str_starts_with((string) $document->ruta_archivo, 'certificados/preparados/')
             && ! str_starts_with((string) $document->ruta_archivo, 'certificados/desarrollo/')
             && ! str_starts_with((string) $document->ruta_archivo, 'certificados/demostracion/')
-            && $this->allowsPdf($document->codigo_verificacion);
+            && (config('certification.public_lookup.publish_all_eligible_pdfs') === true
+                || $this->allowsPdf($document->codigo_verificacion));
     }
 
     public function pdfUrl(string $code): string
