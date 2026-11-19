@@ -70,6 +70,12 @@ class CertificateSigningStageBTest extends TestCase
         $this->get($url.'?archivo=1')->assertForbidden();
         $this->getJson('/api/certificados/verificar/'.strtoupper($code))->assertNotFound();
         $this->getJson('/api/certificados/verificar/Unknown123')->assertNotFound();
+        config(['certification.public_lookup.publish_all_eligible_pdfs' => true]);
+        $this->postJson($portal, ['dni' => $dni])->assertOk()
+            ->assertJsonPath('data.certificados.0.pdf_publicado', true)
+            ->assertJsonPath('data.certificados.0.url_documento', $url.'?archivo=1')
+            ->assertJsonPath('data.certificados.0.url_descarga', $url.'?archivo=1&descargar=1');
+        $this->get($url.'?archivo=1&descargar=1')->assertOk()->assertDownload('certificado-'.$code.'.pdf');
         self::assertSame((array) $document, (array) DB::table('certificado.certificado_documento')->first());
         self::assertSame((array) $certificate, (array) DB::table('certificado.certificado')->first());
         self::assertSame($files, collect(Storage::disk('local')->allFiles())->mapWithKeys(fn (string $path): array => [$path => hash_file('sha256', Storage::disk('local')->path($path))])->all());
