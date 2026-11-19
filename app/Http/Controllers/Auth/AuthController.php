@@ -10,10 +10,14 @@ use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Models\User\User;
 use App\Services\Auth\JwtService;
 use App\Services\Auth\ModulePermissions;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Autenticación con JWT en cookie httpOnly.
@@ -32,6 +36,10 @@ class AuthController extends Controller
     public function login(LoginRequest $request): JsonResponse
     {
         $data = $request->validated();
+
+        if (config('services.turnstile.enabled')) {
+            $this->verifyTurnstile($data['turnstileToken']);
+        }
 
         $response = AuthData::getUserByEmail($data['email']);
 
@@ -105,6 +113,39 @@ class AuthController extends Controller
         return response()
             ->json(['user' => $this->formatUser($user)])
             ->withCookie($this->jwt->makeCookie($this->jwt->createToken($user)));
+    }
+
+    private function verifyTurnstile(string $token): void
+    {
+        $secret = config('services.turnstile.secret');
+        $hostname = config('services.turnstile.hostname');
+        $unavailable = 'La verificación de seguridad no está disponible. Intenta nuevamente.';
+
+        abort_if(blank($secret) || blank($hostname), 503, $unavailable);
+
+        try {
+            $response = Http::asForm()->connectTimeout(2)->timeout(5)
+                ->post('https://challenges.cloudflare.com/turnstile/v0/siteverify', [
+                    'secret' => $secret,
+                    'response' => $token,
+                ]);
+        } catch (ConnectionException) {
+            abort(503, $unavailable);
+        }
+
+        $success = $response->json('success');
+        $errors = (array) $response->json('error-codes', []);
+        abort_if(! $response->successful() || ! is_bool($success)
+            || array_intersect($errors, ['internal-error', 'invalid-input-secret', 'missing-input-secret']) !== [],
+            503, $unavailable);
+
+        if ($success !== true || $response->json('action') !== 'login'
+            || $response->json('hostname') !== $hostname
+            || ! Cache::add('turnstile:login:'.hash('sha256', $token), true, 300)) {
+            throw ValidationException::withMessages([
+                'turnstileToken' => 'No se pudo validar la verificación de seguridad. Intenta nuevamente.',
+            ]);
+        }
     }
 
     /**

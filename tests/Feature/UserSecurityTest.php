@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
@@ -388,6 +389,61 @@ class UserSecurityTest extends TestCase
         DB::table('acceso.usuario')->update(['estado' => false]);
         $this->cookieFor($user);
         $this->getJson('/api/auth/me')->assertUnauthorized();
+    }
+
+    public function test_login_requires_a_valid_turnstile_token_and_rejects_reuse(): void
+    {
+        $this->actor();
+        config([
+            'services.turnstile.enabled' => true,
+            'services.turnstile.secret' => 'test-secret',
+            'services.turnstile.hostname' => 'login.example.test',
+        ]);
+
+        Http::preventStrayRequests();
+        Http::fake([
+            'https://challenges.cloudflare.com/turnstile/v0/siteverify' => Http::sequence()
+                ->push(['success' => false, 'error-codes' => ['timeout-or-duplicate']])
+                ->push(['success' => true, 'hostname' => 'other.example.test', 'action' => 'login'])
+                ->push(['success' => true, 'hostname' => 'login.example.test', 'action' => 'other'])
+                ->push(['success' => true, 'hostname' => 'login.example.test', 'action' => 'login'])
+                ->push(['success' => true, 'hostname' => 'login.example.test', 'action' => 'login']),
+        ]);
+
+        $credentials = ['email' => 'actor@example.test', 'password' => 'fixture-password'];
+
+        $this->postJson('/api/auth/login', $credentials)->assertUnprocessable()->assertJsonValidationErrors('turnstileToken');
+        Http::assertNothingSent();
+
+        foreach (['expired', 'wrong-host', 'wrong-action'] as $token) {
+            $this->postJson('/api/auth/login', $credentials + ['turnstileToken' => $token])
+                ->assertUnprocessable()->assertJsonValidationErrors('turnstileToken');
+        }
+
+        $this->postJson('/api/auth/login', $credentials + ['turnstileToken' => 'valid-token'])->assertOk();
+        $this->postJson('/api/auth/login', $credentials + ['turnstileToken' => 'valid-token'])
+            ->assertUnprocessable()->assertJsonValidationErrors('turnstileToken');
+    }
+
+    public function test_login_fails_closed_when_turnstile_cannot_be_reached(): void
+    {
+        $this->actor();
+        config([
+            'services.turnstile.enabled' => true,
+            'services.turnstile.secret' => 'test-secret',
+            'services.turnstile.hostname' => 'login.example.test',
+        ]);
+
+        Http::preventStrayRequests();
+        Http::fake(['https://challenges.cloudflare.com/turnstile/v0/siteverify' => Http::failedConnection()]);
+
+        $this->postJson('/api/auth/login', [
+            'email' => 'actor@example.test',
+            'password' => 'wrong',
+            'turnstileToken' => 'test-token',
+        ])->assertServiceUnavailable();
+
+        $this->assertDatabaseHas('acceso.usuario', ['id_usuario' => 1, 'intentos_fallidos' => 0]);
     }
 
     public function test_login_rejects_bad_credentials_and_locks_after_five_attempts(): void
