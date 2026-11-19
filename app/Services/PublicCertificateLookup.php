@@ -41,6 +41,8 @@ class PublicCertificateLookup
                     || (int) ($context['id_tipo_certificado'] ?? 0) !== (int) $document->id_tipo_certificado)) {
                     continue;
                 }
+                $pdfUrl = config('certification.public_lookup.publish_all_eligible_pdfs') === true
+                    ? $this->pdfUrl($document->codigo_verificacion) : null;
                 $items[] = [
                     'referencia_publica' => hash_hmac('sha256', $document->codigo_verificacion, (string) config('app.key')),
                     'codigo_verificacion' => $document->codigo_verificacion,
@@ -53,9 +55,9 @@ class PublicCertificateLookup
                     'fecha_sesion' => $context['fecha_sesion'] ?? $document->fecha_sesion,
                     'estado_disponibilidad' => 'Listo para entrega',
                     'disponible_rrhh' => true,
-                    'pdf_publicado' => false,
-                    'url_documento' => null,
-                    'url_descarga' => null,
+                    'pdf_publicado' => $pdfUrl !== null,
+                    'url_documento' => $pdfUrl,
+                    'url_descarga' => $pdfUrl === null ? null : $pdfUrl.'&descargar=1',
                 ];
             } catch (HttpException) {
                 continue;
