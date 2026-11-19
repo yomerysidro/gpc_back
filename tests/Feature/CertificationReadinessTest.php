@@ -94,7 +94,7 @@ class CertificationReadinessTest extends TestCase
             'certification.session_closure' => [...$policy, 'final_state' => 'Finalizada', 'open_states' => ['Activo', 'activo']]]);
     }
 
-    public function test_session_closure_requires_selected_attendances_rather_than_every_activity_enrollment(): void
+    public function test_session_closure_excludes_speakers_from_participant_attendance(): void
     {
         $this->seedSession('Activo');
         $this->approveTestPolicy();
@@ -553,7 +553,33 @@ class CertificationReadinessTest extends TestCase
             ->assertJsonPath('data.contadores.inscritos_actividad_vigentes', 0)
             ->assertJsonPath('data.puede_finalizarse', false);
         $this->postJson('/api/activity-session/1/finalizar')->assertConflict()
-            ->assertJsonPath('data.motivos_bloqueo.0', 'La sesión debe tener al menos un participante seleccionado con inscripción vigente para finalizarse.');
+            ->assertJsonPath('data.motivos_bloqueo.0', 'La sesión debe tener al menos un participante con inscripción vigente para finalizarse.');
+    }
+
+    public function test_session_finalization_records_unmarked_enrollments_as_absent_only_on_or_after_the_session_date(): void
+    {
+        $this->seedSession('ACTIVO', null);
+        $this->authorize();
+        $this->secondParticipant('PRESENTE');
+        DB::table('gestion.persona')->insert(['id_persona' => 3, 'nombres' => 'Inscripción posterior']);
+        DB::table('certificado.participacion')->insert(['id_participacion' => 3, 'id_actividad' => 1,
+            'id_persona' => 3, 'estado' => 'Activo', 'fecha_inscripcion' => '2026-06-02']);
+        DB::table('certificado.participacion')->where('id_participacion', 1)->update(['fecha_inscripcion' => '2026-05-18']);
+
+        $url = '/api/activity-session/1';
+        DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 1)->update(['fecha' => '2099-01-01']);
+        $this->postJson($url.'/finalizar')->assertConflict()
+            ->assertJsonPath('data.motivos_bloqueo.0', 'La sesión todavía no ha llegado a su fecha programada.');
+        $this->assertDatabaseMissing('certificado.asistencia', ['id_participacion' => 1]);
+
+        DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', 1)->update(['fecha' => '2026-06-01']);
+        $this->postJson($url.'/finalizar')->assertOk();
+        $this->postJson($url.'/finalizar')->assertOk();
+        $this->assertDatabaseHas('certificado.asistencia', ['id_participacion' => 1, 'id_actividad_sesion' => 1, 'estado' => 'AUSENTE']);
+        $this->assertDatabaseHas('certificado.asistencia', ['id_participacion' => 2, 'id_actividad_sesion' => 1, 'estado' => 'PRESENTE']);
+        $this->assertDatabaseCount('certificado.asistencia', 2);
+        $this->assertDatabaseHas('certificado.actividad_sesion', ['id_actividad_sesion' => 1, 'estado' => 'Finalizada']);
+        $this->assertDatabaseHas('certificado.actividad_sesion', ['id_actividad_sesion' => 2, 'estado' => 'Activo']);
     }
 
     public function test_invalid_reporting_mapping_returns_unknown_counts_instead_of_false_zeroes(): void
