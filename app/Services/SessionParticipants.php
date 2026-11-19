@@ -30,12 +30,13 @@ class SessionParticipants
 
         return ['id_actividad' => (int) $session->id_actividad, 'id_actividad_sesion' => (int) $session->id_actividad_sesion,
             'seleccion_persistida_en' => 'asistencia', 'estado_inicial' => 'AUSENTE',
-            'participantes' => $query->orderBy('p.id_participacion')->get(['p.id_participacion', 'p.id_persona', 'p.estado as estado_inscripcion',
+            'participantes' => $query->orderBy('p.id_participacion')->get(['p.id_participacion', 'p.id_persona', 'p.fecha_inscripcion', 'p.estado as estado_inscripcion',
                 'persona.nombres', 'persona.apellido_paterno', 'persona.apellido_materno', 'a.id_asistencia', 'a.estado as estado_asistencia',
                 'a.hora_entrada', 'a.hora_salida'])->map(fn (object $row): array => [
                     'id_participacion' => (int) $row->id_participacion, 'id_persona' => (int) $row->id_persona,
                     'nombre_completo' => trim(implode(' ', array_filter([$row->nombres, $row->apellido_paterno, $row->apellido_materno]))),
-                    'estado_inscripcion' => $row->estado_inscripcion, 'seleccionado' => $row->id_asistencia !== null,
+                    'fecha_inscripcion' => $row->fecha_inscripcion, 'estado_inscripcion' => $row->estado_inscripcion,
+                    'seleccionado' => $row->id_asistencia !== null,
                     'id_asistencia' => $row->id_asistencia === null ? null : (int) $row->id_asistencia,
                     'estado_asistencia' => $row->estado_asistencia, 'hora_entrada' => $row->hora_entrada, 'hora_salida' => $row->hora_salida,
                 ])->all()];
