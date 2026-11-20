@@ -130,7 +130,6 @@ class CertificationReadiness
         $activities = DB::table('certificado.actividad')->whereIn('id_actividad', $activityIds)->pluck('estado', 'id_actividad');
         $approved = DB::table('certificado.solicitud_actividad')->whereIn('id_actividad', $activityIds)
             ->where('estado', 'Aprobada')->pluck('id_actividad')->all();
-        $unmarkedSessionIds = $this->unmarkedEnrollments($sessionIds)->distinct()->pluck('s.id_actividad_sesion')->all();
         $attendances = DB::table('certificado.asistencia as a')
             ->leftJoin('certificado.participacion as p', 'p.id_participacion', '=', 'a.id_participacion')
             ->whereIn('a.id_actividad_sesion', $sessionIds)
@@ -169,13 +168,13 @@ class CertificationReadiness
                 $blockers[] = 'Hay asistencias sin una inscripción válida en la actividad de esta sesión.';
             }
             $current = $linked->filter(fn (object $record): bool => strtoupper(trim($record->estado_inscripcion ?? '')) === 'ACTIVO');
-            if ($current->isEmpty() && ! in_array($session->id_actividad_sesion, $unmarkedSessionIds)) {
+            if ($current->isEmpty()) {
                 $blockers[] = 'La sesión debe tener al menos un participante con inscripción vigente para finalizarse.';
             }
             if ($linked->pluck('id_persona')->duplicates()->isNotEmpty()) {
                 $blockers[] = 'Existen asistencias duplicadas; se requiere revisar la integridad antes de finalizar.';
             }
-            if ($current->contains(fn (object $record): bool => ! in_array(strtoupper(trim($record->estado ?? '')), ['PRESENTE', 'AUSENTE'], true))) {
+            if ($current->contains(fn (object $record): bool => ! in_array(strtoupper(trim($record->estado ?? '')), ['PRESENTE', 'AUSENTE', SessionParticipants::ENROLLED], true))) {
                 $blockers[] = 'Existen asistencias pendientes, por regularizar o con un estado inválido. Registre Presente o Ausente.';
             }
             if ($current->contains(function (object $record): bool {
@@ -192,28 +191,6 @@ class CertificationReadiness
         }
 
         return $results;
-    }
-
-    /** @param list<int> $sessionIds */
-    private function unmarkedEnrollments(array $sessionIds): Builder
-    {
-        return DB::table('certificado.actividad_sesion as s')
-            ->join('certificado.participacion as p', 'p.id_actividad', '=', 's.id_actividad')
-            ->join('gestion.persona as persona', 'persona.id_persona', '=', 'p.id_persona')
-            ->whereIn('s.id_actividad_sesion', $sessionIds)
-            ->whereIn(DB::raw('upper(trim(cast(p.estado as text)))'), $this->activeAttendanceEnrollmentStates())
-            ->where(fn (Builder $dates) => $dates->whereNull('p.fecha_inscripcion')->orWhereColumn('p.fecha_inscripcion', '<=', 's.fecha'))
-            ->whereNotExists(DB::table('certificado.asistencia as a')->selectRaw('1')
-                ->whereColumn('a.id_participacion', 'p.id_participacion')->whereColumn('a.id_actividad_sesion', 's.id_actividad_sesion'))
-            ->whereNotExists(DB::table('certificado.certificado as c')->selectRaw('1')
-                ->whereColumn('c.id_participacion', 'p.id_participacion')
-                ->when(Schema::hasColumn('certificado.certificado', 'id_actividad_sesion'), fn (Builder $certificates) => $certificates
-                    ->where(fn (Builder $scope) => $scope->whereNull('c.id_actividad_sesion')
-                        ->orWhereColumn('c.id_actividad_sesion', 's.id_actividad_sesion'))))
-            ->when(SessionSpeakers::supportsSessionLinks(), fn (Builder $query) => $query->whereNotExists(
-                SessionSpeakers::assignments()->selectRaw('1')->whereColumn('ap.id_actividad_sesion', 's.id_actividad_sesion')
-                    ->whereColumn('ap.id_actividad', 's.id_actividad')->whereColumn('pp.id_persona', 'p.id_persona')
-            ));
     }
 
     private function normalizedClosureTime(?string $time): ?string
@@ -252,10 +229,17 @@ class CertificationReadiness
             }
             $retry = $session->estado === self::FINAL_SESSION_STATE;
             if (! $retry) {
-                DB::table('certificado.asistencia')->insertUsing(
-                    ['id_participacion', 'id_actividad_sesion', 'estado'],
-                    $this->unmarkedEnrollments([$id])->select('p.id_participacion', 's.id_actividad_sesion')->selectRaw('? as estado', ['AUSENTE']),
-                );
+                DB::table('certificado.asistencia')->where('id_actividad_sesion', $id)
+                    ->where('estado', SessionParticipants::ENROLLED)
+                    ->whereIn('id_participacion', DB::table('certificado.participacion as p')->select('p.id_participacion')
+                        ->where('p.id_actividad', $session->id_actividad)
+                        ->whereRaw("upper(trim(cast(p.estado as text))) = 'ACTIVO'")
+                        ->when(SessionSpeakers::supportsSessionLinks(), fn (Builder $participants) => $participants->whereNotExists(
+                            SessionSpeakers::assignments()->selectRaw('1')
+                                ->where('ap.id_actividad_sesion', $id)->whereColumn('ap.id_actividad', 'p.id_actividad')
+                                ->whereColumn('pp.id_persona', 'p.id_persona')
+                        )))
+                    ->update(['estado' => 'AUSENTE']);
                 DB::table('certificado.actividad_sesion')->where('id_actividad_sesion', $id)->update(['estado' => self::FINAL_SESSION_STATE]);
                 $session->estado = self::FINAL_SESSION_STATE;
                 DB::afterCommit(fn () => Log::info('actividad_sesion.finalizada', [

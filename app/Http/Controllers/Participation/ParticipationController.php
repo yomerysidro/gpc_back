@@ -4,9 +4,12 @@ namespace App\Http\Controllers\Participation;
 
 use App\Http\Controllers\Controller;
 use App\Http\Data\Participation\ParticipationData;
+use App\Models\ActivitySession\ActivitySession;
+use App\Models\Attendance\Attendance;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Throwable;
@@ -46,13 +49,25 @@ class ParticipationController extends Controller
                 'id_tipo_participacion' => ['bail', 'required', 'integer', Rule::exists(config('database.default').'.certificado.tipo_participacion', 'id_tipo_participacion')],
                 'fecha_inscripcion' => ['required', 'date'],
                 'estado' => ['required', 'string', 'max:30'],
+                'id_actividad_sesion' => ['sometimes', 'required', 'integer', 'min:1'],
             ]);
 
             if ($validator->fails()) {
                 return $this->information('Invalid validation data.', 422, $validator->errors());
             }
 
-            $response = ParticipationData::createParticipation($validator->validated());
+            $data = $validator->validated();
+            if (isset($data['id_actividad_sesion'])) {
+                $session = ActivitySession::query()->where('id_actividad', $data['id_actividad'])->find($data['id_actividad_sesion']);
+                if (! $session) {
+                    return $this->error('La sesión no pertenece a la actividad indicada.', 422);
+                }
+                if (Gate::denies('view', $session) || Gate::denies('create', Attendance::class)) {
+                    return $this->error('No autorizado para inscribir participantes en esta sesión.', 403);
+                }
+            }
+
+            $response = ParticipationData::createParticipation($data);
 
             if (! $response['success']) {
                 if ($response['status'] === 422) {
