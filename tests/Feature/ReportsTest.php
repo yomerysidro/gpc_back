@@ -161,6 +161,19 @@ class ReportsTest extends TestCase
         $this->getJson('/api/reportes/actividades?exportar=csv')->assertForbidden();
     }
 
+    public function test_gerencial_can_consult_and_export_institutional_reports_without_access_to_source_modules(): void
+    {
+        $this->actor(administrator: false, permissions: ['reportes.ver', 'gerencia.ver']);
+
+        foreach (['actividades', 'certificados', 'asistencia'] as $resource) {
+            $this->getJson('/api/reportes/'.$resource)->assertOk()->assertJsonPath('data.total', 2);
+        }
+        $this->getJson('/api/reportes/sesiones?id_actividad=2')->assertOk()->assertJsonPath('data.data.0.id_actividad_sesion', 2);
+        $this->getJson('/api/reportes/indicadores/asistencias')->assertOk()->assertJsonPath('data.total', 2);
+        $this->getJson('/api/reportes/series/actividades?anio=2026')->assertOk();
+        self::assertStringContainsString('Luis', $this->get('/api/reportes/asistencia?exportar=csv')->assertOk()->streamedContent());
+    }
+
     #[TestWith(['desde=2026-03-02&hasta=2026-03-01'])]
     #[TestWith(['desde=invalid'])]
     #[TestWith(['per_page=101'])]

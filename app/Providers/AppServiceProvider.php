@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Models\User\User;
+use App\Services\Auth\GmailApiTransport;
 use App\Services\Auth\JwtService;
 use App\Services\Auth\ModulePermissions;
 use App\Services\RequestReadMemo;
@@ -13,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
@@ -33,6 +35,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Mail::extend('gmail-api', fn (array $config): GmailApiTransport => new GmailApiTransport($config));
+
         DB::listen(RequestReadMemo::invalidateAfterWrite(...));
 
         RateLimiter::for('public-certificates', function (Request $request): array {

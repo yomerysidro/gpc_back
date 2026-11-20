@@ -392,6 +392,51 @@ class UserSecurityTest extends TestCase
         $this->getJson('/api/auth/me')->assertUnauthorized();
     }
 
+    public function test_person_profiles_use_the_linked_account_email_when_the_contact_is_empty(): void
+    {
+        $this->cookieFor($this->actor());
+        $this->grant(['personas.verpersonas']);
+
+        $this->getJson('/api/persons/list')->assertOk()->assertJsonPath('data.0.correo', 'actor@example.test');
+        $this->getJson('/api/persons/detail/1')->assertOk()->assertJsonPath('data.correo', 'actor@example.test');
+
+        DB::table('gestion.persona')->where('id_persona', 1)->update(['correo' => 'contacto@example.test']);
+        $this->getJson('/api/persons/detail/1')->assertOk()->assertJsonPath('data.correo', 'contacto@example.test');
+    }
+
+    public function test_password_recovery_can_send_via_gmail_https_with_an_oauth_refresh_token(): void
+    {
+        $this->actor();
+        config([
+            'app.frontend_url' => 'https://certificados.example.test',
+            'mail.password_reset' => 'gmail-api',
+            'mail.mailers.gmail-api.sender' => 'sender@example.test',
+            'mail.mailers.gmail-api.client_id' => 'client-id-fixture',
+            'mail.mailers.gmail-api.client_secret' => 'client-secret-fixture',
+            'mail.mailers.gmail-api.refresh_token' => 'refresh-token-fixture',
+        ]);
+        Http::fake([
+            'https://oauth2.googleapis.com/token' => Http::response(['access_token' => 'access-token-fixture']),
+            'https://gmail.googleapis.com/gmail/v1/users/me/messages/send' => Http::response(['id' => 'message-fixture']),
+        ]);
+
+        $this->postJson('/api/auth/forgot-password', ['email' => 'actor@example.test'])->assertOk();
+        Http::assertSent(fn ($request): bool => $request->url() === 'https://oauth2.googleapis.com/token'
+            && $request['grant_type'] === 'refresh_token');
+        Http::assertSent(function ($request): bool {
+            if ($request->url() !== 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send') {
+                return false;
+            }
+
+            $message = base64_decode(strtr($request['raw'], '-_', '+/'), true);
+
+            return $request->hasHeader('Authorization', 'Bearer access-token-fixture')
+                && is_string($message) && str_contains($message, 'To: actor@example.test')
+                && str_contains(quoted_printable_decode($message), 'https://certificados.example.test/reset-password');
+        });
+        $this->assertDatabaseHas('password_reset_tokens', ['email' => 'actor@example.test']);
+    }
+
     public function test_login_requires_a_valid_turnstile_token_and_rejects_reuse(): void
     {
         $this->actor();
@@ -451,9 +496,11 @@ class UserSecurityTest extends TestCase
     {
         $this->actor();
         for ($attempt = 1; $attempt <= 2; $attempt++) {
-            $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'wrong'])->assertUnauthorized();
+            $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'wrong'])->assertUnauthorized()
+                ->assertJsonPath('intentosRestantes', 3 - $attempt);
         }
-        $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'wrong'])->assertStatus(423);
+        $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'wrong'])->assertStatus(423)
+            ->assertJsonPath('bloqueoMinutos', 30);
         $this->postJson('/api/auth/login', ['email' => 'actor@example.test', 'password' => 'fixture-password'])->assertStatus(423);
         $this->assertDatabaseHas('acceso.usuario', ['id_usuario' => 1, 'intentos_fallidos' => 3]);
     }
