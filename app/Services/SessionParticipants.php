@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\DB;
 
 class SessionParticipants
 {
+    public const ENROLLED = 'INSCRITO';
+
     /** @return array<string, mixed> */
     public function listing(object $session, bool $candidates): array
     {
@@ -29,7 +31,7 @@ class SessionParticipants
         }
 
         return ['id_actividad' => (int) $session->id_actividad, 'id_actividad_sesion' => (int) $session->id_actividad_sesion,
-            'seleccion_persistida_en' => 'asistencia', 'estado_inicial' => 'AUSENTE',
+            'seleccion_persistida_en' => 'asistencia', 'estado_inicial' => self::ENROLLED,
             'participantes' => $query->orderBy('p.id_participacion')->get(['p.id_participacion', 'p.id_persona', 'p.fecha_inscripcion', 'p.estado as estado_inscripcion',
                 'persona.nombres', 'persona.apellido_paterno', 'persona.apellido_materno', 'a.id_asistencia', 'a.estado as estado_asistencia',
                 'a.hora_entrada', 'a.hora_salida'])->map(fn (object $row): array => [
@@ -69,7 +71,7 @@ class SessionParticipants
                     continue;
                 }
                 $result = AttendanceData::createAttendance(['ID_PARTICIPACION' => (int) $enrollment->id_participacion,
-                    'ID_ACTIVIDAD_SESION' => (int) $current->id_actividad_sesion, 'ESTADO' => 'AUSENTE']);
+                    'ID_ACTIVIDAD_SESION' => (int) $current->id_actividad_sesion, 'ESTADO' => self::ENROLLED]);
                 abort_unless($result['success'], $result['status'] ?? 500, $result['message']);
             }
 

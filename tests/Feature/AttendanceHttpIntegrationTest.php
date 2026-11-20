@@ -35,7 +35,8 @@ class AttendanceHttpIntegrationTest extends TestCase
             'acceso.rol_modulo_permiso' => 'id_rol INTEGER, id_modulo INTEGER, id_permiso INTEGER',
             'certificado.actividad' => 'id_actividad INTEGER PRIMARY KEY, id_area INTEGER, nombre TEXT, estado TEXT',
             'certificado.actividad_sesion' => 'id_actividad_sesion INTEGER PRIMARY KEY, id_actividad INTEGER, nombre TEXT, estado TEXT, fecha DATE',
-            'certificado.participacion' => 'id_participacion INTEGER PRIMARY KEY, id_actividad INTEGER, id_persona INTEGER, estado TEXT, fecha_inscripcion DATE',
+            'certificado.participacion' => 'id_participacion INTEGER PRIMARY KEY, id_actividad INTEGER, id_persona INTEGER, id_tipo_participacion INTEGER, estado TEXT, fecha_inscripcion DATE',
+            'certificado.tipo_participacion' => 'id_tipo_participacion INTEGER PRIMARY KEY',
             'certificado.asistencia' => 'id_asistencia INTEGER PRIMARY KEY, id_participacion INTEGER, id_actividad_sesion INTEGER, estado TEXT NOT NULL, hora_entrada TEXT, hora_salida TEXT, UNIQUE(id_participacion,id_actividad_sesion)',
             'certificado.certificado' => 'id_certificado INTEGER PRIMARY KEY, id_participacion INTEGER, id_persona INTEGER, id_tipo_certificado INTEGER, estado TEXT, fecha_emision DATE',
             'certificado.tipo_certificado' => 'id_tipo_certificado INTEGER PRIMARY KEY, nombre_tipo TEXT, estado BOOLEAN',
@@ -129,7 +130,7 @@ class AttendanceHttpIntegrationTest extends TestCase
         $this->getJson('/api/activity-session/3/participantes')->assertOk()->assertJsonCount(0, 'data.participantes');
         foreach ([1, 2] as $attempt) {
             $this->postJson('/api/activity-session/3/participantes', ['ids_participacion' => [1]])->assertOk()
-                ->assertJsonCount(1, 'data.participantes')->assertJsonPath('data.participantes.0.estado_asistencia', 'AUSENTE')
+                ->assertJsonCount(1, 'data.participantes')->assertJsonPath('data.participantes.0.estado_asistencia', 'INSCRITO')
                 ->assertJsonPath('data.participantes.0.fecha_inscripcion', '2026-11-19')
                 ->assertJsonPath('data.participantes.0.hora_entrada', null);
         }
@@ -156,6 +157,26 @@ class AttendanceHttpIntegrationTest extends TestCase
         DB::table('acceso.permiso')->where('clave', 'participantes.eliminar')->update(['estado' => false]);
         $this->deleteJson('/api/activity-session/1/participantes/1')->assertForbidden();
         $this->assertDatabaseCount('certificado.asistencia', 1);
+    }
+
+    public function test_enrollment_from_session_card_is_atomic_and_does_not_fill_other_sessions(): void
+    {
+        $this->prepareIndependentSessions();
+        DB::table('gestion.persona')->insert(['id_persona' => 4, 'nombres' => 'Nueva inscripción']);
+        DB::table('certificado.tipo_participacion')->insert(['id_tipo_participacion' => 1]);
+        $payload = ['id_persona' => 4, 'id_actividad' => 1, 'id_tipo_participacion' => 1,
+            'fecha_inscripcion' => '2026-11-19', 'estado' => 'Activo'];
+        $this->postJson('/api/participation', [...$payload, 'id_actividad_sesion' => 2])->assertUnprocessable();
+        $this->assertDatabaseMissing('certificado.participacion', ['id_persona' => 4]);
+
+        $this->getJson('/api/activity-session/3/participantes')->assertOk()->assertJsonCount(0, 'data.participantes');
+        $id = $this->postJson('/api/participation', [...$payload, 'id_actividad_sesion' => 3])->assertCreated()->json('data.id_participacion');
+        $this->postJson('/api/participation', [...$payload, 'id_actividad_sesion' => 3])->assertCreated()->assertJsonPath('data.id_participacion', $id);
+        $this->getJson('/api/activity-session/3/participantes')->assertOk()->assertJsonCount(1, 'data.participantes')
+            ->assertJsonPath('data.participantes.0.fecha_inscripcion', '2026-11-19')
+            ->assertJsonPath('data.participantes.0.estado_asistencia', 'INSCRITO');
+        $this->assertDatabaseMissing('certificado.asistencia', ['id_participacion' => $id, 'id_actividad_sesion' => 1]);
+        $this->assertDatabaseCount('certificado.asistencia', 2);
     }
 
     private function seedAttendance(): void

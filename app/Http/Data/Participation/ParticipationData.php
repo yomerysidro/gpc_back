@@ -2,9 +2,11 @@
 
 namespace App\Http\Data\Participation;
 
+use App\Services\SessionParticipants;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 
 class ParticipationData
@@ -65,22 +67,31 @@ class ParticipationData
             DB::beginTransaction();
             self::validateBusinessRules($data);
 
-            if (DB::table('certificado.participacion')
+            $existing = DB::table('certificado.participacion')
                 ->where('id_actividad', $data['id_actividad'])
                 ->where('id_persona', $data['id_persona'])
-                ->exists()) {
+                ->value('id_participacion');
+            $sessionId = $data['id_actividad_sesion'] ?? null;
+            if ($existing !== null && $sessionId === null) {
                 DB::rollBack();
 
                 return ['success' => false, 'message' => 'La persona ya está inscrita en esta actividad.', 'status' => 409];
             }
 
-            $idParticipation = DB::table('certificado.participacion')->insertGetId([
+            $idParticipation = $existing ?? DB::table('certificado.participacion')->insertGetId([
                 'id_actividad' => $data['id_actividad'],
                 'id_persona' => $data['id_persona'],
                 'id_tipo_participacion' => $data['id_tipo_participacion'],
                 'fecha_inscripcion' => $data['fecha_inscripcion'],
                 'estado' => $data['estado'],
             ], 'id_participacion');
+
+            if ($sessionId !== null) {
+                app(SessionParticipants::class)->select((object) [
+                    'id_actividad' => (int) $data['id_actividad'],
+                    'id_actividad_sesion' => (int) $sessionId,
+                ], [(int) $idParticipation]);
+            }
 
             $participation = DB::table('certificado.participacion')
                 ->select('id_participacion', 'id_persona', 'id_actividad', 'id_tipo_participacion', 'fecha_inscripcion', 'estado')
@@ -101,6 +112,9 @@ class ParticipationData
 
             if ($e instanceof ValidationException) {
                 return ['success' => false, 'message' => 'Datos de validación incorrectos.', 'status' => 422, 'errors' => $e->errors()];
+            }
+            if ($e instanceof HttpExceptionInterface) {
+                return ['success' => false, 'message' => $e->getMessage(), 'status' => $e->getStatusCode(), 'errors' => []];
             }
 
             if ($e instanceof QueryException && (string) $e->getCode() === '23505') {
