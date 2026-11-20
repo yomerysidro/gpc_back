@@ -3,6 +3,7 @@
 namespace App\Http\Data\Person;
 
 use App\Http\Data\GestionIntegrity;
+use App\Services\RequestSchema;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -11,12 +12,18 @@ class PersonaData
 {
     private static function profiles(): Builder
     {
+        $profiles = DB::table('gestion.persona as p');
+        if (! in_array('acceso', array_column(RequestSchema::getSchemas(), 'name'), true)
+            || ! RequestSchema::hasTable('acceso.usuario')) {
+            return $profiles;
+        }
+
         $accountEmail = DB::table('acceso.usuario')
             ->whereColumn('id_persona', 'p.id_persona')
             ->where('estado', true)
             ->selectRaw('CASE WHEN COUNT(DISTINCT correo) = 1 THEN MIN(correo) END');
 
-        return DB::table('gestion.persona as p')
+        return $profiles
             ->select('p.*')
             ->selectRaw("COALESCE(NULLIF(TRIM(p.correo), ''), (".$accountEmail->toSql().')) AS correo', $accountEmail->getBindings());
     }
