@@ -9,6 +9,7 @@ use App\Models\Attendance\Attendance;
 use App\Models\Certificate\Certificate;
 use App\Models\Participation\Participation;
 use App\Services\CertificateDocumentWorkflow;
+use App\Services\ReportQueries;
 use App\Traits\ApiResponse;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -27,18 +28,19 @@ class RegisteredIndicatorController extends Controller
             default => abort(404),
         };
         $user = $request->user();
-        if (! in_array($permission, $user->permissionKeys(), true)) {
+        $institutional = ReportQueries::institutional($user);
+        if (! $institutional && ! in_array($permission, $user->permissionKeys(), true)) {
             return $this->error('No autorizado para consultar este indicador.', 403);
         }
 
         try {
             if ($indicador === 'certificados') {
-                $total = $user->isSystemAdministrator()
+                $total = $institutional || $user->isSystemAdministrator()
                     ? Certificate::query()->count()
                     : app(CertificateDocumentWorkflow::class)->readableCertificates($user)->distinct()->count('c.id_certificado');
             } else {
                 $areas = null;
-                if (! $user->isSystemAdministrator()) {
+                if (! $institutional && ! $user->isSystemAdministrator()) {
                     $result = ActivityRequestData::authorizedAreas((int) $user->id_persona);
                     if (! $result['success']) {
                         return $this->error($result['message'], $result['status']);

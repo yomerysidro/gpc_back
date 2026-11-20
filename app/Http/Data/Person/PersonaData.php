@@ -3,18 +3,31 @@
 namespace App\Http\Data\Person;
 
 use App\Http\Data\GestionIntegrity;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
 class PersonaData
 {
+    private static function profiles(): Builder
+    {
+        $accountEmail = DB::table('acceso.usuario')
+            ->whereColumn('id_persona', 'p.id_persona')
+            ->where('estado', true)
+            ->selectRaw('CASE WHEN COUNT(DISTINCT correo) = 1 THEN MIN(correo) END');
+
+        return DB::table('gestion.persona as p')
+            ->select('p.*')
+            ->selectRaw("COALESCE(NULLIF(TRIM(p.correo), ''), (".$accountEmail->toSql().')) AS correo', $accountEmail->getBindings());
+    }
+
     /**
      * @return array{success: bool, message: string, data: mixed, status: int}
      */
     public static function getAll(): array
     {
         try {
-            $records = DB::table('gestion.persona')->orderBy('id_persona', 'desc')->get();
+            $records = self::profiles()->orderBy('p.id_persona', 'desc')->get();
 
             return [
                 'success' => true,
@@ -38,7 +51,7 @@ class PersonaData
     public static function getById(int $id): array
     {
         try {
-            $record = DB::table('gestion.persona')->where('id_persona', $id)->first();
+            $record = self::profiles()->where('p.id_persona', $id)->first();
 
             if (! $record) {
                 return [

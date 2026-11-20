@@ -10,6 +10,7 @@ use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Models\User\User;
 use App\Services\Auth\JwtService;
 use App\Services\Auth\ModulePermissions;
+use App\Services\Auth\PasswordResetNotification;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\Mailer\Exception\TransportExceptionInterface;
 
 /**
  * Autenticación con JWT en cookie httpOnly.
@@ -90,10 +92,14 @@ class AuthController extends Controller
                 return response()->json([
                     'message' => 'Cuenta bloqueada por intentos fallidos',
                     'bloqueadoHasta' => $lockedUntil->toIso8601String(),
+                    'bloqueoMinutos' => self::LOCK_MINUTES,
                 ], 423);
             }
 
-            return response()->json(['message' => 'Credenciales inválidas'], 401);
+            return response()->json([
+                'message' => 'Credenciales inválidas',
+                'intentosRestantes' => (int) config('auth.login_max_attempts') - $response['data']['attempts'],
+            ], 401);
         }
 
         $response = AuthData::resetAttempts($user->id_usuario);
@@ -180,7 +186,24 @@ class AuthController extends Controller
      */
     public function forgotPassword(ForgotPasswordRequest $request): JsonResponse
     {
-        Password::sendResetLink(['correo' => $request->validated('email')]);
+        $resetMailer = config('mail.password_reset');
+        $mailer = $resetMailer ?: config('mail.default');
+        $gmail = config('mail.mailers.gmail-api');
+        if ((app()->isProduction() && in_array($mailer, ['log', 'array'], true))
+            || ($mailer === 'gmail-api' && collect($gmail)->only(['sender', 'client_id', 'client_secret', 'refresh_token'])->contains(fn (mixed $value): bool => blank($value)))) {
+            return response()->json(['message' => 'El envío de correos de recuperación no está disponible temporalmente.'], 503);
+        }
+
+        $notification = $resetMailer ? static function (User $user, string $token): void {
+            $user->notify(new PasswordResetNotification($token));
+        } : null;
+        try {
+            Password::sendResetLink(['correo' => $request->validated('email')], $notification);
+        } catch (TransportExceptionInterface $exception) {
+            report($exception);
+
+            return response()->json(['message' => 'El envío de correos de recuperación no está disponible temporalmente.'], 503);
+        }
 
         return response()->json([
             'message' => 'Si el correo está registrado, se envió un enlace para restablecer la contraseña',
