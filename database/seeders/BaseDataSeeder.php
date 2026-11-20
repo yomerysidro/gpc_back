@@ -109,7 +109,7 @@ class BaseDataSeeder extends Seeder
     public function run(): void
     {
         DB::transaction(function () {
-            foreach (['Administrador', 'Digitador', 'Gerencial'] as $role) {
+            foreach (['Administrador', 'Digitador', 'Gerencial', 'Gestor'] as $role) {
                 $this->firstOrInsert('acceso.rol', 'id_rol', ['nombre' => $role], ['estado' => true]);
             }
 
