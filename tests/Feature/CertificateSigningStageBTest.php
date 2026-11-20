@@ -171,6 +171,50 @@ class CertificateSigningStageBTest extends TestCase
         self::assertSame((array) $document, (array) DB::table('certificado.certificado_documento')->first());
     }
 
+    public function test_public_dni_results_order_by_generation_date_then_document_id(): void
+    {
+        $this->assignForPdfRevision();
+        $certificate = DB::table('certificado.certificado')->first();
+        $manifestPath = 'certificados/revisiones/aprobado.manifest';
+        $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get($manifestPath)), true, 512, JSON_THROW_ON_ERROR);
+        $manifest['context'] += ['id_persona' => $certificate->id_persona, 'id_tipo_certificado' => $certificate->id_tipo_certificado];
+        Storage::disk('local')->put($manifestPath, Crypt::encryptString(json_encode($manifest, JSON_THROW_ON_ERROR)));
+        $review = $this->postJson(self::BASE.'/revision-pdf')->assertOk()->json('data');
+        $this->postJson(self::BASE.'/confirmar-pdf', ['token_revision' => $review['token_revision'], 'confirmar' => true])->assertOk();
+        $document = DB::table('certificado.certificado_documento')->first();
+        $artifact = app(CertificateDocumentVersions::class)->resolve($document, readOnly: true);
+        $assignments = DB::table('certificado.certificado_firma')->get();
+        DB::table('certificado.certificado_documento')->update(['fecha_generacion' => '2026-11-20']);
+        foreach ([2 => '2026-11-20', 3 => '2026-11-19'] as $id => $date) {
+            DB::table('certificado.certificado')->insert(array_replace((array) $certificate, ['id_certificado' => $id]));
+            $path = 'certificados/preparados/orden-'.$id.'.pdf';
+            $pdf = "%PDF-1.4\nDocumento de prueba ".$id."\n%%EOF";
+            Storage::disk('local')->put($path, $pdf);
+            DB::table('certificado.certificado_documento')->insert(array_replace((array) $document, [
+                'id_certificado_documento' => $id, 'id_certificado' => $id, 'codigo_verificacion' => 'CertA'.$id,
+                'ruta_archivo' => $path, 'hash_certificado' => hash('sha256', $pdf),
+                'fecha_generacion' => $date, 'motivo_reemision' => json_encode(['v' => 0, 'p' => $artifact->plan_pdf_aprobado], JSON_THROW_ON_ERROR),
+            ]));
+            foreach ($assignments as $assignment) {
+                $row = (array) $assignment;
+                unset($row['id_certificado_firma']);
+                DB::table('certificado.certificado_firma')->insert(array_replace($row, ['id_certificado_documento' => $id]));
+            }
+        }
+        DB::statement('CREATE TABLE gestion.tipo_documento (id_tipo_documento INTEGER PRIMARY KEY, nombre TEXT, estado BOOLEAN)');
+        DB::statement('CREATE TABLE gestion.persona_documento (id_persona_documento INTEGER PRIMARY KEY, id_persona INTEGER, id_tipo_documento INTEGER, numero_documento TEXT, estado TEXT)');
+        DB::table('gestion.tipo_documento')->insert(['id_tipo_documento' => 1, 'nombre' => 'DNI', 'estado' => true]);
+        DB::table('gestion.persona_documento')->insert(['id_persona' => $certificate->id_persona, 'id_tipo_documento' => 1,
+            'numero_documento' => '87654321', 'estado' => 'Activo']);
+        config(['certification.public_lookup.publish_all_eligible_pdfs' => true]);
+        app('auth')->forgetGuards();
+
+        $items = $this->postJson('/api/portal-certificados/consultar-dni', ['dni' => '87654321'])->assertOk()->json('data.certificados');
+
+        self::assertSame(['CertA2', $document->codigo_verificacion, 'CertA3'], array_column($items, 'codigo_verificacion'));
+        self::assertSame(['2026-11-20', '2026-11-20', '2026-11-19'], array_column($items, 'fecha_generacion'));
+    }
+
     #[TestWith(['private'])]
     #[TestWith(['prepared'])]
     #[TestWith(['cancelled'])]

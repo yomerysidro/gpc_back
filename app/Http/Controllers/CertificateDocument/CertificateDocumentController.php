@@ -207,7 +207,7 @@ class CertificateDocumentController extends Controller
                     ->header('X-Content-Type-Options', 'nosniff');
             }
 
-            return $this->ok($verification + ['vista_firmas_disponible' => $publicArtifact !== null], 'Consulta del registro y su archivo; no acredita firma ni emisión oficial.')
+            return $this->ok($verification + ($publicArtifact === null ? [] : ['vista_firmas_disponible' => true]), 'Consulta del registro y su archivo; no acredita firma ni emisión oficial.')
                 ->header('Cache-Control', 'no-store');
         }, requireDevelopment: false);
     }

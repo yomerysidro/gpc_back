@@ -109,7 +109,9 @@ class CertificateHumanResources
         $query = $this->availableRecords(includeActivityDocuments: true)->where('c.id_persona', $personId)
             ->where('c.estado', CertificateManagement::PENDING)
             ->when($code !== null, fn (Builder $query) => $query->where('d.codigo_verificacion', $code))
-            ->orderBy('d.id_certificado_documento');
+            ->orderByRaw('CASE WHEN d.fecha_generacion IS NULL THEN 1 ELSE 0 END')
+            ->orderByDesc('d.fecha_generacion')
+            ->orderByDesc('d.id_certificado_documento');
         foreach ($query->lazy(100) as $document) {
             try {
                 $confirmed = $this->confirmed($document);

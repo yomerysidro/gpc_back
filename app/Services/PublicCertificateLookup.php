@@ -56,10 +56,12 @@ class PublicCertificateLookup
                     'estado_disponibilidad' => 'Listo para entrega',
                     'disponible_rrhh' => true,
                     'pdf_publicado' => $pdfUrl !== null,
-                    'vista_firmas_disponible' => $pdfUrl !== null,
                     'url_documento' => $pdfUrl,
                     'url_descarga' => $pdfUrl === null ? null : $pdfUrl.'&descargar=1',
-                ];
+                ] + ($pdfUrl === null ? [] : [
+                    'fecha_generacion' => $document->fecha_generacion,
+                    'vista_firmas_disponible' => true,
+                ]);
             } catch (HttpException) {
                 continue;
             }
