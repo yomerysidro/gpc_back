@@ -280,10 +280,17 @@ class CertificationReadiness
             ->withPath('/api/certificaciones/pendientes')->appends($filters);
         $facts = $this->facts($page->getCollection()->pluck('id_actividad')->unique()->all());
         $baseBlockers = $this->preparationBlockers($origin);
-        $page->setCollection($page->getCollection()->map(function (object $row) use ($origin, $filters, $facts, $baseBlockers): array {
+        $attendanceBySession = $facts['attendances']->groupBy('id_actividad_sesion');
+        $activeStates = $this->activeAttendanceEnrollmentStates();
+        $page->setCollection($page->getCollection()->map(function (object $row) use ($origin, $filters, $facts, $baseBlockers, $attendanceBySession, $activeStates): array {
             $participants = $facts['participants']->where('id_actividad', $row->id_actividad);
             $counts = ['Elegible' => 0, 'No elegible' => 0, 'Pendiente de validación' => 0];
             $candidates = $this->participationCandidates($participants, $row, $origin, $facts);
+            if ($origin === 'sesion') {
+                $selected = $attendanceBySession->get($row->id_sesion, collect())->pluck('id_participacion')->flip();
+                $candidates = $candidates->filter(fn (object $participant): bool => $selected->has($participant->id_participacion)
+                    && in_array(strtoupper(trim($participant->estado ?? '')), $activeStates, true));
+            }
             foreach ($candidates as $participant) {
                 $evaluation = $this->evaluate($participant, $row, $origin, $filters['id_tipo_certificado'] ?? null, $facts);
                 $counts[$evaluation['estado_elegibilidad']]++;

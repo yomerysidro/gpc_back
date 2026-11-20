@@ -27,9 +27,9 @@
         .signature-line { border-top: 1px solid #173448; padding-top: 7px; }
         .signature-name { font-size: 10px; font-weight: bold; line-height: 1.4; word-wrap: break-word; }
         .position { font-size: 9px; line-height: 1.4; color: #52606b; word-wrap: break-word; }
-        .footer { width: 100%; margin-top: 18px; }
+        .footer { width: 100%; margin-top: 12px; }
         .footer td { vertical-align: middle; }
-        .qr { height: 80px; width: 80px; }
+        .qr { height: 86px; width: 86px; }
         .verification { font-size: 9px; text-align: right; color: #52606b; }
         .notice { font-size: 9px; margin: 8px 0 0; color: #6f695c; }
         .compact h1 { font-size: 24px; margin: 12px 0; }
@@ -41,8 +41,8 @@
         .compact .signature-line { padding-top: 4px; }
         .compact .signature-name { font-size: 9px; }
         .compact .position { font-size: 8px; }
-        .compact .footer { margin-top: 6px; }
-        .compact .qr { height: 67px; width: 67px; }
+        .compact .footer { margin-top: 2px; }
+        .compact .qr { height: 71px; width: 71px; }
     </style>
 </head>
 <body>

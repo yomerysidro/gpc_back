@@ -486,6 +486,21 @@ class CertificationReadinessTest extends TestCase
         DB::disableQueryLog();
     }
 
+    public function test_empty_session_does_not_count_enrollments_or_attendance_from_another_session(): void
+    {
+        $this->seedSession('Activo');
+        $this->authorize();
+
+        $this->getJson('/api/certificaciones/pendientes?id_sesion=2')->assertOk()
+            ->assertJsonPath('data.data.0.total_participantes_inscritos', 0)
+            ->assertJsonPath('data.data.0.total_pendientes', 0);
+        $this->getJson('/api/activity-session/2/beneficiarios')->assertOk()
+            ->assertJsonPath('data.contadores.inscritos_actividad_vigentes', 1)
+            ->assertJsonPath('data.contadores.participantes_sesion', 0)
+            ->assertJsonPath('data.contadores.presentes', 0)
+            ->assertJsonPath('data.beneficiarios.total', 0);
+    }
+
     public function test_two_present_participants_have_the_same_counters_on_list_detail_and_beneficiaries_and_can_finalize(): void
     {
         $this->seedSession('Activo');
