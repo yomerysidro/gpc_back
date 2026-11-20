@@ -34,7 +34,7 @@ class ReportController extends Controller
             'exportar' => ['nullable', 'in:csv'],
         ]);
         if (isset($filters['exportar'])) {
-            abort_unless(in_array('reportes.exportar', $request->user()->permissionKeys(), true), 403, 'No autorizado para exportar reportes.');
+            abort_unless(ReportQueries::institutional($request->user()) || in_array('reportes.exportar', $request->user()->permissionKeys(), true), 403, 'No autorizado para exportar reportes.');
         }
         $filters['q'] = trim($filters['q'] ?? '');
         try {
@@ -91,7 +91,7 @@ class ReportController extends Controller
         $permission = match ($resource) {
             'actividades' => 'actividades.ver', 'certificados' => 'emision.ver', 'asistencia' => 'participantes.ver', default => abort(404),
         };
-        abort_unless(in_array($permission, $request->user()->permissionKeys(), true), 403, 'No autorizado para consultar este reporte.');
+        abort_unless(ReportQueries::institutional($request->user()) || in_array($permission, $request->user()->permissionKeys(), true), 403, 'No autorizado para consultar este reporte.');
     }
 
     private function csv(Builder $query, string $resource): StreamedResponse

@@ -9,12 +9,19 @@ use Illuminate\Support\Facades\DB;
 
 class ReportQueries
 {
+    public static function institutional(User $actor): bool
+    {
+        $keys = $actor->permissionKeys();
+
+        return in_array('gerencia.ver', $keys, true) && in_array('reportes.ver', $keys, true);
+    }
+
     public const PERSON_NAME = "TRIM(COALESCE(persona.nombres, '') || ' ' || COALESCE(persona.apellido_paterno, '') || ' ' || COALESCE(persona.apellido_materno, ''))";
 
     /** @return list<int>|null */
     public function areas(User $actor): ?array
     {
-        if ($actor->isSystemAdministrator()) {
+        if ($actor->isSystemAdministrator() || self::institutional($actor)) {
             return null;
         }
         $result = ActivityRequestData::authorizedAreas((int) $actor->id_persona);
@@ -54,7 +61,7 @@ class ReportQueries
                 'tipo.nombre_tipo as tipo_certificado', 'a.id_actividad', 'a.nombre as actividad',
                 'd.id_certificado_documento', 'd.codigo_verificacion', 'd.estado as estado_documento', 'd.fecha_generacion')
             ->selectRaw(self::PERSON_NAME.' as beneficiario');
-        if (! $actor->isSystemAdministrator()) {
+        if (! $actor->isSystemAdministrator() && ! self::institutional($actor)) {
             $authorized = app(CertificateDocumentWorkflow::class)->readableCertificates($actor)
                 ->reorder()->select('c.id_certificado')->distinct();
             $query->whereIn('c.id_certificado', $authorized);

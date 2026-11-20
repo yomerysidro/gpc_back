@@ -16,6 +16,8 @@ return [
 
     'default' => env('MAIL_MAILER', 'log'),
 
+    'password_reset' => env('MAIL_PASSWORD_RESET'),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations
@@ -36,6 +38,14 @@ return [
     */
 
     'mailers' => [
+
+        'gmail-api' => [
+            'transport' => 'gmail-api',
+            'sender' => env('GMAIL_SENDER'),
+            'client_id' => env('GMAIL_CLIENT_ID'),
+            'client_secret' => env('GMAIL_CLIENT_SECRET'),
+            'refresh_token' => env('GMAIL_REFRESH_TOKEN'),
+        ],
 
         'smtp' => [
             'transport' => 'smtp',
