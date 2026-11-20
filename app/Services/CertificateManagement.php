@@ -771,6 +771,8 @@ class CertificateManagement
         $key = hash('sha256', $token);
         $code = bin2hex(random_bytes(15));
         $reusable = null;
+        $signatureImages = $this->generator->signatureImages($signers);
+        $signatureImagesHash = hash('sha256', json_encode($signatureImages, JSON_THROW_ON_ERROR));
         foreach (Storage::disk('local')->files('certificados/revisiones') as $candidate) {
             if (! str_ends_with($candidate, '.manifest')) {
                 continue;
@@ -783,7 +785,8 @@ class CertificateManagement
             if (($previous['actor'] ?? null) !== (int) $actor->getAuthIdentifier()
                 || ($previous['context'] ?? null) !== (array) $context || ($previous['message'] ?? null) !== $message
                 || ($previous['mode'] ?? null) !== $mode || ($previous['signers'] ?? null) !== $signers
-                || ($previous['workers'] ?? null) !== $workers || ($previous['template_hash'] ?? null) !== $this->templateHash()) {
+                || ($previous['workers'] ?? null) !== $workers || ($previous['template_hash'] ?? null) !== $this->templateHash()
+                || ($previous['signature_images_hash'] ?? null) !== $signatureImagesHash) {
                 continue;
             }
             $previousPdf = substr($candidate, 0, -strlen('.manifest')).'.pdf';
@@ -796,11 +799,12 @@ class CertificateManagement
             }
         }
         $code = $reusable['code'] ?? $code;
-        $pdf = $reusable['pdf'] ?? $this->generator->reviewPdf($context, $message, $code, $signers);
+        $pdf = $reusable['pdf'] ?? $this->generator->reviewPdf($context, $message, $code, $signers, $signatureImages);
         $manifest = [
             'actor' => (int) $actor->getAuthIdentifier(), 'expires' => now()->addMinutes(30)->timestamp,
             'context' => (array) $context, 'message' => $message, 'mode' => $mode, 'signers' => $signers,
             'workers' => $workers,
+            'signature_images_hash' => $signatureImagesHash,
             'recuperacion' => $reusable !== null,
             'code' => $code, 'hash' => hash('sha256', $pdf), 'template_hash' => $this->templateHash(),
         ];

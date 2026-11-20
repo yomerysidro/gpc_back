@@ -15,6 +15,7 @@ use Dompdf\Options;
 use Illuminate\Database\LostConnectionDetector;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\JoinClause;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
@@ -97,11 +98,12 @@ class CertificateDocumentGenerator
                 $options->set('fontCache', storage_path('framework/cache'));
                 $pdf = new Dompdf($options);
                 try {
+                    $signers = $demonstration ? $this->signers((int) $context->id_actividad) : [];
                     $pdf->loadHtml(view($demonstration ? 'certificates.demonstration' : 'certificates.development', [
                         'context' => $context, 'certificate' => $certificate, 'code' => $code,
                         'qrDataUri' => 'data:image/svg+xml;base64,'.base64_encode($qr),
                         'logoDataUri' => 'data:image/png;base64,'.base64_encode(file_get_contents(resource_path('images/escudo-morales.png'))),
-                        'signers' => $demonstration ? $this->signers((int) $context->id_actividad) : [],
+                        'signers' => $signers, 'signatureImages' => $this->signatureImages($signers),
                     ])->render(), 'UTF-8');
                     $pdf->setPaper('A4', 'landscape');
                     $pdf->render();
@@ -183,11 +185,13 @@ class CertificateDocumentGenerator
     /** @param list<array<string, mixed>>|null $signers */
     public function preview(object $context, ?string $message = null, ?array $signers = null, bool $academicDraft = false): string
     {
+        $signers ??= $this->signers((int) $context->id_actividad);
+
         return view('certificates.demonstration', [
             'context' => $context, 'certificate' => $academicDraft ? (object) ['fecha_emision' => null] : null, 'code' => null, 'qrDataUri' => null,
             'customMessage' => $message,
             'logoDataUri' => 'data:image/png;base64,'.base64_encode(file_get_contents(resource_path('images/escudo-morales.png'))),
-            'signers' => $signers ?? $this->signers((int) $context->id_actividad),
+            'signers' => $signers, 'signatureImages' => $this->signatureImages($signers),
         ])->render();
     }
 
@@ -222,8 +226,11 @@ class CertificateDocumentGenerator
         }
     }
 
-    /** @param list<array<string, mixed>> $signers */
-    public function reviewPdf(object $context, string $message, string $code, array $signers): string
+    /**
+     * @param  list<array<string, mixed>>  $signers
+     * @param  array<int, string>|null  $signatureImages
+     */
+    public function reviewPdf(object $context, string $message, string $code, array $signers, ?array $signatureImages = null): string
     {
         $qr = (new Writer(new ImageRenderer(new RendererStyle(200, 4), new SvgImageBackEnd)))
             ->writeString($this->verificationUrl($code));
@@ -232,8 +239,26 @@ class CertificateDocumentGenerator
             'context' => $context, 'certificate' => null, 'customMessage' => $message,
             'code' => $code, 'qrDataUri' => 'data:image/svg+xml;base64,'.base64_encode($qr),
             'logoDataUri' => 'data:image/png;base64,'.base64_encode(file_get_contents(resource_path('images/escudo-morales.png'))),
-            'signers' => $signers, 'administrative' => true,
+            'signers' => $signers, 'signatureImages' => $signatureImages ?? $this->signatureImages($signers),
+            'administrative' => true,
         ])->render());
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $signers
+     * @return array<int, string>
+     */
+    public function signatureImages(array $signers): array
+    {
+        $workerIds = array_column($signers, 'id_persona_trabajador');
+        if ($workerIds === [] || ! Schema::hasColumn('gestion.persona_trabajador', 'imagen_firma_cifrada')) {
+            return [];
+        }
+
+        return DB::table('gestion.persona_trabajador')->whereIn('id_persona_trabajador', $workerIds)
+            ->whereNotNull('imagen_firma_cifrada')->orderBy('id_persona_trabajador')
+            ->pluck('imagen_firma_cifrada', 'id_persona_trabajador')
+            ->map(fn (string $image): string => Crypt::decryptString($image))->all();
     }
 
     /** @return list<array<string, mixed>> */

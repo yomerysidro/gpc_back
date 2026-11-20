@@ -24,6 +24,7 @@
         .signature-row td { text-align: center; vertical-align: top; padding: 0 0 12px; }
         .signature-block { max-width: 270px; margin: 0 auto; page-break-inside: avoid; }
         .signature-space { height: 42px; }
+        .signature-space img { max-height: 40px; max-width: 95%; }
         .signature-line { border-top: 1px solid #173448; padding-top: 7px; }
         .signature-name { font-size: 10px; font-weight: bold; line-height: 1.4; word-wrap: break-word; }
         .position { font-size: 9px; line-height: 1.4; color: #52606b; word-wrap: break-word; }
@@ -38,6 +39,7 @@
         .compact .issued { margin-top: 8px; }
         .compact .signers { margin-top: 8px; }
         .compact .signature-space { height: 26px; }
+        .compact .signature-space img { max-height: 24px; }
         .compact .signature-line { padding-top: 4px; }
         .compact .signature-name { font-size: 9px; }
         .compact .position { font-size: 8px; }
@@ -81,7 +83,13 @@
         @foreach($signatureRow as $signer)
             <td width="{{ 100 / count($signatureRow) }}%">
                 <div class="signature-block">
-                    <div class="signature-space"></div>
+                    @if(isset($signatureImages[$signer['id_persona_trabajador'] ?? 0]))
+                        <div class="signature-space">
+                            <img src="{{ $signatureImages[$signer['id_persona_trabajador']] }}" alt="Firma">
+                        </div>
+                    @else
+                        <div class="signature-space"></div>
+                    @endif
                     <div class="signature-line">
                         <div class="signature-name">{{ $signer['nombre'] ?? "\u{00A0}" }}</div>
                         <div class="position">{{ $signer['cargo'] ?? "\u{00A0}" }}</div>

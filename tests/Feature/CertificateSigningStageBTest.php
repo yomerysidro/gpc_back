@@ -9,6 +9,7 @@ use App\Services\CertificateDocumentGenerator;
 use App\Services\CertificateDocumentVersions;
 use App\Services\CertificateDocumentWorkflow;
 use App\Services\CertificateHumanResources;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -1202,6 +1203,42 @@ class CertificateSigningStageBTest extends TestCase
         DB::table('acceso.rol_modulo')->insert(['id_modulo' => 10, 'id_rol' => 10]);
         DB::table('acceso.rol_modulo_permiso')->insert(['id_modulo' => 10, 'id_rol' => 10, 'id_permiso' => 10]);
         $this->actor();
+    }
+
+    public function test_uploaded_signature_image_is_private_and_rendered_for_the_selected_worker(): void
+    {
+        $this->assignForPdfRevision();
+        $migration = require database_path('migrations/2026_11_20_134327_add_imagen_firma_to_persona_trabajador.php');
+        $migration->up();
+
+        $baseline = base64_decode($this->postJson(self::BASE.'/revision-pdf')->assertOk()->json('data.vista_previa_pdf.contenido_base64'), true);
+        $worker = DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10);
+        $worker->update(['habilitado_firma_certificados' => false]);
+        $upload = '/api/funcionarios-firmantes/habilitar';
+        $image = UploadedFile::fake()->image('firma.png', 160, 50);
+        $input = ['id_persona_trabajador' => 10, 'imagen_firma' => $image];
+        $headers = ['Accept' => 'application/json'];
+        $this->post($upload, $input, $headers)->assertForbidden();
+
+        $this->actor(['ponentes-firmantes.editar']);
+        $this->post($upload, ['id_persona_trabajador' => 10, 'imagen_firma' => UploadedFile::fake()->create('firma.pdf')], $headers)
+            ->assertUnprocessable();
+        self::assertNull($worker->value('imagen_firma_cifrada'));
+        $this->post($upload, $input, $headers)->assertOk()->assertJsonPath('data.reintento', false)
+            ->assertJsonPath('data.funcionario.habilitado_firma_certificados', true)
+            ->assertJsonPath('data.funcionario.tiene_imagen_firma', true)
+            ->assertJsonMissingPath('data.funcionario.imagen_firma_cifrada');
+        $this->post($upload, $input, $headers)->assertOk()->assertJsonPath('data.reintento', true);
+        $this->assertDatabaseHas('gestion.persona_trabajador', ['id_persona_trabajador' => 11, 'imagen_firma_cifrada' => null]);
+
+        $this->actor(['emision.ver', 'emision.editar']);
+        $review = $this->postJson(self::BASE.'/revision-pdf')->assertOk()
+            ->assertJsonPath('data.firmantes.0.id_persona_trabajador', 10)
+            ->assertJsonMissingPath('data.firmantes.0.imagen_firma_cifrada');
+        $pdf = base64_decode($review->json('data.vista_previa_pdf.contenido_base64'), true);
+        self::assertStringStartsWith('%PDF-', $pdf);
+        self::assertSame(1, preg_match_all('~/Type\s*/Page\b~', $pdf));
+        self::assertGreaterThan(substr_count($baseline, '/Subtype /Image'), substr_count($pdf, '/Subtype /Image'));
     }
 
     public function test_global_authorization_does_not_follow_employment_credentials_or_signing_permissions(): void

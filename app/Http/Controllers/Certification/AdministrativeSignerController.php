@@ -41,11 +41,13 @@ class AdministrativeSignerController extends Controller
             $actor = $request->user();
             abort_unless($actor->estado && in_array('ponentes-firmantes.editar', $actor->permissionKeys(), true), 403,
                 'Se requiere permiso para administrar habilitaciones de firmantes.');
-            abort_if(array_diff(array_keys($request->all()), ['id_persona_trabajador', 'confirmar']) !== [], 422, 'Campos no admitidos.');
+            abort_if(array_diff(array_keys($request->all()), ['id_persona_trabajador', 'confirmar', 'imagen_firma']) !== [], 422, 'Campos no admitidos.');
             $input = Validator::make($request->all(), ['id_persona_trabajador' => 'required|integer|min:1',
-                'confirmar' => 'sometimes|accepted'])->validate();
+                'confirmar' => 'sometimes|accepted',
+                'imagen_firma' => ['sometimes', 'required', 'file', 'mimetypes:image/png,image/jpeg', 'max:1024', 'dimensions:min_width=1,min_height=1,max_width=1600,max_height=800'],
+            ])->validate();
 
-            return $this->signers->changeAuthorization((int) $input['id_persona_trabajador'], $actor);
+            return $this->signers->changeAuthorization((int) $input['id_persona_trabajador'], $actor, image: $input['imagen_firma'] ?? null);
         });
     }
 

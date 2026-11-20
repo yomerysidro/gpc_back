@@ -8,6 +8,8 @@ use App\Models\CertificateDocument\CertificateDocument;
 use App\Models\User\User;
 use App\Services\RequestSchema as Schema;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
@@ -47,12 +49,12 @@ class AdministrativeSigners
     }
 
     /** @return array<string, mixed> */
-    public function changeAuthorization(int $workerId, User $actor, bool $enabled = true): array
+    public function changeAuthorization(int $workerId, User $actor, bool $enabled = true, ?UploadedFile $image = null): array
     {
         abort_unless($actor->estado && in_array('ponentes-firmantes.editar', $actor->permissionKeys(), true),
             403, 'Se requiere permiso para administrar habilitaciones de firmantes.');
 
-        return DB::transaction(function () use ($workerId, $actor, $enabled): array {
+        return DB::transaction(function () use ($workerId, $actor, $enabled, $image): array {
             $areas = $this->areas($actor);
             $record = DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', $workerId)
                 ->when($areas !== null, fn (Builder $query) => $query->whereIn('id_area', $areas))->lockForUpdate()->first();
@@ -60,14 +62,25 @@ class AdministrativeSigners
             $this->assertAuthorizationAvailable();
             $worker = $this->detail($workerId, $actor);
             abort_if($enabled && ! $worker['elegible_laboralmente'], 409, 'El trabajador no tiene vínculo laboral vigente, identidad o cargo válido.');
-            $retry = (bool) $record->habilitado_firma_certificados === $enabled;
-            if (! $retry) {
+            $changes = [];
+            if ((bool) $record->habilitado_firma_certificados !== $enabled) {
+                $changes['habilitado_firma_certificados'] = $enabled;
+            }
+            if ($image !== null) {
+                abort_unless(Schema::hasColumn('gestion.persona_trabajador', 'imagen_firma_cifrada'), 409,
+                    'El almacenamiento de imágenes de firma todavía no está disponible.');
+                $dataUri = 'data:'.$image->getMimeType().';base64,'.base64_encode($image->get());
+                if ($record->imagen_firma_cifrada === null || Crypt::decryptString($record->imagen_firma_cifrada) !== $dataUri) {
+                    $changes['imagen_firma_cifrada'] = Crypt::encryptString($dataUri);
+                }
+            }
+            if ($changes !== []) {
                 $saved = DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', $workerId)
-                    ->update(['habilitado_firma_certificados' => $enabled]);
+                    ->update($changes);
                 abort_unless($saved === 1, 409, 'No se pudo guardar la habilitación.');
             }
 
-            return ['completada' => true, 'persistido' => true, 'reintento' => $retry,
+            return ['completada' => true, 'persistido' => true, 'reintento' => $changes === [],
                 'funcionario' => $this->detail($workerId, $actor)];
         });
     }
@@ -135,6 +148,8 @@ class AdministrativeSigners
             ->select('f.id_firma', 't.id_persona_trabajador', 't.id_persona', 't.id_area', 't.cargo', 't.estado', 't.fecha_ingreso', 't.fecha_fin',
                 'p.nombres', 'p.apellido_paterno', 'p.apellido_materno', 'area.nombre as area')
             ->selectRaw($authorizationAvailable ? 't.habilitado_firma_certificados' : 'FALSE AS habilitado_firma_certificados')
+            ->selectRaw(Schema::hasColumn('gestion.persona_trabajador', 'imagen_firma_cifrada')
+                ? 't.imagen_firma_cifrada IS NOT NULL AS tiene_imagen_firma' : 'FALSE AS tiene_imagen_firma')
             ->selectRaw("CASE WHEN f.id_firma IS NOT NULL AND TRIM(COALESCE(f.ruta_archivo_pfx, '')) <> '' AND TRIM(COALESCE(f.passphrase_cifrada, '')) <> '' THEN 1 ELSE 0 END AS credencial_registrada")
             ->selectRaw('CASE WHEN EXISTS ('.$documentAssignment->toSql().') THEN 1 ELSE 0 END AS tiene_asignacion_documental', $documentAssignment->getBindings())
             ->orderBy('t.id_persona')->orderBy('t.id_persona_trabajador')
@@ -152,6 +167,7 @@ class AdministrativeSigners
                     'nombre' => trim(implode(' ', array_filter([$row->nombres, $row->apellido_paterno, $row->apellido_materno]))),
                     'cargo' => $row->cargo, 'area' => $row->area, 'elegible_laboralmente' => $eligible,
                     'habilitado_firma_certificados' => (bool) $row->habilitado_firma_certificados,
+                    'tiene_imagen_firma' => (bool) $row->tiene_imagen_firma,
                     'disponible_asignacion' => $eligible && (bool) $row->habilitado_firma_certificados,
                     'vigente' => $current, 'habilitado' => (bool) $row->habilitado_firma_certificados,
                     'estado_habilitacion' => $row->habilitado_firma_certificados ? 'Habilitado' : 'No habilitado',
