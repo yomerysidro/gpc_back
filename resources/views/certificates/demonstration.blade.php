@@ -24,7 +24,8 @@
         .signature-row td { text-align: center; vertical-align: top; padding: 0 0 12px; }
         .signature-block { max-width: 270px; margin: 0 auto; page-break-inside: avoid; }
         .signature-space { height: 42px; }
-        .signature-space img { max-height: 40px; max-width: 95%; }
+        .signature-space.has-image { height: 76px; }
+        .signature-space img { max-height: 72px; max-width: 95%; }
         .signature-line { border-top: 1px solid #173448; padding-top: 7px; }
         .signature-name { font-size: 10px; font-weight: bold; line-height: 1.4; word-wrap: break-word; }
         .position { font-size: 9px; line-height: 1.4; color: #52606b; word-wrap: break-word; }
@@ -39,16 +40,22 @@
         .compact .issued { margin-top: 8px; }
         .compact .signers { margin-top: 8px; }
         .compact .signature-space { height: 26px; }
-        .compact .signature-space img { max-height: 24px; }
+        .compact .signature-space.has-image { height: 52px; }
+        .compact .signature-space img { max-height: 48px; }
         .compact .signature-line { padding-top: 4px; }
         .compact .signature-name { font-size: 9px; }
         .compact .position { font-size: 8px; }
         .compact .footer { margin-top: 2px; }
         .compact .qr { height: 71px; width: 71px; }
+        .compact.long-message .logo { height: 52px; }
+        .compact.long-message .intro { margin: 6px 0; }
+        .compact.long-message .signature-row td { padding-bottom: 8px; }
+        .compact.long-message .signature-space.has-image { height: 40px; }
+        .compact.long-message .signature-space img { max-height: 36px; }
     </style>
 </head>
 <body>
-<div class="frame"><main class="certificate {{ count($signers) >= 4 ? 'compact' : '' }}">
+<div class="frame"><main class="certificate {{ count($signers) >= 4 ? 'compact' : '' }} {{ !empty($signatureImages) && mb_strlen($customMessage ?? '') > 800 ? 'long-message' : '' }}">
     <table class="header"><tr>
         <td width="12%"><img class="logo" src="{{ $logoDataUri }}" alt="Escudo municipal"></td>
         <td class="brand">Municipalidad Distrital de Morales</td>
@@ -84,7 +91,7 @@
             <td width="{{ 100 / count($signatureRow) }}%">
                 <div class="signature-block">
                     @if(isset($signatureImages[$signer['id_persona_trabajador'] ?? 0]))
-                        <div class="signature-space">
+                        <div class="signature-space has-image">
                             <img src="{{ $signatureImages[$signer['id_persona_trabajador']] }}" alt="Firma">
                         </div>
                     @else

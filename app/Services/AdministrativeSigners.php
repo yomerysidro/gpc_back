@@ -51,14 +51,8 @@ class AdministrativeSigners
     /** @return array<string, mixed> */
     public function changeAuthorization(int $workerId, User $actor, bool $enabled = true, ?UploadedFile $image = null): array
     {
-        abort_unless($actor->estado && in_array('ponentes-firmantes.editar', $actor->permissionKeys(), true),
-            403, 'Se requiere permiso para administrar habilitaciones de firmantes.');
-
         return DB::transaction(function () use ($workerId, $actor, $enabled, $image): array {
-            $areas = $this->areas($actor);
-            $record = DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', $workerId)
-                ->when($areas !== null, fn (Builder $query) => $query->whereIn('id_area', $areas))->lockForUpdate()->first();
-            abort_unless($record, 404, 'Trabajador no encontrado en su ámbito.');
+            $record = $this->lockEditableWorker($workerId, $actor);
             $this->assertAuthorizationAvailable();
             $worker = $this->detail($workerId, $actor);
             abort_if($enabled && ! $worker['elegible_laboralmente'], 409, 'El trabajador no tiene vínculo laboral vigente, identidad o cargo válido.');
@@ -83,6 +77,38 @@ class AdministrativeSigners
             return ['completada' => true, 'persistido' => true, 'reintento' => $changes === [],
                 'funcionario' => $this->detail($workerId, $actor)];
         });
+    }
+
+    /** @return array<string, mixed> */
+    public function removeImage(int $workerId, User $actor): array
+    {
+        return DB::transaction(function () use ($workerId, $actor): array {
+            $record = $this->lockEditableWorker($workerId, $actor);
+            abort_unless(Schema::hasColumn('gestion.persona_trabajador', 'imagen_firma_cifrada'), 409,
+                'El almacenamiento de imágenes de firma todavía no está disponible.');
+
+            $retry = $record->imagen_firma_cifrada === null;
+            if (! $retry) {
+                DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', $workerId)
+                    ->update(['imagen_firma_cifrada' => null]);
+            }
+
+            return ['completada' => true, 'persistido' => true, 'reintento' => $retry,
+                'funcionario' => $this->detail($workerId, $actor)];
+        });
+    }
+
+    private function lockEditableWorker(int $workerId, User $actor): object
+    {
+        abort_unless($actor->estado && in_array('ponentes-firmantes.editar', $actor->permissionKeys(), true),
+            403, 'Se requiere permiso para administrar habilitaciones de firmantes.');
+
+        $areas = $this->areas($actor);
+        $record = DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', $workerId)
+            ->when($areas !== null, fn (Builder $query) => $query->whereIn('id_area', $areas))->lockForUpdate()->first();
+        abort_unless($record, 404, 'Trabajador no encontrado en su ámbito.');
+
+        return $record;
     }
 
     /** @return array<string, mixed> */

@@ -24,7 +24,8 @@
         .signature-row td { text-align: center; vertical-align: top; padding: 0 0 12px; }
         .signature-block { max-width: 270px; margin: 0 auto; page-break-inside: avoid; }
         .signature-space { height: 42px; }
-        .signature-space img { max-height: 40px; max-width: 95%; }
+        .signature-space.has-image { height: 76px; }
+        .signature-space img { max-height: 72px; max-width: 95%; }
         .signature-line { border-top: 1px solid #173448; padding-top: 7px; }
         .signature-name { font-size: 10px; font-weight: bold; line-height: 1.4; word-wrap: break-word; }
         .position { font-size: 9px; line-height: 1.4; color: #52606b; word-wrap: break-word; }
@@ -39,7 +40,8 @@
         .compact .issued { margin-top: 8px; }
         .compact .signers { margin-top: 8px; }
         .compact .signature-space { height: 26px; }
-        .compact .signature-space img { max-height: 24px; }
+        .compact .signature-space.has-image { height: 52px; }
+        .compact .signature-space img { max-height: 48px; }
         .compact .signature-line { padding-top: 4px; }
         .compact .signature-name { font-size: 9px; }
         .compact .position { font-size: 8px; }
@@ -59,7 +61,8 @@
         .practice-certificate .issued { font-size: 13px; margin: 17px 0 0; }
         .practice-certificate .signers { margin-top: 18px; }
         .practice-certificate .signature-space { height: 26px; }
-        .practice-certificate .signature-space img { max-height: 24px; }
+        .practice-certificate .signature-space.has-image { height: 52px; }
+        .practice-certificate .signature-space img { max-height: 48px; }
         .practice-certificate .footer { margin-top: 6px; }
         .practice-certificate .qr { height: 71px; width: 71px; }
         .practice-certificate.long-message { padding-top: 12px; padding-bottom: 10px; }
@@ -72,7 +75,8 @@
         .practice-certificate.long-message .issued { margin-top: 9px; }
         .practice-certificate.long-message .signers { margin-top: 8px; }
         .practice-certificate.long-message .signature-space { height: 18px; }
-        .practice-certificate.long-message .signature-space img { max-height: 16px; }
+        .practice-certificate.long-message .signature-space.has-image { height: 36px; }
+        .practice-certificate.long-message .signature-space img { max-height: 32px; }
         .practice-certificate.long-message .footer { margin-top: 2px; }
         .practice-certificate.long-message .qr { height: 54px; width: 54px; }
         @endif
@@ -130,7 +134,7 @@
             <td width="{{ 100 / count($signatureRow) }}%">
                 <div class="signature-block">
                     @if(isset($signatureImages[$signer['id_persona_trabajador'] ?? 0]))
-                        <div class="signature-space">
+                        <div class="signature-space has-image">
                             <img src="{{ $signatureImages[$signer['id_persona_trabajador']] }}" alt="Firma">
                         </div>
                     @else

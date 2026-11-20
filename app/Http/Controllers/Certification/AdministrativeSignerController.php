@@ -56,6 +56,11 @@ class AdministrativeSignerController extends Controller
         return $this->respond(fn (): array => $this->signers->changeAuthorization($id, $request->user(), false));
     }
 
+    public function removeImage(Request $request, int $id): JsonResponse
+    {
+        return $this->respond(fn (): array => $this->signers->removeImage($id, $request->user()));
+    }
+
     private function listing(Request $request): JsonResponse
     {
         return $this->respond(function () use ($request): array {

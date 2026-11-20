@@ -150,6 +150,7 @@ Route::middleware('auth.cookie')->group(function () {
         Route::post('/', [AdministrativeSignerController::class, 'store']);
         Route::post('/habilitar', [AdministrativeSignerController::class, 'enable']);
         Route::delete('/{id}/habilitacion', [AdministrativeSignerController::class, 'disable'])->whereNumber('id');
+        Route::delete('/{id}/imagen-firma', [AdministrativeSignerController::class, 'removeImage'])->whereNumber('id');
         Route::get('/{id}', [AdministrativeSignerController::class, 'show'])->whereNumber('id');
     });
     Route::prefix('firmas')->group(function () {

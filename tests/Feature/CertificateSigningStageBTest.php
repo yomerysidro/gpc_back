@@ -1185,6 +1185,32 @@ class CertificateSigningStageBTest extends TestCase
         $this->assertDatabaseCount('certificado.certificado_documento', 1);
     }
 
+    #[TestWith([null, 2])]
+    #[TestWith([null, 8])]
+    #[TestWith(['practica', 8])]
+    public function test_larger_signature_images_fit_on_a_single_page(?string $origin, int $count): void
+    {
+        config(['certification.documents.verification_base_url' => 'https://municipalidad.test/verificar']);
+        $context = (object) ['origen' => $origin, 'tipo_certificado' => 'Capacitación', 'id_actividad' => 1, 'nombres' => 'Beneficiario',
+            'apellido_paterno' => 'Prueba', 'apellido_materno' => null, 'actividad' => 'Actividad', 'sesion' => 'Sesión',
+            'fecha_sesion' => '2026-11-10'];
+        $image = UploadedFile::fake()->image('firma.png', 500, 200);
+        $dataUri = 'data:image/png;base64,'.base64_encode($image->get());
+        $signers = [];
+        $images = [];
+        for ($index = 1; $index <= $count; $index++) {
+            $signers[] = ['id_persona_trabajador' => $index, 'nombre' => 'Funcionario de prueba '.$index, 'cargo' => 'Cargo institucional de prueba'];
+            $images[$index] = $dataUri;
+        }
+        $message = $count > 4 ? str_repeat('Se certifica el cumplimiento de las actividades institucionales asignadas. ', 16) : 'Mensaje aprobado.';
+
+        $pdf = app(CertificateDocumentGenerator::class)->reviewPdf($context, $message, str_repeat('a', 30), $signers, $images);
+
+        self::assertStringStartsWith('%PDF-', $pdf);
+        self::assertSame(1, preg_match_all('~/Type\s*/Page\b~', $pdf));
+        self::assertStringContainsString('/Width 500', $pdf);
+    }
+
     private function enableRealAssignment(): void
     {
         DB::statement('DROP TABLE certificado.certificado_firma');
@@ -1239,6 +1265,24 @@ class CertificateSigningStageBTest extends TestCase
         self::assertStringStartsWith('%PDF-', $pdf);
         self::assertSame(1, preg_match_all('~/Type\s*/Page\b~', $pdf));
         self::assertGreaterThan(substr_count($baseline, '/Subtype /Image'), substr_count($pdf, '/Subtype /Image'));
+
+        $delete = '/api/funcionarios-firmantes/10/imagen-firma';
+        $this->deleteJson($delete)->assertForbidden();
+        $this->actor(['ponentes-firmantes.editar']);
+        $replacement = UploadedFile::fake()->image('firma-nueva.jpg', 130, 40);
+        $this->post($upload, ['id_persona_trabajador' => 10, 'imagen_firma' => $replacement], $headers)
+            ->assertOk()->assertJsonPath('data.reintento', false);
+        self::assertSame('data:image/jpeg;base64,'.base64_encode($replacement->get()), Crypt::decryptString($worker->value('imagen_firma_cifrada')));
+        $this->deleteJson($delete)->assertOk()
+            ->assertJsonPath('data.funcionario.tiene_imagen_firma', false)
+            ->assertJsonPath('data.funcionario.habilitado_firma_certificados', true)
+            ->assertJsonPath('data.reintento', false);
+        $this->deleteJson($delete)->assertOk()->assertJsonPath('data.reintento', true);
+        self::assertNull($worker->value('imagen_firma_cifrada'));
+
+        $this->actor(['emision.ver', 'emision.editar']);
+        $newReview = $this->postJson(self::BASE.'/revision-pdf')->assertOk()->json('data.vista_previa_pdf.contenido_base64');
+        self::assertSame(substr_count($baseline, '/Subtype /Image'), substr_count(base64_decode($newReview, true), '/Subtype /Image'));
     }
 
     public function test_global_authorization_does_not_follow_employment_credentials_or_signing_permissions(): void
