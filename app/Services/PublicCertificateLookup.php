@@ -56,6 +56,7 @@ class PublicCertificateLookup
                     'estado_disponibilidad' => 'Listo para entrega',
                     'disponible_rrhh' => true,
                     'pdf_publicado' => $pdfUrl !== null,
+                    'vista_firmas_disponible' => $pdfUrl !== null,
                     'url_documento' => $pdfUrl,
                     'url_descarga' => $pdfUrl === null ? null : $pdfUrl.'&descargar=1',
                 ];
@@ -102,6 +103,20 @@ class PublicCertificateLookup
             && ! str_starts_with((string) $document->ruta_archivo, 'certificados/demostracion/')
             && (config('certification.public_lookup.publish_all_eligible_pdfs') === true
                 || $this->allowsPdf($document->codigo_verificacion));
+    }
+
+    public function signaturePreview(object $artifact, CertificateDocumentGenerator $generator): string
+    {
+        $signers = $artifact->responsables_administrativos;
+        $images = $generator->signatureImages($signers);
+        abort_if($images === [], 404, 'No hay imágenes registradas para los firmantes del documento.');
+        $approved = $this->versions->approvedContent($artifact);
+        $context = $approved['context'];
+        abort_unless((int) ($context['id_persona'] ?? 0) === (int) $artifact->id_persona
+            && (int) ($context['id_tipo_certificado'] ?? 0) === (int) $artifact->id_tipo_certificado, 409,
+            'No se pudo verificar el contenido aprobado del documento.');
+
+        return $generator->reviewPdf((object) $context, $approved['message'], $artifact->codigo_verificacion, $signers, $images, $artifact);
     }
 
     public function pdfUrl(string $code): string

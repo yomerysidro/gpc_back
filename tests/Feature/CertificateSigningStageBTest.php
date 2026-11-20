@@ -138,6 +138,39 @@ class CertificateSigningStageBTest extends TestCase
         $this->get($url.'?archivo=1')->assertForbidden();
     }
 
+    public function test_public_signature_preview_preserves_the_original_pdf_and_requires_confirmed_publication(): void
+    {
+        $this->assignForPdfRevision();
+        $manifestPath = 'certificados/revisiones/aprobado.manifest';
+        $manifest = json_decode(Crypt::decryptString(Storage::disk('local')->get($manifestPath)), true, 512, JSON_THROW_ON_ERROR);
+        $certificate = DB::table('certificado.certificado')->first();
+        $manifest['context'] += ['id_persona' => $certificate->id_persona, 'id_tipo_certificado' => $certificate->id_tipo_certificado];
+        Storage::disk('local')->put($manifestPath, Crypt::encryptString(json_encode($manifest, JSON_THROW_ON_ERROR)));
+        $review = $this->postJson(self::BASE.'/revision-pdf')->assertOk()->json('data');
+        $this->postJson(self::BASE.'/confirmar-pdf', ['token_revision' => $review['token_revision'], 'confirmar' => true])->assertOk();
+        DB::statement('ALTER TABLE gestion.persona_trabajador ADD COLUMN imagen_firma_cifrada TEXT');
+        $image = UploadedFile::fake()->image('firma.jpg', 500, 200);
+        DB::table('gestion.persona_trabajador')->where('id_persona_trabajador', 10)->update([
+            'imagen_firma_cifrada' => Crypt::encryptString('data:image/jpeg;base64,'.base64_encode($image->get())),
+        ]);
+        $document = DB::table('certificado.certificado_documento')->first();
+        $artifact = app(CertificateDocumentVersions::class)->resolve($document, readOnly: true);
+        $original = Storage::disk('local')->get($artifact->ruta_archivo);
+        $url = '/api/certificados/verificar/'.$document->codigo_verificacion;
+        app('auth')->forgetGuards();
+        $this->get($url.'?archivo=1&vista_firmas=1')->assertForbidden();
+        config(['certification.public_lookup.publish_all_eligible_pdfs' => true]);
+
+        $this->getJson($url)->assertOk()->assertJsonPath('data.vista_firmas_disponible', true)
+            ->assertJsonPath('data.hash_sha256', hash('sha256', $original));
+        $preview = $this->get($url.'?archivo=1&vista_firmas=1')->assertOk()->assertHeader('Content-Type', 'application/pdf')->getContent();
+        self::assertStringContainsString('/Width 500', $preview);
+        self::assertNotSame($original, $preview);
+        $download = $this->get($url.'?archivo=1&vista_firmas=1&descargar=1')->assertOk();
+        self::assertSame($original, file_get_contents($download->baseResponse->getFile()->getPathname()));
+        self::assertSame((array) $document, (array) DB::table('certificado.certificado_documento')->first());
+    }
+
     #[TestWith(['private'])]
     #[TestWith(['prepared'])]
     #[TestWith(['cancelled'])]

@@ -185,7 +185,17 @@ class CertificateDocumentController extends Controller
                     'descarga' => $request->boolean('descargar'),
                 ]);
 
-                $response = $generator->privatePdfResponse($publicArtifact ?? $document, $request->boolean('descargar'));
+                if ($request->boolean('vista_firmas') && ! $request->boolean('descargar')) {
+                    abort_unless($publicArtifact !== null, 404, 'Vista de firmas no disponible.');
+                    $response = response($lookup->signaturePreview($publicArtifact, $generator), 200, [
+                        'Content-Type' => 'application/pdf',
+                        'Content-Disposition' => 'inline; filename="vista-certificado.pdf"',
+                        'Cache-Control' => 'private, no-store',
+                        'X-Content-Type-Options' => 'nosniff',
+                    ]);
+                } else {
+                    $response = $generator->privatePdfResponse($publicArtifact ?? $document, $request->boolean('descargar'));
+                }
                 $response->headers->set('Referrer-Policy', 'no-referrer');
                 $response->headers->set('X-Robots-Tag', 'noindex, nofollow');
 
@@ -197,7 +207,7 @@ class CertificateDocumentController extends Controller
                     ->header('X-Content-Type-Options', 'nosniff');
             }
 
-            return $this->ok($verification, 'Consulta del registro y su archivo; no acredita firma ni emisión oficial.')
+            return $this->ok($verification + ['vista_firmas_disponible' => $publicArtifact !== null], 'Consulta del registro y su archivo; no acredita firma ni emisión oficial.')
                 ->header('Cache-Control', 'no-store');
         }, requireDevelopment: false);
     }

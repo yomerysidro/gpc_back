@@ -230,18 +230,25 @@ class CertificateDocumentGenerator
      * @param  list<array<string, mixed>>  $signers
      * @param  array<int, string>|null  $signatureImages
      */
-    public function reviewPdf(object $context, string $message, string $code, array $signers, ?array $signatureImages = null): string
+    public function reviewPdf(object $context, string $message, string $code, array $signers, ?array $signatureImages = null, ?object $consultedDocument = null): string
     {
         $qr = (new Writer(new ImageRenderer(new RendererStyle(200, 4), new SvgImageBackEnd)))
             ->writeString($this->verificationUrl($code));
 
-        return $this->previewPdf(view(in_array($context->origen ?? null, ['reconocimiento', 'practica', 'ponente_actividad', 'ponente_sesion'], true) ? 'certificates.origins' : 'certificates.demonstration', [
-            'context' => $context, 'certificate' => null, 'customMessage' => $message,
+        $html = view(in_array($context->origen ?? null, ['reconocimiento', 'practica', 'ponente_actividad', 'ponente_sesion'], true) ? 'certificates.origins' : 'certificates.demonstration', [
+            'context' => $context, 'certificate' => $consultedDocument, 'customMessage' => $message,
             'code' => $code, 'qrDataUri' => 'data:image/svg+xml;base64,'.base64_encode($qr),
             'logoDataUri' => 'data:image/png;base64,'.base64_encode(file_get_contents(resource_path('images/escudo-morales.png'))),
             'signers' => $signers, 'signatureImages' => $signatureImages ?? $this->signatureImages($signers),
             'administrative' => true,
-        ])->render());
+        ])->render();
+
+        if ($consultedDocument !== null) {
+            $label = '<div style="position:fixed;right:16px;top:0;font-size:8px">Vista de consulta con imágenes de firma registradas</div>';
+            $html = str_replace('</body>', $label.'</body>', $html);
+        }
+
+        return $this->previewPdf($html);
     }
 
     /**
